@@ -6,6 +6,7 @@ import time
 from typing import Any, Callable
 
 from iris.config import IrisConfig
+from iris.safety import CancellationToken
 from iris.state import open_state
 from iris.tasks import add_task_step, cancel_requested, claim_next_task, finish_task, heartbeat_task
 
@@ -68,15 +69,16 @@ class TaskSupervisor:
                 payload={"message": message},
             )
         router = self.router_factory()
+        cancellation_token = CancellationToken()
         heartbeat_stop = threading.Event()
         heartbeat_thread = threading.Thread(
             target=self._heartbeat_until_stopped,
-            args=(task_id, heartbeat_stop),
+            args=(task_id, heartbeat_stop, cancellation_token),
             daemon=True,
         )
         heartbeat_thread.start()
         try:
-            result = router.handle_text(message)
+            result = router.handle_text(message, cancellation_token=cancellation_token)
             status = "done" if result.ok else _task_status_for_message(result.message)
             if self._cancelled(task_id) and status == "done":
                 status = "cancelled"
@@ -127,7 +129,12 @@ class TaskSupervisor:
         with open_state(self.config) as db:
             return cancel_requested(db, task_id)
 
-    def _heartbeat_until_stopped(self, task_id: str, stop_event: threading.Event) -> None:
+    def _heartbeat_until_stopped(
+        self,
+        task_id: str,
+        stop_event: threading.Event,
+        cancellation_token: CancellationToken,
+    ) -> None:
         beat = 0
         while not stop_event.wait(3.0):
             beat += 1
@@ -143,6 +150,7 @@ class TaskSupervisor:
                         payload={"beat": beat},
                     )
             if self._cancelled(task_id):
+                cancellation_token.cancel("Task cancellation requested.")
                 with open_state(self.config) as db:
                     add_task_step(
                         db,

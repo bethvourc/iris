@@ -23,7 +23,7 @@ from iris.knowledge import format_search_results, search_pages
 from iris.mac_controller import ActionResult, MacController
 from iris.perception import LiveScreenFrame, PerceptionService, ScreenAwarenessService
 from iris.recipes import ActionRecipeRegistry
-from iris.safety import SafetyGate, classify_action
+from iris.safety import CancellationToken, SafetyGate, classify_action
 from iris.state import open_state
 from iris import tasks as task_store
 from iris.system import applescript_string, run_osascript
@@ -51,6 +51,11 @@ class ToolContext:
     recipes: ActionRecipeRegistry | None = None
     config: IrisConfig | None = None
     approved_tool_call: bool = False
+    cancellation_token: CancellationToken | None = None
+
+    def assert_not_cancelled(self) -> None:
+        if self.cancellation_token is not None:
+            self.cancellation_token.throw_if_cancelled()
 
 
 ToolExecute = Callable[[dict[str, Any], ToolContext], ToolResult]
@@ -120,6 +125,7 @@ class ToolRegistry:
         ]
 
     def execute(self, name: str, arguments: dict[str, Any], context: ToolContext) -> ToolResult:
+        context.assert_not_cancelled()
         tool = self.get(name)
         if tool is None:
             return ToolResult(False, f"I do not have a tool named {name}.")
@@ -135,7 +141,10 @@ class ToolRegistry:
         if decision.risk == RiskLevel.SENSITIVE:
             raise ApprovalRequired(tool.name, arguments, decision.reason)
         context.safety_gate.allow(action)
-        return tool.execute(arguments, context)
+        context.assert_not_cancelled()
+        result = tool.execute(arguments, context)
+        context.assert_not_cancelled()
+        return result
 
     def execute_approved(
         self,
@@ -143,6 +152,7 @@ class ToolRegistry:
         arguments: dict[str, Any],
         context: ToolContext,
     ) -> ToolResult:
+        context.assert_not_cancelled()
         tool = self.get(name)
         if tool is None:
             return ToolResult(False, f"I do not have a tool named {name}.")
@@ -151,7 +161,10 @@ class ToolRegistry:
         if decision.risk == RiskLevel.BLOCKED:
             raise PermissionError(f"Blocked action: {tool.name} ({decision.reason})")
         context.safety_gate.assert_not_killed()
-        return tool.execute(arguments, context)
+        context.assert_not_cancelled()
+        result = tool.execute(arguments, context)
+        context.assert_not_cancelled()
+        return result
 
     @classmethod
     def default(cls) -> "ToolRegistry":

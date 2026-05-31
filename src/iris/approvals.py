@@ -60,16 +60,49 @@ def list_approvals(db: sqlite3.Connection, status: str = "pending") -> list[dict
     return [dict(row) for row in rows]
 
 
+def get_approval(db: sqlite3.Connection, approval_id: str) -> dict[str, Any] | None:
+    row = db.execute(
+        """
+        SELECT approval_id, run_id, action_name, risk, status, preview,
+               created_at, expires_at, decided_at, details_json
+        FROM approvals
+        WHERE approval_id = ?
+        """,
+        (approval_id,),
+    ).fetchone()
+    return dict(row) if row else None
+
+
+def approval_details(row: dict[str, Any]) -> dict[str, Any]:
+    try:
+        value = json.loads(str(row.get("details_json") or "{}"))
+    except json.JSONDecodeError:
+        return {}
+    return value if isinstance(value, dict) else {}
+
+
 def decide_approval(db: sqlite3.Connection, approval_id: str, status: str) -> bool:
     if status not in {"approved", "denied"}:
         raise ValueError("approval status must be approved or denied")
+    now = _now().isoformat()
+    if status == "approved":
+        result = db.execute(
+            """
+            UPDATE approvals
+            SET status = ?, decided_at = ?
+            WHERE approval_id = ? AND status = 'pending' AND expires_at > ?
+            """,
+            (status, now, approval_id, now),
+        )
+        db.commit()
+        return result.rowcount > 0
     result = db.execute(
         """
         UPDATE approvals
         SET status = ?, decided_at = ?
         WHERE approval_id = ? AND status = 'pending'
         """,
-        (status, _now().isoformat(), approval_id),
+        (status, now, approval_id),
     )
     db.commit()
     return result.rowcount > 0

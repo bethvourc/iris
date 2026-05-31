@@ -464,6 +464,7 @@ class RealtimeSpeechSession:
         if not self._agent_lock.acquire(blocking=False):
             lowered = transcript.lower().strip(" \t\r\n.,!?")
             if _is_interrupt_command(lowered):
+                self.router.agent_executor.cancel_current("Operation cancelled by user.")
                 self.router.safety_gate.kill()
                 self._clear_pending_agent_texts()
                 print("iris> stopping current automation after the active step")
@@ -778,6 +779,7 @@ class VoiceSession:
             if event == "toggle":
                 self._handle_voice_once(self.config.listen_seconds)
             elif event == "kill":
+                self.router.agent_executor.cancel_current("Operation cancelled by hotkey.")
                 print("[kill switch engaged]")
 
     def _handle_voice_once(self, seconds: float | None = None) -> None:

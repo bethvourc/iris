@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import threading
 from typing import Callable
 
 from iris.actions import LocalAction, RiskLevel
@@ -8,6 +9,28 @@ from iris.actions import LocalAction, RiskLevel
 
 class AutomationPaused(RuntimeError):
     """Raised when automation is blocked by the kill switch."""
+
+
+class CancellationToken:
+    def __init__(self) -> None:
+        self._cancelled = threading.Event()
+        self._reason = "Operation cancelled."
+
+    @property
+    def cancelled(self) -> bool:
+        return self._cancelled.is_set()
+
+    @property
+    def reason(self) -> str:
+        return self._reason
+
+    def cancel(self, reason: str = "Operation cancelled.") -> None:
+        self._reason = reason
+        self._cancelled.set()
+
+    def throw_if_cancelled(self) -> None:
+        if self.cancelled:
+            raise AutomationPaused(self.reason)
 
 
 SENSITIVE_ACTION_NAMES = {
