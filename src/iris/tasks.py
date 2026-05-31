@@ -127,6 +127,45 @@ def heartbeat_task(db: sqlite3.Connection, task_id: str) -> bool:
     return result.rowcount > 0
 
 
+def add_task_step(
+    db: sqlite3.Connection,
+    task_id: str,
+    *,
+    kind: str,
+    status: str,
+    message: str,
+    payload: dict[str, Any] | None = None,
+) -> str:
+    row = db.execute(
+        "SELECT COALESCE(MAX(sequence), 0) + 1 AS next_sequence FROM agent_task_steps WHERE task_id = ?",
+        (task_id,),
+    ).fetchone()
+    sequence = int(row["next_sequence"] if row else 1)
+    step_id = uuid.uuid4().hex
+    now = _now()
+    db.execute(
+        """
+        INSERT INTO agent_task_steps (
+          step_id, task_id, sequence, kind, status, message,
+          created_at, updated_at, payload_json
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            step_id,
+            task_id,
+            sequence,
+            kind,
+            status,
+            message,
+            now,
+            now,
+            json.dumps(payload or {}, sort_keys=True, default=str),
+        ),
+    )
+    db.commit()
+    return step_id
+
+
 def finish_task(
     db: sqlite3.Connection,
     task_id: str,
@@ -199,7 +238,11 @@ def resume_task(db: sqlite3.Connection, task_id: str) -> bool:
 
 def get_task(db: sqlite3.Connection, task_id: str) -> dict[str, Any] | None:
     row = db.execute("SELECT * FROM agent_tasks WHERE task_id = ?", (task_id,)).fetchone()
-    return _decode(row) if row else None
+    if row is None:
+        return None
+    task = _decode(row)
+    task["steps"] = list_task_steps(db, task_id)
+    return task
 
 
 def list_tasks(
@@ -219,6 +262,22 @@ def list_tasks(
             (limit,),
         ).fetchall()
     return [_decode(row) for row in rows]
+
+
+def list_task_steps(db: sqlite3.Connection, task_id: str) -> list[dict[str, Any]]:
+    rows = db.execute(
+        "SELECT * FROM agent_task_steps WHERE task_id = ? ORDER BY sequence ASC",
+        (task_id,),
+    ).fetchall()
+    steps = []
+    for row in rows:
+        data = dict(row)
+        try:
+            data["payload"] = json.loads(data.pop("payload_json") or "{}")
+        except json.JSONDecodeError:
+            data["payload"] = {}
+        steps.append(data)
+    return steps
 
 
 def _decode(row: sqlite3.Row) -> dict[str, Any]:

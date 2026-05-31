@@ -176,7 +176,9 @@ class AgentExecutor:
             perception=perception,
             screen_awareness=screen_awareness,
         )
-        self.recipes = recipes or ActionRecipeRegistry.default()
+        self.recipes = recipes or ActionRecipeRegistry.default(
+            config.project_root if config is not None else None
+        )
         self.max_steps = max(1, max_steps)
         self._conversation_history: list[dict[str, str]] = []
         self._session_state: dict[str, Any] = {}
@@ -205,6 +207,7 @@ class AgentExecutor:
                 decide_approval(db, approval_id, "approved")
         original_pending = pending
         result = self._execute_tool(run_id, tool_name, arguments, approved=True)
+        user_request = str(pending.get("user_request") or "")
         current_pending = self._session_state.get("pending_approval")
         if current_pending is original_pending or (
             isinstance(current_pending, dict)
@@ -212,6 +215,17 @@ class AgentExecutor:
             and str(current_pending.get("tool_name") or "") == tool_name
         ):
             self._session_state.pop("pending_approval", None)
+        if result.ok and result.continue_planning and user_request:
+            self._session_state["last_approved_tool_observation"] = {
+                "tool_name": tool_name,
+                "arguments": arguments,
+                "ok": result.ok,
+                "message": result.message,
+                "payload": result.payload,
+            }
+            continued = self.run(user_request)
+            self._session_state.pop("last_approved_tool_observation", None)
+            return continued
         self._remember_turn("approved", result.message)
         return AgentRunResult(result.ok, result.message, result.payload, run_id=run_id)
 
@@ -228,6 +242,7 @@ class AgentExecutor:
     def run(self, user_request: str) -> AgentRunResult:
         run_id = uuid.uuid4().hex
         observations: list[dict[str, Any]] = []
+        self._session_state["current_user_request"] = user_request
         for _step in range(self.max_steps):
             plan = self.planner.plan(
                 user_request=user_request,
@@ -434,6 +449,7 @@ class AgentExecutor:
                 "tool_name": action_name,
                 "arguments": arguments,
                 "reason": reason,
+                "user_request": str(self._session_state.get("current_user_request") or ""),
             }
             return f"That needs approval before I can do it: {preview}"
         with open_state(self.config) as db:
@@ -451,6 +467,7 @@ class AgentExecutor:
             "tool_name": action_name,
             "arguments": arguments,
             "reason": reason,
+            "user_request": str(self._session_state.get("current_user_request") or ""),
         }
         return (
             "That needs approval before I can do it. "
@@ -533,10 +550,11 @@ Valid shapes:
 
 Rules:
 - Hardcoded app-command parsing is not available. Choose tools from available_tools.
-- Choose generic tools only. action_recipes are context for how to combine tools, not tools to call directly.
+- Choose generic tools. Use recipe_run when a listed action_recipe directly matches a multi-step goal that needs verification, especially private dashboards like Stripe.
 - available_connectors tells you which app/service manifests exist, whether they are enabled/configured, and which generic tools they expose.
+- If session_context.state.last_approved_tool_observation exists, treat it as the latest observation from the approved action. Use it to answer or choose a non-duplicate next verification step; do not repeat the same approved read/open tool unless the observation is clearly insufficient.
 - If a connector is disabled or missing credentials, use integration_status or explain the setup instead of pretending it works.
-- Prefer: browser_open/browser_click/browser_extract, app_open/app_activate/app_hotkey, screen_describe/screen_find_element/screen_click_element, audio_current_media/audio_explain_current_song, media_search/media_play/media_pause, app_volume_set, connector_list, integration_status, task_start_background, calendar_find_event, reminder_create, knowledge_search/file_find/file_open/workflow_run.
+- Prefer: browser_open/browser_tabs/browser_current_page/browser_get_dom/browser_click_element/browser_extract, app_windows/app_inspect/app_find_element/app_click_element/app_menu_select/app_hotkey, screen_describe/screen_find_element/screen_click_element, audio_current_media/audio_explain_current_song, media_search/media_play/media_pause, app_volume_set, connector_list, integration_status, task_start_background/task_status, calendar_find_event, reminder_create, message_send, knowledge_search/machine_context/file_find/file_open/workflow_run/recipe_run.
 - Use live_screen_context as current state, but call describe_screen for current-screen/current-tab questions.
 - Use knowledge_search when the user asks what Iris knows/remembers from local notes, docs, project context, prior logs, personal wiki, or ingested files.
 - For media requests such as playing music, prefer media_play or media_search over open_app.
@@ -544,12 +562,17 @@ Rules:
 - For larger goals that should keep working after the conversation, use task_start_background and include a concrete goal.
 - For "is X connected/configured", use integration_status.
 - For calendar/reminder actions, use calendar_find_event or reminder_create; these may require approval because they touch private data or create records.
+- For iMessage, SMS, Messages, or "text Beth" requests, use message_send only when you have both recipient and exact body. If either is missing, ask a final_answer clarification. Do not use computer_use for Messages unless message_send fails.
+- For dashboards where the user asks for a value, do not stop after browser_open. After opening or if the page is already open, use browser_extract or screen_describe to read the current dashboard. If credentials are required, ask the user to sign in manually.
+- For Stripe sales/revenue checks, use recipe_run with recipe_name="stripe_revenue_check" after approval. Never handle credentials; ask the user to sign in manually if needed.
 - If the user says "play it", "click it", "do it", or otherwise refers to a previous media/search action, use media_play or the relevant browser/screen tool instead of repeating the search.
 - For browser navigation, use browser_open with new_tab=false unless the user explicitly asks for a new tab.
 - If the user asks to look something up online, browse public results, research a person/company/topic, or summarize what is online, use web_research instead of only opening a search page.
+- If the user asks for current/latest/trending/best right now recommendations, use web_research before choosing or playing anything. Do not invent current chart/music answers from memory.
+- If the user asks to play a current/trending song, first use web_research to identify a likely song, then use media_play with that specific title/artist.
 - If the user asks what song something is, use audio_current_media first. If they ask what the current/background song means or what it is about, use audio_explain_current_song. If they give lyric fragments, use identify_song instead of search_web.
 - For private app/site content such as messages, inboxes, calendars, or account pages, ask approval before extraction or summarization.
-- For clicking or visual UI work, prefer browser_click, screen_find_element, or screen_click_element; use computer_use when safer layers cannot act.
+- For clicking or visual UI work, prefer browser_click_element/browser_click and app_find_element/app_click_element, then screen_find_element/screen_click_element; use computer_use only when safer layers cannot act.
 - If a tool fails with a retryable observation, choose a fallback tool instead of giving up.
 - Verify actions when possible before claiming completion.
 - Do not claim an action was done unless you call a tool.

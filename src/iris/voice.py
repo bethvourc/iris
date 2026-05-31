@@ -212,6 +212,9 @@ class RealtimeSpeechSession:
         self._ws: Any | None = None
         self._agent_lock = threading.Lock()
         self._agent_thread: threading.Thread | None = None
+        self._pending_agent_texts: queue.Queue[str] = queue.Queue()
+        self._active_agent_request = ""
+        self._last_busy_notice_at = 0.0
         self._response_state_lock = threading.Lock()
         self._assistant_response_active = False
         self._pending_response_text: str | None = None
@@ -458,10 +461,26 @@ class RealtimeSpeechSession:
 
     def _run_agent_async(self, transcript: str) -> None:
         if not self._agent_lock.acquire(blocking=False):
-            print("iris> still working on the last request")
+            lowered = transcript.lower().strip(" \t\r\n.,!?")
+            if _is_interrupt_command(lowered):
+                self.router.safety_gate.kill()
+                self._clear_pending_agent_texts()
+                print("iris> stopping current automation after the active step")
+                self._respond_with_text("Stopping that after the current step.")
+                return
+            if _is_status_question(lowered):
+                active = self._active_agent_request or "the last request"
+                self._respond_with_text(f"I'm still working on {active}.")
+                return
+            self._pending_agent_texts.put(transcript)
+            now = time.monotonic()
+            if now - self._last_busy_notice_at > 4.0:
+                print("iris> queued that after the current request")
+                self._last_busy_notice_at = now
             return
 
         def worker() -> None:
+            self._active_agent_request = transcript
             try:
                 print("iris> working...")
                 result = self.router.handle_text(transcript)
@@ -473,7 +492,9 @@ class RealtimeSpeechSession:
                 print(f"iris error> {exc}")
                 self._respond_with_text(message)
             finally:
+                self._active_agent_request = ""
                 self._agent_lock.release()
+                self._run_next_pending_agent_text()
 
         self._agent_thread = threading.Thread(
             target=worker,
@@ -481,6 +502,22 @@ class RealtimeSpeechSession:
             daemon=True,
         )
         self._agent_thread.start()
+
+    def _run_next_pending_agent_text(self) -> None:
+        if self._stop.is_set():
+            return
+        try:
+            next_text = self._pending_agent_texts.get_nowait()
+        except queue.Empty:
+            return
+        threading.Timer(0.05, lambda: self._run_agent_async(next_text)).start()
+
+    def _clear_pending_agent_texts(self) -> None:
+        while True:
+            try:
+                self._pending_agent_texts.get_nowait()
+            except queue.Empty:
+                return
 
     def _respond_with_text(self, text: str) -> None:
         if not text:
@@ -931,3 +968,29 @@ def _is_sleep_command(text: str) -> bool:
             "mute yourself",
         )
     )
+
+
+def _is_interrupt_command(text: str) -> bool:
+    normalized = _normalize_wake_text(text)
+    return normalized in {
+        "stop",
+        "cancel",
+        "cancel that",
+        "stop that",
+        "interrupt",
+        "pause automation",
+        "kill",
+        "kill switch",
+        "never mind",
+    }
+
+
+def _is_status_question(text: str) -> bool:
+    normalized = _normalize_wake_text(text)
+    return normalized in {
+        "what are you doing",
+        "what are you working on",
+        "status",
+        "where are you",
+        "are you still working",
+    }

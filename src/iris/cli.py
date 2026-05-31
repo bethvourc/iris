@@ -88,6 +88,14 @@ def build_parser() -> argparse.ArgumentParser:
     subparsers.add_parser(
         "permissions", help="Check macOS permissions needed by Iris"
     ).set_defaults(func=cmd_permissions)
+    doctor = subparsers.add_parser("doctor", help="Check permissions, connectors, and control backends")
+    doctor.add_argument("--json", action="store_true", help="Print machine-readable status")
+    doctor.add_argument(
+        "--open",
+        choices=["microphone", "screen", "accessibility", "automation"],
+        help="Open the matching macOS privacy settings pane",
+    )
+    doctor.set_defaults(func=cmd_doctor)
 
     notify = subparsers.add_parser(
         "test-notify", help="Send a phone push notification through configured provider"
@@ -265,6 +273,11 @@ def build_parser() -> argparse.ArgumentParser:
     memory_forget = memory_sub.add_parser("forget", help="Forget memory")
     memory_forget.add_argument("memory_id")
     memory_forget.set_defaults(func=cmd_memory_forget)
+    memory_scan = memory_sub.add_parser(
+        "scan-machine",
+        help="Store installed apps, project folders, browser profile, and connector health as local memory",
+    )
+    memory_scan.set_defaults(func=cmd_memory_scan_machine)
 
     knowledge = subparsers.add_parser("knowledge", help="Manage local Iris knowledge/wiki")
     knowledge_sub = knowledge.add_subparsers(dest="knowledge_command", required=True)
@@ -484,6 +497,90 @@ def cmd_permissions(args: argparse.Namespace) -> int:
         print(f"  Detail: {status.detail}")
         print(f"  Settings: {status.settings_hint}")
     return 0 if all(item.status == "available" for item in statuses) else 1
+
+
+def cmd_doctor(args: argparse.Namespace) -> int:
+    from iris.control_backends import control_backend_status
+    from iris.machine_context import collect_machine_context
+    from iris.permissions import PermissionChecker
+    from iris.system import run_command
+
+    settings_urls = {
+        "microphone": "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone",
+        "screen": "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture",
+        "accessibility": "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility",
+        "automation": "x-apple.systempreferences:com.apple.preference.security?Privacy_Automation",
+    }
+    if args.open:
+        run_command(["open", settings_urls[args.open]], timeout=5)
+    config = _config(args)
+    with open_state(config) as db:
+        permissions = [status.__dict__ for status in PermissionChecker().check_all()]
+        backends = control_backend_status(config)
+        connectors = connector_health(
+            db,
+            manifest_dirs=default_manifest_dirs(config.project_root),
+        )
+        machine = collect_machine_context(config, db)
+    report = {
+        "permissions": permissions,
+        "control_backends": backends,
+        "connectors": connectors,
+        "machine": {
+            "installed_apps_count": len(machine.get("installed_apps", [])),
+            "project_folders_count": len(machine.get("project_folders", [])),
+            "browser_profiles": machine.get("browser_profiles", {}),
+        },
+        "settings_urls": settings_urls,
+        "cdp_setup": (
+            'open -na "Google Chrome" --args --remote-debugging-port=9222 '
+            '--user-data-dir="$HOME/.iris/chrome-cdp"'
+        ),
+    }
+    if args.json:
+        _print_json(report)
+        return 0 if _doctor_ok(report) else 1
+    print("Iris Doctor")
+    print("Permissions:")
+    for item in permissions:
+        print(f"  {item['name']}: {item['status']} - {item['detail']}")
+        if item["status"] != "available":
+            print(f"    Settings: {item['settings_hint']}")
+    print("Control backends:")
+    for item in backends:
+        status = "ready" if item["available"] else "missing"
+        print(f"  {item['name']}: {status} - {item['detail']}")
+    if not any(item["backend_id"] == "browser_cdp" and item["available"] for item in backends):
+        print("  CDP setup:")
+        print(f"    {report['cdp_setup']}")
+    ready = [item for item in connectors if item.get("health") == "ready"]
+    needs_setup = [item for item in connectors if item.get("enabled") and item.get("health") != "ready"]
+    print(f"Connectors: {len(ready)} ready, {len(needs_setup)} enabled needing setup")
+    print(
+        "Machine context: "
+        f"{report['machine']['installed_apps_count']} apps, "
+        f"{report['machine']['project_folders_count']} project folders"
+    )
+    return 0 if _doctor_ok(report) else 1
+
+
+def _doctor_ok(report: dict[str, object]) -> bool:
+    permissions = report.get("permissions")
+    backends = report.get("control_backends")
+    if not isinstance(permissions, list) or not isinstance(backends, list):
+        return False
+    required_permissions = {"Microphone", "Screen Recording", "Accessibility"}
+    permission_ok = all(
+        not isinstance(item, dict)
+        or item.get("name") not in required_permissions
+        or item.get("status") == "available"
+        for item in permissions
+    )
+    backend_ok = any(
+        isinstance(item, dict) and item.get("backend_id") == "accessibility" and item.get("available")
+        for item in backends
+    )
+    return permission_ok and backend_ok
 
 
 def cmd_test_notify(args: argparse.Namespace) -> int:
@@ -930,6 +1027,31 @@ def cmd_memory_forget(args: argparse.Namespace) -> int:
         record_audit(db, actor="user", tool="memory.forget", risk=RiskLevel.SENSITIVE, result="ok" if ok else "error")
     _print_json({"ok": ok})
     return 0 if ok else 1
+
+
+def cmd_memory_scan_machine(args: argparse.Namespace) -> int:
+    from iris.machine_context import collect_machine_context, remember_machine_context
+
+    config = _config(args)
+    with open_state(config) as db:
+        context = collect_machine_context(config, db)
+        memory_ids = remember_machine_context(config, db)
+        record_audit(
+            db,
+            actor="user",
+            tool="memory.scan_machine",
+            risk=RiskLevel.LOW_RISK,
+            result="ok",
+            output_value={"memory_ids": memory_ids},
+        )
+    _print_json(
+        {
+            "memory_ids": memory_ids,
+            "installed_apps_count": len(context.get("installed_apps", [])),
+            "project_folders_count": len(context.get("project_folders", [])),
+        }
+    )
+    return 0
 
 
 def cmd_knowledge_ingest_folder(args: argparse.Namespace) -> int:

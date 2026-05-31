@@ -1,0 +1,143 @@
+{
+  "recipes": [
+    {
+      "name": "spotify_play_song",
+      "description": "Search and play a requested song using native Spotify, browser CDP, then screen fallback. Verify playback before claiming success.",
+      "service": "spotify",
+      "required_connectors": ["spotify"],
+      "tools": ["media_play", "audio_current_media", "browser_media_state", "screen_click_element"],
+      "steps": [
+        {
+          "tool": "media_play",
+          "args": {"service": "spotify", "surface": "auto"},
+          "expected_observation": "Spotify search or playback starts for the requested song."
+        },
+        {
+          "tool": "audio_current_media",
+          "args": {},
+          "expected_observation": "Native media metadata confirms the song or playback state."
+        }
+      ],
+      "fallback_steps": [
+        {
+          "tool": "browser_media_state",
+          "args": {},
+          "expected_observation": "Browser media state or a Pause button confirms playback."
+        },
+        {
+          "tool": "screen_click_element",
+          "args": {"description": "visible Spotify play button for the requested result"},
+          "expected_observation": "Spotify starts playback after the visible play button is clicked."
+        }
+      ],
+      "done_condition": "A native or browser media observation confirms Spotify is playing or the visible UI has changed to pause/playing.",
+      "verification_tool": "audio_current_media"
+    },
+    {
+      "name": "stripe_revenue_check",
+      "description": "Check today's Stripe sales or revenue from the current signed-in dashboard. Never handle credentials; ask the user to sign in manually if needed.",
+      "service": "stripe",
+      "private": true,
+      "required_connectors": ["stripe"],
+      "tools": ["browser_open", "browser_get_dom", "browser_extract", "screen_describe", "browser_verify_state"],
+      "approval_gates": ["read_account_dashboard"],
+      "steps": [
+        {
+          "tool": "browser_open",
+          "args": {"url": "https://dashboard.stripe.com/dashboard", "browser": "Google Chrome", "new_tab": false},
+          "expected_observation": "Stripe Dashboard is visible, or the user is asked to sign in manually."
+        },
+        {
+          "tool": "browser_get_dom",
+          "args": {"max_chars": 20000},
+          "expected_observation": "Dashboard text includes Today, gross volume, sales, revenue, payments, or a login prompt.",
+          "continue_on_error": true
+        },
+        {
+          "tool": "browser_extract",
+          "args": {"browser": "Google Chrome"},
+          "expected_observation": "Visible Stripe dashboard text is extracted by browser fallback.",
+          "continue_on_error": true
+        },
+        {
+          "tool": "screen_describe",
+          "args": {"prompt": "Read the current Stripe dashboard and extract today's sales/revenue/gross volume only if visible. If a login screen is visible, say the user needs to sign in."},
+          "expected_observation": "Visible dashboard values or login status are summarized."
+        }
+      ],
+      "fallback_steps": [],
+      "done_condition": "The answer includes a verified visible value for today's Stripe sales/revenue, or clearly states that sign-in is required.",
+      "verification_tool": "browser_verify_state"
+    },
+    {
+      "name": "calendar_event_lookup",
+      "description": "Find local Calendar events by query and date window with private-data approval.",
+      "service": "calendar",
+      "private": true,
+      "required_connectors": ["apple-calendar"],
+      "tools": ["calendar_find_event"],
+      "approval_gates": ["read_calendar"],
+      "steps": [
+        {
+          "tool": "calendar_find_event",
+          "args": {"days_ahead": 14},
+          "expected_observation": "Matching local Calendar events are returned."
+        }
+      ],
+      "done_condition": "Calendar matches are summarized or no matching event is found.",
+      "verification_tool": "calendar_find_event"
+    },
+    {
+      "name": "reminder_creation",
+      "description": "Create a local Reminders item with parsed due dates after approval.",
+      "service": "reminders",
+      "private": true,
+      "required_connectors": ["apple-reminders"],
+      "tools": ["reminder_create"],
+      "approval_gates": ["create_reminder"],
+      "steps": [
+        {
+          "tool": "reminder_create",
+          "args": {"open_app": true},
+          "expected_observation": "A reminder is created and Reminders opens for confirmation."
+        }
+      ],
+      "done_condition": "The reminder exists or Iris reports exactly why creation failed.",
+      "verification_tool": "app_inspect"
+    },
+    {
+      "name": "gmail_summarize_thread",
+      "description": "Search Gmail and summarize visible messages after approval for private email content.",
+      "service": "gmail",
+      "private": true,
+      "required_connectors": ["gmail"],
+      "tools": ["browser_open", "browser_get_dom", "gmail_search_and_summarize"],
+      "approval_gates": ["read_email"],
+      "steps": [
+        {
+          "tool": "gmail_search_and_summarize",
+          "args": {"browser": "Google Chrome"},
+          "expected_observation": "Visible Gmail search results or thread content are summarized."
+        }
+      ],
+      "done_condition": "The requested Gmail content is summarized, or Iris asks the user to sign in/search manually.",
+      "verification_tool": "browser_get_dom"
+    },
+    {
+      "name": "github_failing_ci",
+      "description": "Inspect a local repo or GitHub page, find failing CI, and summarize next debugging steps.",
+      "service": "github",
+      "required_connectors": ["github"],
+      "tools": ["file_find", "browser_open", "browser_get_dom", "workflow_run"],
+      "steps": [
+        {
+          "tool": "workflow_run",
+          "args": {"name": "repo-debug-pr"},
+          "expected_observation": "The repo debugging workflow starts or drafts steps."
+        }
+      ],
+      "done_condition": "Failing checks are identified and a next action is suggested.",
+      "verification_tool": "browser_get_dom"
+    }
+  ]
+}

@@ -146,6 +146,19 @@ CREATE TABLE IF NOT EXISTS agent_tasks (
   FOREIGN KEY (session_id) REFERENCES agent_sessions(session_id) ON DELETE SET NULL
 );
 
+CREATE TABLE IF NOT EXISTS agent_task_steps (
+  step_id TEXT PRIMARY KEY,
+  task_id TEXT NOT NULL,
+  sequence INTEGER NOT NULL,
+  kind TEXT NOT NULL,
+  status TEXT NOT NULL,
+  message TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  payload_json TEXT NOT NULL DEFAULT '{}',
+  FOREIGN KEY (task_id) REFERENCES agent_tasks(task_id) ON DELETE CASCADE
+);
+
 CREATE TABLE IF NOT EXISTS plugin_settings (
   plugin_id TEXT PRIMARY KEY,
   enabled INTEGER NOT NULL,

@@ -538,6 +538,58 @@ return ""
             )
         return ActionResult("gmail_visible_text", False, result.detail)
 
+    def send_message(
+        self,
+        *,
+        recipient: str,
+        body: str,
+        service: str = "iMessage",
+    ) -> ActionResult:
+        self.safety_gate.assert_not_killed()
+        if not recipient.strip():
+            return ActionResult("send_message", False, "Message recipient is missing.")
+        if not body.strip():
+            return ActionResult("send_message", False, "Message body is missing.")
+        script = f"""
+set recipientQuery to {applescript_string(recipient)}
+set messageBody to {applescript_string(body)}
+set recipientHandle to recipientQuery
+try
+  tell application "Contacts"
+    set matchedPeople to people whose name contains recipientQuery
+    if (count of matchedPeople) is greater than 0 then
+      set matchedPerson to item 1 of matchedPeople
+      if (count of phones of matchedPerson) is greater than 0 then
+        set recipientHandle to value of phone 1 of matchedPerson
+      else if (count of emails of matchedPerson) is greater than 0 then
+        set recipientHandle to value of email 1 of matchedPerson
+      end if
+    end if
+  end tell
+end try
+tell application "Messages"
+  set targetService to 1st service whose service type = iMessage
+  set targetBuddy to buddy recipientHandle of targetService
+  send messageBody to targetBuddy
+end tell
+return recipientHandle
+"""
+        result = run_osascript(script, timeout=20)
+        if result.ok:
+            handle = result.stdout.strip() or recipient
+            return ActionResult(
+                "send_message",
+                True,
+                f"I sent the message to {recipient}.",
+                {"recipient": recipient, "resolved_handle": handle, "service": service},
+            )
+        return ActionResult(
+            "send_message",
+            False,
+            result.stderr or result.stdout or "Messages could not send that.",
+            {"recipient": recipient, "service": service},
+        )
+
     def spotify_play_pause(self) -> ActionResult:
         self.safety_gate.allow(LocalAction("spotify_play_pause"))
         return self.pause_current_media(toggle=True, preferred_service="Spotify")

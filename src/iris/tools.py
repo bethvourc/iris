@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from html import unescape
 from html.parser import HTMLParser
 from pathlib import Path
@@ -11,7 +11,9 @@ from typing import Any, Callable
 from urllib import request
 from urllib.parse import parse_qs, quote_plus, unquote_plus, urlparse
 
+from iris.accessibility_backend import AccessibilityBackend
 from iris.actions import LocalAction, RiskLevel
+from iris.browser_cdp import ChromeCDPBackend
 from iris.computer import ComputerBackend
 from iris.config import IrisConfig
 from iris.connectors import connector_health, default_manifest_dirs, get_connector
@@ -183,6 +185,26 @@ def _default_tools() -> list[ToolSpec]:
             execute=_app_activate,
         ),
         ToolSpec(
+            name="app_inspect",
+            description="Inspect the focused native macOS app's Accessibility tree.",
+            parameters=_object_schema(
+                {
+                    "max_depth": {"type": "integer"},
+                    "max_items": {"type": "integer"},
+                },
+                required=[],
+            ),
+            risk=RiskLevel.LOW_RISK,
+            execute=_app_inspect,
+        ),
+        ToolSpec(
+            name="app_windows",
+            description="List running foreground apps and their visible windows using macOS Accessibility.",
+            parameters=_object_schema({}),
+            risk=RiskLevel.LOW_RISK,
+            execute=_app_windows,
+        ),
+        ToolSpec(
             name="app_hotkey",
             description="Press a hotkey in the active app.",
             parameters=_object_schema(
@@ -204,10 +226,37 @@ def _default_tools() -> list[ToolSpec]:
         ),
         ToolSpec(
             name="app_find_element",
-            description="Find an element in the active app using screen/vision context.",
+            description="Find an element in the focused app using macOS Accessibility first.",
             parameters=_object_schema({"description": {"type": "string"}}),
             risk=RiskLevel.LOW_RISK,
-            execute=_find_visible_element,
+            execute=_app_find_element,
+        ),
+        ToolSpec(
+            name="app_click_element",
+            description="Click an element in the focused app by role/name/value using macOS Accessibility.",
+            parameters=_object_schema({"description": {"type": "string"}}),
+            risk=RiskLevel.LOW_RISK,
+            execute=_app_click_element,
+        ),
+        ToolSpec(
+            name="app_menu_select",
+            description="Select a native app menu item by app name and menu path.",
+            parameters=_object_schema(
+                {
+                    "app_name": {"type": "string"},
+                    "menu_path": {"type": "array", "items": {"type": "string"}},
+                },
+                required=["app_name", "menu_path"],
+            ),
+            risk=RiskLevel.LOW_RISK,
+            execute=_app_menu_select,
+        ),
+        ToolSpec(
+            name="app_type_text",
+            description="Type text into the focused native field. Requires approval.",
+            parameters=_object_schema({"text": {"type": "string"}}),
+            risk=RiskLevel.SENSITIVE,
+            execute=_app_type_text,
         ),
         ToolSpec(
             name="browser_open",
@@ -231,11 +280,25 @@ def _default_tools() -> list[ToolSpec]:
             execute=_browser_current_page,
         ),
         ToolSpec(
+            name="browser_tabs",
+            description="List Chrome tabs using the Chrome DevTools Protocol when available.",
+            parameters=_object_schema({}),
+            risk=RiskLevel.LOW_RISK,
+            execute=_browser_tabs,
+        ),
+        ToolSpec(
             name="browser_extract",
             description="Extract visible text from the current browser tab.",
             parameters=_object_schema({"browser": {"type": "string"}}, required=[]),
             risk=RiskLevel.LOW_RISK,
             execute=_browser_extract,
+        ),
+        ToolSpec(
+            name="browser_get_dom",
+            description="Inspect the current browser DOM, visible text, and visible controls using CDP.",
+            parameters=_object_schema({"max_chars": {"type": "integer"}}, required=[]),
+            risk=RiskLevel.LOW_RISK,
+            execute=_browser_get_dom,
         ),
         ToolSpec(
             name="browser_click",
@@ -251,11 +314,52 @@ def _default_tools() -> list[ToolSpec]:
             execute=_browser_click,
         ),
         ToolSpec(
+            name="browser_click_element",
+            description="Click a browser element by visible text, role label, or aria label using CDP first.",
+            parameters=_object_schema({"text": {"type": "string"}}, required=["text"]),
+            risk=RiskLevel.LOW_RISK,
+            execute=_browser_click_element,
+        ),
+        ToolSpec(
             name="browser_type",
             description="Type into the active browser field. Requires approval.",
             parameters=_object_schema({"text": {"type": "string"}}),
             risk=RiskLevel.SENSITIVE,
             execute=_type_text,
+        ),
+        ToolSpec(
+            name="browser_type_into",
+            description="Type text into a browser field by selector, placeholder, aria-label, or focused field. Requires approval.",
+            parameters=_object_schema(
+                {
+                    "field": {"type": "string"},
+                    "text": {"type": "string"},
+                },
+                required=["text"],
+            ),
+            risk=RiskLevel.SENSITIVE,
+            execute=_browser_type_into,
+        ),
+        ToolSpec(
+            name="browser_verify_state",
+            description="Verify the current browser tab contains expected text, title, or URL.",
+            parameters=_object_schema(
+                {
+                    "text": {"type": "string"},
+                    "url_contains": {"type": "string"},
+                    "title_contains": {"type": "string"},
+                },
+                required=[],
+            ),
+            risk=RiskLevel.LOW_RISK,
+            execute=_browser_verify_state,
+        ),
+        ToolSpec(
+            name="browser_media_state",
+            description="Inspect audio/video and media controls in the current browser tab.",
+            parameters=_object_schema({}),
+            risk=RiskLevel.LOW_RISK,
+            execute=_browser_media_state,
         ),
         ToolSpec(
             name="browser_play_media",
@@ -356,6 +460,13 @@ def _default_tools() -> list[ToolSpec]:
             execute=_task_start_background,
         ),
         ToolSpec(
+            name="task_status",
+            description="Report active, queued, or recent durable agent tasks and step logs.",
+            parameters=_object_schema({"limit": {"type": "integer"}}, required=[]),
+            risk=RiskLevel.LOW_RISK,
+            execute=_task_status,
+        ),
+        ToolSpec(
             name="calendar_find_event",
             description="Search local macOS Calendar events by text and date window. Requires approval because calendar data is private.",
             parameters=_object_schema(
@@ -440,6 +551,13 @@ def _default_tools() -> list[ToolSpec]:
             execute=_knowledge_search,
         ),
         ToolSpec(
+            name="machine_context",
+            description="Inspect local machine context: installed apps, common project folders, browser profile, and connector health.",
+            parameters=_object_schema({}),
+            risk=RiskLevel.LOW_RISK,
+            execute=_machine_context,
+        ),
+        ToolSpec(
             name="file_list_folder",
             description="List files in a local folder such as Downloads, Desktop, or Documents.",
             parameters=_object_schema(
@@ -472,6 +590,20 @@ def _default_tools() -> list[ToolSpec]:
             parameters=_object_schema({"name": {"type": "string"}}),
             risk=RiskLevel.LOW_RISK,
             execute=_workflow_run,
+        ),
+        ToolSpec(
+            name="recipe_run",
+            description="Run a manifest-backed verified action recipe with inputs and observations. Requires approval.",
+            parameters=_object_schema(
+                {
+                    "recipe_name": {"type": "string"},
+                    "inputs": {"type": "object"},
+                    "max_steps": {"type": "integer"},
+                },
+                required=["recipe_name"],
+            ),
+            risk=RiskLevel.SENSITIVE,
+            execute=_recipe_run,
         ),
         ToolSpec(
             name="open_app",
@@ -774,6 +906,20 @@ def _default_tools() -> list[ToolSpec]:
             execute=_draft_email,
         ),
         ToolSpec(
+            name="message_send",
+            description="Send an iMessage/SMS through macOS Messages after approval. Requires recipient and exact body.",
+            parameters=_object_schema(
+                {
+                    "recipient": {"type": "string"},
+                    "body": {"type": "string"},
+                    "service": {"type": "string"},
+                },
+                required=["recipient", "body"],
+            ),
+            risk=RiskLevel.SENSITIVE,
+            execute=_message_send,
+        ),
+        ToolSpec(
             name="create_task",
             description="Create a local task draft. Sending to external task systems requires a configured connector.",
             parameters=_object_schema(
@@ -818,6 +964,18 @@ def _computer(context: ToolContext) -> ComputerBackend:
         perception=context.perception,
         screen_awareness=context.screen_awareness,
     )
+
+
+def _accessibility() -> AccessibilityBackend:
+    return AccessibilityBackend()
+
+
+def _chrome_cdp() -> ChromeCDPBackend:
+    return ChromeCDPBackend()
+
+
+def _prefer_cdp(browser: str = "Google Chrome") -> bool:
+    return browser.strip().lower() in {"google chrome", "chrome"}
 
 
 def _string_arg(arguments: dict[str, Any], name: str, default: str = "") -> str:
@@ -875,6 +1033,57 @@ def _app_activate(arguments: dict[str, Any], context: ToolContext) -> ToolResult
     return _from_action_result(computer.activate_app(_string_arg(arguments, "app_name")))
 
 
+def _app_inspect(arguments: dict[str, Any], context: ToolContext) -> ToolResult:
+    max_depth = max(1, min(_int_arg(arguments, "max_depth", 3), 6))
+    max_items = max(10, min(_int_arg(arguments, "max_items", 120), 300))
+    return _from_action_result(
+        _accessibility().inspect_focused_app(max_depth=max_depth, max_items=max_items)
+    )
+
+
+def _app_windows(arguments: dict[str, Any], context: ToolContext) -> ToolResult:
+    return _from_action_result(_accessibility().list_apps_windows())
+
+
+def _app_find_element(arguments: dict[str, Any], context: ToolContext) -> ToolResult:
+    description = _string_arg(arguments, "description")
+    result = _accessibility().find_element(description)
+    if result.ok:
+        return _from_action_result(result)
+    screen_result = _find_visible_element(arguments, context)
+    if screen_result.ok:
+        return screen_result
+    return _from_action_result(result)
+
+
+def _app_click_element(arguments: dict[str, Any], context: ToolContext) -> ToolResult:
+    description = _string_arg(arguments, "description")
+    result = _accessibility().click_element(description)
+    if result.ok:
+        return _from_action_result(result)
+    screen_result = _screen_click_element(arguments, context)
+    if screen_result.ok or screen_result.continue_planning:
+        return screen_result
+    return _from_action_result(result)
+
+
+def _app_menu_select(arguments: dict[str, Any], context: ToolContext) -> ToolResult:
+    raw_path = arguments.get("menu_path")
+    if isinstance(raw_path, str):
+        menu_path = [part.strip() for part in re.split(r"\s*(?:>|/|,)\s*", raw_path) if part.strip()]
+    elif isinstance(raw_path, list):
+        menu_path = [str(part).strip() for part in raw_path if str(part).strip()]
+    else:
+        menu_path = []
+    return _from_action_result(
+        _accessibility().menu_select(_string_arg(arguments, "app_name"), menu_path)
+    )
+
+
+def _app_type_text(arguments: dict[str, Any], context: ToolContext) -> ToolResult:
+    return _from_action_result(_accessibility().type_text(_string_arg(arguments, "text")))
+
+
 def _open_url(arguments: dict[str, Any], context: ToolContext) -> ToolResult:
     url = _normalize_url(_string_arg(arguments, "url"))
     result = context.controller.open_url(url)
@@ -896,6 +1105,13 @@ def _browser_open(arguments: dict[str, Any], context: ToolContext) -> ToolResult
     url = _normalize_url(_string_arg(arguments, "url"))
     browser = _string_arg(arguments, "browser", "Google Chrome")
     new_tab = bool(arguments.get("new_tab"))
+    if _prefer_cdp(browser):
+        cdp = _chrome_cdp()
+        if cdp.available():
+            result = cdp.navigate(url, new_tab=new_tab)
+            if result.ok:
+                _remember_browser(context, url=url, browser=browser, current_task=_string_arg(arguments, "task"))
+                return ToolResult(True, _friendly_opened_url(url, browser), result.payload)
     result = _computer(context).open_url(url, browser, new_tab=new_tab)
     if result.ok:
         _remember_browser(context, url=url, browser=browser, current_task=_string_arg(arguments, "task"))
@@ -905,26 +1121,98 @@ def _browser_open(arguments: dict[str, Any], context: ToolContext) -> ToolResult
 
 def _browser_current_page(arguments: dict[str, Any], context: ToolContext) -> ToolResult:
     browser = _string_arg(arguments, "browser", "Google Chrome")
+    if _prefer_cdp(browser):
+        cdp = _chrome_cdp()
+        if cdp.available():
+            result = cdp.current_page()
+            if result.ok and isinstance(result.payload, dict) and context.session_state is not None:
+                context.session_state["last_opened_url"] = result.payload.get("url", "")
+            return _from_action_result(result)
     result = _computer(context).browser_current_page(browser)
     if result.ok and isinstance(result.payload, dict) and context.session_state is not None:
         context.session_state["last_opened_url"] = result.payload.get("url", "")
     return _from_action_result(result)
 
 
+def _browser_tabs(arguments: dict[str, Any], context: ToolContext) -> ToolResult:
+    return _from_action_result(_chrome_cdp().list_tabs())
+
+
 def _browser_extract(arguments: dict[str, Any], context: ToolContext) -> ToolResult:
-    return _from_action_result(
-        _computer(context).browser_extract_text(_string_arg(arguments, "browser", "Google Chrome"))
-    )
+    browser = _string_arg(arguments, "browser", "Google Chrome")
+    if _prefer_cdp(browser):
+        cdp = _chrome_cdp()
+        if cdp.available():
+            result = cdp.get_dom()
+            if result.ok:
+                payload = result.payload if isinstance(result.payload, dict) else {}
+                text = str(payload.get("text") or "")
+                return ToolResult(
+                    True,
+                    "I read the visible browser page.",
+                    {"text": text, "browser": browser, "dom": payload, "backend": "cdp"},
+                    continue_planning=True,
+                )
+    result = _from_action_result(_computer(context).browser_extract_text(browser))
+    if result.ok:
+        return ToolResult(result.ok, result.message, result.payload, continue_planning=True)
+    return result
+
+
+def _browser_get_dom(arguments: dict[str, Any], context: ToolContext) -> ToolResult:
+    max_chars = max(1000, min(_int_arg(arguments, "max_chars", 12000), 30000))
+    result = _from_action_result(_chrome_cdp().get_dom(max_chars=max_chars))
+    if result.ok:
+        return ToolResult(result.ok, result.message, result.payload, continue_planning=True)
+    return result
 
 
 def _browser_click(arguments: dict[str, Any], context: ToolContext) -> ToolResult:
+    browser = _string_arg(arguments, "browser", "Google Chrome")
+    if _prefer_cdp(browser):
+        cdp = _chrome_cdp()
+        if cdp.available():
+            result = cdp.click_text(_string_arg(arguments, "text"))
+            if result.ok:
+                return _from_action_result(result)
     result = _computer(context).browser_click_text(
         _string_arg(arguments, "text"),
-        _string_arg(arguments, "browser", "Google Chrome"),
+        browser,
     )
     if result.ok:
         return ToolResult(True, f"I clicked {_string_arg(arguments, 'text')}.", result.payload)
     return _from_action_result(result)
+
+
+def _browser_click_element(arguments: dict[str, Any], context: ToolContext) -> ToolResult:
+    result = _chrome_cdp().click_text(_string_arg(arguments, "text"))
+    if result.ok:
+        return _from_action_result(result)
+    return _browser_click({"text": _string_arg(arguments, "text"), "browser": "Google Chrome"}, context)
+
+
+def _browser_type_into(arguments: dict[str, Any], context: ToolContext) -> ToolResult:
+    result = _chrome_cdp().type_into(
+        field=_string_arg(arguments, "field"),
+        text=_string_arg(arguments, "text"),
+    )
+    if result.ok:
+        return _from_action_result(result)
+    return _type_text({"text": _string_arg(arguments, "text")}, context)
+
+
+def _browser_verify_state(arguments: dict[str, Any], context: ToolContext) -> ToolResult:
+    return _from_action_result(
+        _chrome_cdp().verify_state(
+            text=_string_arg(arguments, "text"),
+            url_contains=_string_arg(arguments, "url_contains"),
+            title_contains=_string_arg(arguments, "title_contains"),
+        )
+    )
+
+
+def _browser_media_state(arguments: dict[str, Any], context: ToolContext) -> ToolResult:
+    return _from_action_result(_chrome_cdp().media_state())
 
 
 def _browser_play_media(arguments: dict[str, Any], context: ToolContext) -> ToolResult:
@@ -1417,6 +1705,46 @@ def _task_start_background(arguments: dict[str, Any], context: ToolContext) -> T
     )
 
 
+def _task_status(arguments: dict[str, Any], context: ToolContext) -> ToolResult:
+    if context.config is None:
+        return ToolResult(False, "The durable task store is not connected in this runtime.")
+    limit = max(1, min(_int_arg(arguments, "limit", 5), 20))
+    with open_state(context.config) as db:
+        running = task_store.list_tasks(db, status="running", limit=limit)
+        queued = task_store.list_tasks(db, status="queued", limit=limit)
+        recent = task_store.list_tasks(db, limit=limit)
+    if running:
+        active = running[0]
+        return ToolResult(
+            True,
+            f"I'm working on {active.get('title') or active.get('task_id')}.",
+            {"running": running, "queued": queued, "recent": recent},
+        )
+    if queued:
+        return ToolResult(
+            True,
+            f"I have {len(queued)} queued task{'s' if len(queued) != 1 else ''}.",
+            {"running": running, "queued": queued, "recent": recent},
+        )
+    return ToolResult(True, "No Iris background task is running right now.", {"recent": recent})
+
+
+def _machine_context(arguments: dict[str, Any], context: ToolContext) -> ToolResult:
+    if context.config is None:
+        return ToolResult(False, "Machine context needs an Iris config.")
+    from iris.machine_context import collect_machine_context
+
+    with open_state(context.config) as db:
+        data = collect_machine_context(context.config, db)
+    app_count = len(data.get("installed_apps", []))
+    project_count = len(data.get("project_folders", []))
+    return ToolResult(
+        True,
+        f"I can see {app_count} installed apps and {project_count} project folders in local context.",
+        data,
+    )
+
+
 def _calendar_find_event(arguments: dict[str, Any], context: ToolContext) -> ToolResult:
     query = _string_arg(arguments, "query")
     if not query:
@@ -1474,11 +1802,12 @@ def _reminder_create(arguments: dict[str, Any], context: ToolContext) -> ToolRes
     if not title:
         return ToolResult(False, "I need a reminder title.")
     if due:
+        due_script = _reminder_due_applescript(due)
         script = f"""
 set reminderTitle to {applescript_string(title)}
 set dueText to {applescript_string(due)}
 try
-  set dueDate to date dueText
+{due_script}
   tell application "Reminders"
     set targetList to default list
     make new reminder at end of reminders of targetList with properties {{name:reminderTitle, remind me date:dueDate}}
@@ -1510,6 +1839,76 @@ return "created reminder"
     if due and "without date" in result.stdout.lower():
         message += " I could not parse the due date, so I saved it without a time."
     return ToolResult(True, message, {"title": title, "due": due, "opened": open_app})
+
+
+def _reminder_due_applescript(due: str) -> str:
+    parsed = _parse_due_datetime(due)
+    if parsed is None:
+        return "  set dueDate to date dueText"
+    month_name = parsed.strftime("%B")
+    return (
+        "  set dueDate to current date\n"
+        f"  set year of dueDate to {parsed.year}\n"
+        f"  set month of dueDate to {month_name}\n"
+        f"  set day of dueDate to {parsed.day}\n"
+        f"  set time of dueDate to {parsed.hour * 3600 + parsed.minute * 60 + parsed.second}"
+    )
+
+
+def _parse_due_datetime(due: str) -> datetime | None:
+    text = _clean_space(due).lower()
+    if not text:
+        return None
+    now = datetime.now()
+    target = now
+    if "tomorrow" in text:
+        target = now + timedelta(days=1)
+    elif "today" in text:
+        target = now
+    else:
+        weekdays = {
+            "monday": 0,
+            "tuesday": 1,
+            "wednesday": 2,
+            "thursday": 3,
+            "friday": 4,
+            "saturday": 5,
+            "sunday": 6,
+        }
+        for name, weekday in weekdays.items():
+            if name in text:
+                days_ahead = (weekday - now.weekday()) % 7
+                if days_ahead == 0 or f"next {name}" in text:
+                    days_ahead += 7
+                target = now + timedelta(days=days_ahead)
+                break
+        else:
+            return None
+    hour, minute = _parse_due_time(text)
+    return target.replace(hour=hour, minute=minute, second=0, microsecond=0)
+
+
+def _parse_due_time(text: str) -> tuple[int, int]:
+    if "noon" in text:
+        return 12, 0
+    if "midnight" in text:
+        return 0, 0
+    match = re.search(r"\b(\d{1,2})(?::(\d{2}))?\s*(a\.?m\.?|p\.?m\.?)\b", text)
+    if match:
+        hour = int(match.group(1))
+        minute = int(match.group(2) or 0)
+        meridiem = match.group(3).replace(".", "")
+        if meridiem == "pm" and hour != 12:
+            hour += 12
+        if meridiem == "am" and hour == 12:
+            hour = 0
+        return max(0, min(hour, 23)), max(0, min(minute, 59))
+    match = re.search(r"\bat\s+(\d{1,2})(?::(\d{2}))?\b", text)
+    if match:
+        hour = int(match.group(1))
+        minute = int(match.group(2) or 0)
+        return max(0, min(hour, 23)), max(0, min(minute, 59))
+    return 9, 0
 
 
 def _media_search_or_play(arguments: dict[str, Any], context: ToolContext) -> ToolResult:
@@ -1711,6 +2110,75 @@ def _workflow_run(arguments: dict[str, Any], context: ToolContext) -> ToolResult
     return ToolResult(True, f"Workflow {name} is ready to run through `./iris run {name}`.", {"name": name})
 
 
+def _recipe_run(arguments: dict[str, Any], context: ToolContext) -> ToolResult:
+    recipe_name = _string_arg(arguments, "recipe_name") or _string_arg(arguments, "name")
+    if not recipe_name:
+        return ToolResult(False, "I need a recipe name.")
+    registry = context.recipes or ActionRecipeRegistry.default(
+        context.config.project_root if context.config is not None else None
+    )
+    recipe = registry.get(recipe_name)
+    if recipe is None:
+        return ToolResult(False, f"I do not have a recipe named {recipe_name}.")
+    raw_inputs = arguments.get("inputs")
+    inputs = raw_inputs if isinstance(raw_inputs, dict) else {}
+    max_steps = max(1, min(_int_arg(arguments, "max_steps", 8), 20))
+    observations: list[dict[str, Any]] = []
+    tool_registry = ToolRegistry.default()
+
+    def run_steps(steps: Any) -> bool:
+        for step in list(steps)[:max_steps]:
+            if not step.tool or step.tool == "recipe_run":
+                continue
+            step_args = _recipe_step_args(step.args, inputs)
+            tool = tool_registry.get(step.tool)
+            if tool is None:
+                observations.append(
+                    {"tool": step.tool, "ok": False, "message": "Tool is not available."}
+                )
+                if not step.continue_on_error:
+                    return False
+                continue
+            try:
+                result = tool_registry.execute_approved(step.tool, step_args, context)
+            except Exception as exc:
+                result = ToolResult(False, _human_tool_error(str(exc)))
+            observations.append(
+                {
+                    "tool": step.tool,
+                    "arguments": step_args,
+                    "ok": result.ok,
+                    "message": result.message,
+                    "payload": result.payload,
+                    "expected_observation": step.expected_observation,
+                }
+            )
+            if not result.ok and not step.continue_on_error:
+                return False
+        return True
+
+    primary_ok = run_steps(recipe.steps)
+    fallback_ok = True
+    if not primary_ok and recipe.fallback_steps:
+        fallback_ok = run_steps(recipe.fallback_steps)
+    ok = primary_ok or fallback_ok
+    final_observation = str(observations[-1]["message"]) if observations else recipe.description
+    if recipe.done_condition:
+        final_observation = f"{final_observation} Done condition: {recipe.done_condition}"
+    return ToolResult(
+        ok,
+        final_observation,
+        {
+            "recipe_name": recipe.name,
+            "service": recipe.service,
+            "done_condition": recipe.done_condition,
+            "verification_tool": recipe.verification_tool,
+            "observations": observations,
+        },
+        continue_planning=ok,
+    )
+
+
 def _watch_change(arguments: dict[str, Any], context: ToolContext) -> ToolResult:
     kind = _string_arg(arguments, "kind")
     target = _string_arg(arguments, "target")
@@ -1738,6 +2206,19 @@ def _draft_email(arguments: dict[str, Any], context: ToolContext) -> ToolResult:
         True,
         f"Draft ready: {subject}",
         {"to": _string_arg(arguments, "to"), "subject": subject, "body": body},
+    )
+
+
+def _message_send(arguments: dict[str, Any], context: ToolContext) -> ToolResult:
+    recipient = _string_arg(arguments, "recipient")
+    body = _string_arg(arguments, "body")
+    service = _string_arg(arguments, "service", "iMessage") or "iMessage"
+    if not recipient:
+        return ToolResult(False, "I need a message recipient.")
+    if not body:
+        return ToolResult(False, "I need the exact message to send.")
+    return _from_action_result(
+        context.controller.send_message(recipient=recipient, body=body, service=service)
     )
 
 
@@ -1812,6 +2293,26 @@ def _friendly_opened_url(url: str, browser: str | None = None) -> str:
     return f"I opened {target}."
 
 
+def _recipe_step_args(step_args: dict[str, Any], inputs: dict[str, Any]) -> dict[str, Any]:
+    resolved = {key: _recipe_value(value, inputs) for key, value in step_args.items()}
+    for key, value in inputs.items():
+        resolved.setdefault(key, value)
+    return resolved
+
+
+def _recipe_value(value: Any, inputs: dict[str, Any]) -> Any:
+    if isinstance(value, str):
+        resolved = value
+        for key, input_value in inputs.items():
+            resolved = resolved.replace("{{" + str(key) + "}}", str(input_value))
+        return resolved
+    if isinstance(value, list):
+        return [_recipe_value(item, inputs) for item in value]
+    if isinstance(value, dict):
+        return {key: _recipe_value(item, inputs) for key, item in value.items()}
+    return value
+
+
 def _web_search(query: str, max_results: int = 5) -> list[dict[str, str]]:
     html = _fetch_text(
         f"https://html.duckduckgo.com/html/?q={quote_plus(query)}",
@@ -1870,12 +2371,12 @@ def _format_research_summary(query: str, results: list[dict[str, str]]) -> str:
     if not results:
         return f"I couldn't find much public information for {query}."
     lines = []
-    for item in results[:3]:
+    for item in results[:2]:
         title = item.get("title") or _domain(item.get("url", ""))
         snippet = item.get("page_text") or item.get("snippet") or "No short description available."
-        lines.append(f"{title}: {_compact_text(snippet, 220)}")
+        lines.append(f"{title}: {_compact_text(snippet, 150)}")
     joined = " ".join(lines)
-    return f"Here’s what I found publicly for {query}: {joined}"
+    return _compact_text(f"Here’s what I found for {query}: {joined}", 520)
 
 
 def _summarize_visible_email_text(query: str, text: str) -> str:
