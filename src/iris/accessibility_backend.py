@@ -83,6 +83,9 @@ return outputText
     def inspect_focused_app(self, *, max_depth: int = 3, max_items: int = 120) -> ActionResult:
         max_depth = max(1, min(int(max_depth), 6))
         max_items = max(10, min(int(max_items), 300))
+        pyobjc_result = _inspect_focused_app_pyobjc(max_depth=max_depth, max_items=max_items)
+        if pyobjc_result.ok:
+            return pyobjc_result
         script = f'''
 property rows : {{}}
 property itemCount : 0
@@ -155,6 +158,7 @@ return outputText
                 "app": app_name,
                 "elements": [element.summary() for element in elements],
                 "truncated": len(elements) >= max_items,
+                "backend": "system_events",
             },
         )
 
@@ -198,6 +202,9 @@ return outputText
         query = query.strip()
         if not query:
             return ActionResult("accessibility_click_element", False, "I need an element name or description.")
+        pyobjc_result = _click_element_pyobjc(query)
+        if pyobjc_result.ok:
+            return pyobjc_result
         script = f'''
 property needle : {applescript_string(query.lower())}
 property clickedElement : false
@@ -316,6 +323,210 @@ def _parse_elements(output: str) -> list[AccessibilityElement]:
             )
         )
     return elements
+
+
+def _inspect_focused_app_pyobjc(*, max_depth: int, max_items: int) -> ActionResult:
+    loaded = _load_pyobjc_ax()
+    if loaded is None:
+        return ActionResult("accessibility_inspect_focused_app", False, "PyObjC Accessibility is unavailable.")
+    appkit, quartz = loaded
+    if hasattr(quartz, "AXIsProcessTrusted") and not quartz.AXIsProcessTrusted():
+        return ActionResult(
+            "accessibility_inspect_focused_app",
+            False,
+            "Accessibility permission is missing for the app running Iris.",
+        )
+    frontmost = appkit.NSWorkspace.sharedWorkspace().frontmostApplication()
+    if frontmost is None:
+        return ActionResult("accessibility_inspect_focused_app", False, "No focused app is available.")
+    app_name = str(frontmost.localizedName() or "")
+    pid = int(frontmost.processIdentifier())
+    root = quartz.AXUIElementCreateApplication(pid)
+    elements: list[AccessibilityElement] = []
+    seen: set[int] = set()
+
+    def visit(element: Any, depth: int) -> None:
+        if len(elements) >= max_items:
+            return
+        identity = id(element)
+        if identity in seen:
+            return
+        seen.add(identity)
+        elements.append(_element_from_ax(quartz, element, app_name, depth))
+        if depth >= max_depth:
+            return
+        children = _ax_attr(quartz, element, "AXChildren")
+        if not isinstance(children, (list, tuple)):
+            return
+        for child in children:
+            visit(child, depth + 1)
+            if len(elements) >= max_items:
+                break
+
+    try:
+        visit(root, 0)
+    except Exception as exc:
+        return ActionResult("accessibility_inspect_focused_app", False, f"PyObjC Accessibility failed: {exc}")
+    return ActionResult(
+        "accessibility_inspect_focused_app",
+        True,
+        f"Inspected {app_name or 'focused app'} with {len(elements)} UI elements.",
+        {
+            "app": app_name,
+            "pid": pid,
+            "elements": [element.summary() for element in elements],
+            "truncated": len(elements) >= max_items,
+            "backend": "pyobjc",
+        },
+    )
+
+
+def _click_element_pyobjc(query: str) -> ActionResult:
+    loaded = _load_pyobjc_ax()
+    if loaded is None:
+        return ActionResult("accessibility_click_element", False, "PyObjC Accessibility is unavailable.")
+    appkit, quartz = loaded
+    if hasattr(quartz, "AXIsProcessTrusted") and not quartz.AXIsProcessTrusted():
+        return ActionResult(
+            "accessibility_click_element",
+            False,
+            "Accessibility permission is missing for the app running Iris.",
+        )
+    frontmost = appkit.NSWorkspace.sharedWorkspace().frontmostApplication()
+    if frontmost is None:
+        return ActionResult("accessibility_click_element", False, "No focused app is available.")
+    app_name = str(frontmost.localizedName() or "")
+    root = quartz.AXUIElementCreateApplication(int(frontmost.processIdentifier()))
+    match = _find_ax_match(quartz, root, app_name, query)
+    if match is None:
+        return ActionResult("accessibility_click_element", False, f"I could not find a native UI element matching {query}.")
+    element, summary = match
+    try:
+        outcome = quartz.AXUIElementPerformAction(element, getattr(quartz, "kAXPressAction", "AXPress"))
+    except Exception as exc:
+        return ActionResult("accessibility_click_element", False, f"Accessibility press failed: {exc}")
+    ok = outcome == 0 or outcome is None
+    return ActionResult(
+        "accessibility_click_element",
+        ok,
+        f"Clicked {summary.name or summary.description or query}." if ok else "Accessibility press did not complete.",
+        {"query": query, "element": summary.summary(), "backend": "pyobjc"},
+    )
+
+
+def _find_ax_match(
+    quartz: Any,
+    root: Any,
+    app_name: str,
+    query: str,
+    *,
+    max_depth: int = 6,
+    max_items: int = 300,
+) -> tuple[Any, AccessibilityElement] | None:
+    elements: list[tuple[Any, AccessibilityElement]] = []
+    seen: set[int] = set()
+
+    def visit(element: Any, depth: int) -> None:
+        if len(elements) >= max_items:
+            return
+        identity = id(element)
+        if identity in seen:
+            return
+        seen.add(identity)
+        summary = _element_from_ax(quartz, element, app_name, depth)
+        elements.append((element, summary))
+        if depth >= max_depth:
+            return
+        children = _ax_attr(quartz, element, "AXChildren")
+        if not isinstance(children, (list, tuple)):
+            return
+        for child in children:
+            visit(child, depth + 1)
+
+    visit(root, 0)
+    summaries = [summary for _, summary in elements]
+    match = _best_match(summaries, query)
+    if match is None:
+        return None
+    for element, summary in elements:
+        if summary == match:
+            return element, summary
+    return None
+
+
+def _element_from_ax(quartz: Any, element: Any, app_name: str, depth: int) -> AccessibilityElement:
+    role = _ax_string(quartz, element, "AXRole")
+    name = _ax_string(quartz, element, "AXTitle") or _ax_string(quartz, element, "AXIdentifier")
+    value = _ax_string(quartz, element, "AXValue")
+    description = _ax_string(quartz, element, "AXDescription") or _ax_string(quartz, element, "AXHelp")
+    return AccessibilityElement(
+        app=app_name,
+        role=role,
+        name=name,
+        value=value,
+        description=description,
+        position=_ax_pair(quartz, element, "AXPosition"),
+        size=_ax_pair(quartz, element, "AXSize"),
+        depth=depth,
+    )
+
+
+def _load_pyobjc_ax() -> tuple[Any, Any] | None:
+    try:  # pragma: no cover - depends on macOS PyObjC runtime
+        import AppKit  # type: ignore
+        import Quartz  # type: ignore
+
+        return AppKit, Quartz
+    except Exception:
+        return None
+
+
+def _ax_attr(quartz: Any, element: Any, attribute: str) -> Any:
+    try:
+        result = quartz.AXUIElementCopyAttributeValue(element, attribute, None)
+    except TypeError:
+        try:
+            result = quartz.AXUIElementCopyAttributeValue(element, attribute)
+        except Exception:
+            return None
+    except Exception:
+        return None
+    if isinstance(result, tuple):
+        if not result:
+            return None
+        if len(result) >= 2:
+            err, value = result[0], result[1]
+            return value if err == 0 else None
+        return result[0]
+    return result
+
+
+def _ax_string(quartz: Any, element: Any, attribute: str) -> str:
+    value = _ax_attr(quartz, element, attribute)
+    if value is None:
+        return ""
+    try:
+        return str(value)
+    except Exception:
+        return ""
+
+
+def _ax_pair(quartz: Any, element: Any, attribute: str) -> tuple[int, int] | None:
+    value = _ax_attr(quartz, element, attribute)
+    if value is None:
+        return None
+    try:
+        if hasattr(quartz, "AXValueGetValue") and hasattr(quartz, "kAXValueCGPointType") and attribute == "AXPosition":
+            ok, point = quartz.AXValueGetValue(value, quartz.kAXValueCGPointType, None)
+            if ok and point is not None:
+                return int(point.x), int(point.y)
+        if hasattr(quartz, "AXValueGetValue") and hasattr(quartz, "kAXValueCGSizeType") and attribute == "AXSize":
+            ok, size = quartz.AXValueGetValue(value, quartz.kAXValueCGSizeType, None)
+            if ok and size is not None:
+                return int(size.width), int(size.height)
+    except Exception:
+        return None
+    return None
 
 
 def _best_match(elements: list[AccessibilityElement], query: str) -> AccessibilityElement | None:

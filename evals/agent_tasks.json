@@ -1,0 +1,100 @@
+{
+  "cases": [
+    {
+      "id": "browser_current_screen",
+      "category": "screen",
+      "input": "What am I currently looking at on my screen?",
+      "expected_tools": ["screen_describe"],
+      "live_safe": true
+    },
+    {
+      "id": "browser_open_current_tab",
+      "category": "browser",
+      "input": "Open example.com in my current browser tab.",
+      "expected_tools": ["browser_open", "browser_current_page", "browser_verify_state"],
+      "live_safe": true
+    },
+    {
+      "id": "browser_click_visible_button",
+      "category": "browser",
+      "input": "Click the visible continue button on this page.",
+      "expected_tools": ["browser_click_element", "screen_click_element"]
+    },
+    {
+      "id": "spotify_play_song",
+      "category": "media",
+      "input": "Play Born to Win by Burna Boy on Spotify.",
+      "expected_tools": ["media_play", "audio_current_media", "browser_media_state"],
+      "expected_recipe": "spotify_play_song",
+      "connector": "spotify",
+      "live_safe": true
+    },
+    {
+      "id": "spotify_followup_play_it",
+      "category": "media",
+      "input": "Play it.",
+      "expected_tools": ["media_play", "audio_current_media"],
+      "expected_recipe": "spotify_play_song",
+      "connector": "spotify",
+      "live_safe": true
+    },
+    {
+      "id": "stripe_month_sales",
+      "category": "private-dashboard",
+      "input": "Open my Stripe dashboard and tell me how much we made in sales this month.",
+      "expected_tools": ["recipe_run", "browser_open", "browser_get_dom", "browser_extract", "screen_describe"],
+      "expected_recipe": "stripe_revenue_check",
+      "approval_expected": true,
+      "connector": "stripe"
+    },
+    {
+      "id": "messages_send_beth",
+      "category": "messaging",
+      "input": "Send an iMessage to Beth saying hi.",
+      "expected_tools": ["message_send"],
+      "approval_expected": true,
+      "connector": "messages"
+    },
+    {
+      "id": "reminder_tomorrow",
+      "category": "mac-native",
+      "input": "Create a reminder tomorrow to message Okiki.",
+      "expected_tools": ["reminder_create"],
+      "expected_recipe": "reminder_creation",
+      "approval_expected": true,
+      "connector": "apple-reminders"
+    },
+    {
+      "id": "calendar_lookup",
+      "category": "mac-native",
+      "input": "What meetings do I have tomorrow?",
+      "expected_tools": ["calendar_find_event"],
+      "expected_recipe": "calendar_event_lookup",
+      "approval_expected": true,
+      "connector": "apple-calendar"
+    },
+    {
+      "id": "gmail_private_summary",
+      "category": "email",
+      "input": "Open Gmail, search Sleazy, and summarize the messages.",
+      "expected_tools": ["gmail_search_and_summarize", "browser_get_dom"],
+      "expected_recipe": "gmail_summarize_thread",
+      "approval_expected": true,
+      "connector": "gmail"
+    },
+    {
+      "id": "native_app_inspect",
+      "category": "native-ui",
+      "input": "Find the search field in the current app.",
+      "expected_tools": ["app_inspect", "app_find_element"],
+      "live_safe": true
+    },
+    {
+      "id": "task_status",
+      "category": "background",
+      "input": "What are you doing right now?",
+      "expected_tools": ["task_status"],
+      "live_safe": true
+    }
+  ]
+}

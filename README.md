@@ -105,6 +105,9 @@ quit
 ./iris test-vision
 ./iris test-voice --listen
 ./iris control health
+./iris doctor
+./iris browser start-cdp
+./iris browser tabs
 ./iris notify test
 ./iris approvals
 ./iris audit
@@ -132,6 +135,13 @@ Connectors:
 ./iris connectors health
 ./iris connectors show stripe
 ./iris connectors enable google-ads
+```
+
+Agent evals:
+
+```bash
+./iris evals list
+./iris evals run
 ```
 
 Background runtime:

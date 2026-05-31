@@ -273,6 +273,13 @@ def _default_tools() -> list[ToolSpec]:
             execute=_browser_open,
         ),
         ToolSpec(
+            name="browser_ensure_runtime",
+            description="Start or verify the managed Chrome CDP browser runtime.",
+            parameters=_object_schema({}),
+            risk=RiskLevel.LOW_RISK,
+            execute=_browser_ensure_runtime,
+        ),
+        ToolSpec(
             name="browser_current_page",
             description="Return the active browser tab title and URL.",
             parameters=_object_schema({"browser": {"type": "string"}}, required=[]),
@@ -971,7 +978,7 @@ def _accessibility() -> AccessibilityBackend:
 
 
 def _chrome_cdp() -> ChromeCDPBackend:
-    return ChromeCDPBackend()
+    return ChromeCDPBackend(auto_start=True)
 
 
 def _prefer_cdp(browser: str = "Google Chrome") -> bool:
@@ -1116,6 +1123,11 @@ def _browser_open(arguments: dict[str, Any], context: ToolContext) -> ToolResult
     if result.ok:
         _remember_browser(context, url=url, browser=browser, current_task=_string_arg(arguments, "task"))
         return ToolResult(True, _friendly_opened_url(url, browser), {"url": url, "browser": browser})
+    return _from_action_result(result)
+
+
+def _browser_ensure_runtime(arguments: dict[str, Any], context: ToolContext) -> ToolResult:
+    result = _chrome_cdp().ensure_available()
     return _from_action_result(result)
 
 

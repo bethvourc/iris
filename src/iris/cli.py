@@ -160,6 +160,16 @@ def build_parser() -> argparse.ArgumentParser:
         func=cmd_control_health
     )
 
+    browser = subparsers.add_parser("browser", help="Manage the Iris controlled browser runtime")
+    browser_sub = browser.add_subparsers(dest="browser_command", required=True)
+    browser_sub.add_parser("status", help="Show managed Chrome/CDP status").set_defaults(
+        func=cmd_browser_status
+    )
+    browser_sub.add_parser("start-cdp", help="Start managed Chrome with CDP enabled").set_defaults(
+        func=cmd_browser_start_cdp
+    )
+    browser_sub.add_parser("tabs", help="List CDP Chrome tabs").set_defaults(func=cmd_browser_tabs)
+
     start = subparsers.add_parser("start", help="Start the interactive Iris session")
     start.add_argument(
         "--wake",
@@ -199,6 +209,19 @@ def build_parser() -> argparse.ArgumentParser:
     tasks_worker = tasks_sub.add_parser("worker", help="Run the durable task worker loop")
     tasks_worker.add_argument("--poll-interval", type=float, default=2.0)
     tasks_worker.set_defaults(func=cmd_tasks_worker)
+
+    evals = subparsers.add_parser("evals", help="Run Iris agent capability evaluations")
+    evals_sub = evals.add_subparsers(dest="evals_command", required=True)
+    evals_list = evals_sub.add_parser("list", help="List eval cases")
+    evals_list.add_argument("--file", default=None)
+    evals_list.set_defaults(func=cmd_evals_list)
+    evals_run = evals_sub.add_parser("run", help="Run static or live evals")
+    evals_run.add_argument("--file", default=None)
+    evals_run.add_argument("--case", default=None, help="Run one case id")
+    evals_run.add_argument("--live-agent", action="store_true", help="Run cases through the live local agent")
+    evals_run.add_argument("--include-unsafe", action="store_true", help="Allow live eval cases not marked live_safe")
+    evals_run.add_argument("--output", default=None)
+    evals_run.set_defaults(func=cmd_evals_run)
 
     plugins = subparsers.add_parser("plugins", help="Inspect and configure Iris plugins")
     plugins_sub = plugins.add_subparsers(dest="plugins_command", required=True)
@@ -710,6 +733,30 @@ def cmd_control_health(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_browser_status(args: argparse.Namespace) -> int:
+    from iris.managed_browser import ManagedChrome
+
+    result = ManagedChrome().status()
+    _print_json({"ok": result.ok, "message": result.detail, "payload": result.payload})
+    return 0 if result.ok else 1
+
+
+def cmd_browser_start_cdp(args: argparse.Namespace) -> int:
+    from iris.managed_browser import ManagedChrome
+
+    result = ManagedChrome().ensure_running()
+    _print_json({"ok": result.ok, "message": result.detail, "payload": result.payload})
+    return 0 if result.ok else 1
+
+
+def cmd_browser_tabs(args: argparse.Namespace) -> int:
+    from iris.browser_cdp import ChromeCDPBackend
+
+    result = ChromeCDPBackend(auto_start=True).list_tabs()
+    _print_json({"ok": result.ok, "message": result.detail, "payload": result.payload})
+    return 0 if result.ok else 1
+
+
 def cmd_start(args: argparse.Namespace) -> int:
     from iris.voice import VoiceSession
 
@@ -817,6 +864,60 @@ def cmd_tasks_worker(args: argparse.Namespace) -> int:
         poll_interval=args.poll_interval
     )
     return 0
+
+
+def cmd_evals_list(args: argparse.Namespace) -> int:
+    from iris.evals import default_eval_file, list_eval_cases
+
+    config = _config(args)
+    path = Path(args.file) if args.file else default_eval_file(config.project_root)
+    _print_json(list_eval_cases(path))
+    return 0
+
+
+def cmd_evals_run(args: argparse.Namespace) -> int:
+    from iris.evals import (
+        default_eval_file,
+        load_eval_cases,
+        run_live_evals,
+        run_static_evals,
+        summarize_results,
+        write_eval_report,
+    )
+
+    config = _config(args)
+    path = Path(args.file) if args.file else default_eval_file(config.project_root)
+    cases = load_eval_cases(path)
+    if args.case:
+        cases = [case for case in cases if case.case_id == args.case]
+    if not cases:
+        print("No eval cases matched.", file=sys.stderr)
+        return 1
+    if args.live_agent:
+        results = run_live_evals(
+            cases,
+            router_factory=lambda: _runtime(args)[-1],
+            include_unsafe=args.include_unsafe,
+        )
+        mode = "live"
+    else:
+        results = run_static_evals(cases, project_root=config.project_root)
+        mode = "static"
+    output_path = Path(args.output) if args.output else None
+    report_path = write_eval_report(
+        project_root=config.project_root,
+        results=results,
+        mode=mode,
+        output_path=output_path,
+    )
+    _print_json(
+        {
+            "mode": mode,
+            "summary": summarize_results(results),
+            "report_path": str(report_path),
+        }
+    )
+    return 0 if all(result.passed for result in results) else 1
 
 
 def cmd_plugins_list(args: argparse.Namespace) -> int:

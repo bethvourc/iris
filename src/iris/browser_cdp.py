@@ -7,6 +7,7 @@ from typing import Any
 from urllib import parse, request
 
 from iris.mac_controller import ActionResult
+from iris.managed_browser import ManagedChrome
 
 
 @dataclass(frozen=True)
@@ -27,17 +28,28 @@ class BrowserTab:
 
 
 class ChromeCDPBackend:
-    def __init__(self, base_url: str | None = None) -> None:
+    def __init__(self, base_url: str | None = None, *, auto_start: bool = False) -> None:
         self.base_url = (base_url or os.getenv("IRIS_CHROME_CDP_URL") or "http://127.0.0.1:9222").rstrip("/")
+        self.auto_start = auto_start
 
     def available(self) -> bool:
         try:
             self._get_json("/json/version", timeout=0.5)
             return True
         except Exception:
+            if self.auto_start:
+                return ManagedChrome().ensure_running().ok
             return False
 
+    def ensure_available(self) -> ActionResult:
+        if self.available():
+            return ActionResult("browser_cdp_ensure_available", True, "Chrome CDP is reachable.", {"base_url": self.base_url})
+        return ManagedChrome().ensure_running()
+
     def list_tabs(self) -> ActionResult:
+        ensured = self.ensure_available() if self.auto_start else None
+        if ensured is not None and not ensured.ok:
+            return ensured
         try:
             tabs = self._tabs()
         except Exception as exc:
@@ -50,6 +62,9 @@ class ChromeCDPBackend:
         )
 
     def current_page(self) -> ActionResult:
+        ensured = self.ensure_available() if self.auto_start else None
+        if ensured is not None and not ensured.ok:
+            return ensured
         tab = self._current_tab()
         if tab is None:
             return ActionResult("browser_cdp_current_page", False, "No Chrome CDP page tab is available.")
@@ -61,6 +76,9 @@ class ChromeCDPBackend:
         )
 
     def navigate(self, url: str, *, new_tab: bool = False) -> ActionResult:
+        ensured = self.ensure_available() if self.auto_start else None
+        if ensured is not None and not ensured.ok:
+            return ensured
         try:
             if new_tab:
                 data = self._get_json(f"/json/new?{parse.quote(url, safe=':/?&=%')}", method="PUT")
@@ -86,6 +104,9 @@ class ChromeCDPBackend:
             return ActionResult("browser_cdp_navigate", False, _friendly_cdp_error(str(exc)))
 
     def get_dom(self, *, max_chars: int = 12000) -> ActionResult:
+        ensured = self.ensure_available() if self.auto_start else None
+        if ensured is not None and not ensured.ok:
+            return ensured
         script = f"""
 (() => {{
   const root = document.querySelector('main') || document.body || document.documentElement;
@@ -115,6 +136,9 @@ class ChromeCDPBackend:
         return self._evaluate_result("browser_cdp_get_dom", script, result_message="I read the browser DOM.")
 
     def click_text(self, text: str) -> ActionResult:
+        ensured = self.ensure_available() if self.auto_start else None
+        if ensured is not None and not ensured.ok:
+            return ensured
         script = """
 (needle) => {
   const wanted = String(needle || '').toLowerCase();
@@ -141,6 +165,9 @@ class ChromeCDPBackend:
         return ActionResult("browser_cdp_click_text", False, f"I could not find {text} in the current tab.", payload)
 
     def type_into(self, *, text: str, field: str = "") -> ActionResult:
+        ensured = self.ensure_available() if self.auto_start else None
+        if ensured is not None and not ensured.ok:
+            return ensured
         script = """
 (needle, value) => {
   const wanted = String(needle || '').toLowerCase();
@@ -179,6 +206,9 @@ class ChromeCDPBackend:
         return ActionResult("browser_cdp_type_into", False, "I could not find a browser field to type into.", payload)
 
     def media_state(self) -> ActionResult:
+        ensured = self.ensure_available() if self.auto_start else None
+        if ensured is not None and not ensured.ok:
+            return ensured
         script = """
 (() => {
   const media = [...document.querySelectorAll('audio,video')].map((el) => ({
@@ -198,6 +228,9 @@ class ChromeCDPBackend:
         return self._evaluate_result("browser_cdp_media_state", script, result_message="Checked browser media state.")
 
     def verify_state(self, *, text: str = "", url_contains: str = "", title_contains: str = "") -> ActionResult:
+        ensured = self.ensure_available() if self.auto_start else None
+        if ensured is not None and not ensured.ok:
+            return ensured
         script = """
 (text, urlPart, titlePart) => {
   const bodyText = (document.body && (document.body.innerText || document.body.textContent) || '').toLowerCase();

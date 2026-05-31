@@ -3,10 +3,10 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass
 import os
 import shutil
-import socket
 from typing import Any
 
 from iris.config import IrisConfig
+from iris.managed_browser import managed_chrome_status
 from iris.system import run_osascript
 
 
@@ -65,31 +65,19 @@ end try
 
 
 def _browser_cdp_status() -> ControlBackendStatus:
-    raw_url = os.getenv("IRIS_CHROME_CDP_URL", "http://127.0.0.1:9222")
-    host = "127.0.0.1"
-    port = 9222
-    try:
-        without_scheme = raw_url.split("://", 1)[-1]
-        host_port = without_scheme.split("/", 1)[0]
-        if ":" in host_port:
-            host, port_text = host_port.rsplit(":", 1)
-            port = int(port_text)
-    except Exception:
-        pass
-    available = False
-    try:
-        with socket.create_connection((host, port), timeout=0.2):
-            available = True
-    except OSError:
-        available = False
-    detail = "Chrome DevTools Protocol is reachable" if available else "Chrome DevTools Protocol is not reachable"
+    status = managed_chrome_status()
+    available = bool(status.get("available"))
+    detail = str(status.get("detail") or "")
     return ControlBackendStatus(
         "browser_cdp",
         "Browser CDP",
         available,
         30,
         detail,
-        {"url": raw_url},
+        {
+            "url": os.getenv("IRIS_CHROME_CDP_URL", "http://127.0.0.1:9222"),
+            "profile": status.get("profile"),
+        },
     )
 
 
