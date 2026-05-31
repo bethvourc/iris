@@ -153,6 +153,46 @@ CREATE TABLE IF NOT EXISTS plugin_settings (
   updated_at TEXT NOT NULL,
   config_json TEXT NOT NULL DEFAULT '{}'
 );
+
+CREATE TABLE IF NOT EXISTS connector_settings (
+  connector_id TEXT PRIMARY KEY,
+  enabled INTEGER NOT NULL,
+  configured INTEGER NOT NULL DEFAULT 0,
+  updated_at TEXT NOT NULL,
+  config_json TEXT NOT NULL DEFAULT '{}'
+);
+
+CREATE TABLE IF NOT EXISTS knowledge_sources (
+  source_id TEXT PRIMARY KEY,
+  kind TEXT NOT NULL,
+  uri TEXT NOT NULL UNIQUE,
+  title TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  metadata_json TEXT NOT NULL DEFAULT '{}'
+);
+
+CREATE TABLE IF NOT EXISTS knowledge_pages (
+  page_id TEXT PRIMARY KEY,
+  source_id TEXT,
+  title TEXT NOT NULL,
+  content TEXT NOT NULL,
+  summary TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  metadata_json TEXT NOT NULL DEFAULT '{}',
+  FOREIGN KEY (source_id) REFERENCES knowledge_sources(source_id) ON DELETE SET NULL
+);
+
+CREATE TABLE IF NOT EXISTS knowledge_links (
+  from_page_id TEXT NOT NULL,
+  to_page_id TEXT NOT NULL,
+  label TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  PRIMARY KEY (from_page_id, to_page_id, label),
+  FOREIGN KEY (from_page_id) REFERENCES knowledge_pages(page_id) ON DELETE CASCADE,
+  FOREIGN KEY (to_page_id) REFERENCES knowledge_pages(page_id) ON DELETE CASCADE
+);
 """
 
 

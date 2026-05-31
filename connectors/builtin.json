@@ -1,0 +1,377 @@
+{
+  "connectors": [
+    {
+      "id": "finder",
+      "name": "Finder",
+      "category": "mac-native",
+      "description": "Find, open, move, and inspect local files.",
+      "tools": ["file_find", "file_open", "file_list_folder"],
+      "auth_type": "mac_permission",
+      "risk": "medium"
+    },
+    {
+      "id": "calendar",
+      "name": "Apple Calendar",
+      "category": "mac-native",
+      "description": "Search calendar events and prepare scheduling actions.",
+      "tools": ["calendar_find_event"],
+      "auth_type": "mac_permission",
+      "risk": "private"
+    },
+    {
+      "id": "reminders",
+      "name": "Apple Reminders",
+      "category": "mac-native",
+      "description": "Create and inspect local reminders.",
+      "tools": ["reminder_create"],
+      "auth_type": "mac_permission",
+      "risk": "write"
+    },
+    {
+      "id": "screen",
+      "name": "Screen / Window Context",
+      "category": "computer",
+      "description": "Live screen awareness, OCR, and visual fallback.",
+      "tools": ["screen_describe", "screen_ocr", "screen_find_element", "screen_click_element"],
+      "auth_type": "mac_permission"
+    },
+    {
+      "id": "chrome",
+      "name": "Google Chrome",
+      "category": "browser",
+      "description": "Control current browser tabs through CDP, AppleScript, or screen fallback.",
+      "tools": ["browser_open", "browser_current_page", "browser_extract", "browser_click", "browser_type"],
+      "auth_type": "browser_session"
+    },
+    {
+      "id": "generic-web",
+      "name": "Generic Website Operator",
+      "category": "browser",
+      "description": "Read dashboards, click visible elements, fill approved forms, and watch changes.",
+      "tools": ["browser_open", "browser_click", "browser_extract", "watch_change"],
+      "auth_type": "browser_session",
+      "risk": "medium"
+    },
+    {
+      "id": "gmail",
+      "name": "Gmail",
+      "category": "communication",
+      "description": "Search and summarize Gmail with approval gates.",
+      "tools": ["gmail_search", "gmail_search_and_summarize"],
+      "auth_type": "browser_session",
+      "risk": "private",
+      "enabled_by_default": false
+    },
+    {
+      "id": "slack",
+      "name": "Slack",
+      "category": "communication",
+      "description": "Read, summarize, and draft Slack updates.",
+      "tools": ["browser_open", "draft_email"],
+      "auth_type": "api_key",
+      "env_keys": ["SLACK_BOT_TOKEN", "SLACK_APP_TOKEN"],
+      "risk": "private",
+      "enabled_by_default": false
+    },
+    {
+      "id": "spotify",
+      "name": "Spotify",
+      "category": "media",
+      "description": "Search, play, pause, and control Spotify volume.",
+      "tools": ["media_search", "media_play", "media_pause", "app_volume_set", "audio_current_media"],
+      "auth_type": "local_app"
+    },
+    {
+      "id": "stripe",
+      "name": "Stripe",
+      "category": "business",
+      "description": "Open dashboards, read revenue, and monitor payments.",
+      "tools": ["browser_open", "browser_extract", "integration_status"],
+      "auth_type": "api_key",
+      "env_keys": ["STRIPE_API_KEY", "STRIPE_DASHBOARD_URL"],
+      "scopes": ["read_only"],
+      "risk": "private",
+      "enabled_by_default": false
+    },
+    {
+      "id": "google-ads",
+      "name": "Google Ads",
+      "category": "growth",
+      "description": "Inspect and draft ad campaigns with approval gates.",
+      "tools": ["integration_status", "task_start_background"],
+      "auth_type": "api_key",
+      "env_keys": ["GOOGLE_ADS_DEVELOPER_TOKEN", "GOOGLE_ADS_CUSTOMER_ID"],
+      "scopes": ["adwords"],
+      "risk": "high",
+      "enabled_by_default": false
+    },
+    {
+      "id": "github",
+      "name": "GitHub",
+      "category": "developer",
+      "description": "Inspect repos, issues, PRs, CI, and prepare changes.",
+      "tools": ["workflow_run", "web_research"],
+      "auth_type": "api_key",
+      "env_keys": ["GITHUB_TOKEN", "GH_TOKEN"],
+      "scopes": ["repo", "read:org"],
+      "risk": "write",
+      "enabled_by_default": false
+    },
+    {
+      "id": "notion",
+      "name": "Notion",
+      "category": "productivity",
+      "description": "Search pages, summarize notes, and draft updates.",
+      "tools": ["knowledge_search", "draft_email"],
+      "auth_type": "api_key",
+      "env_keys": ["NOTION_TOKEN"],
+      "risk": "private",
+      "enabled_by_default": false
+    },
+    {
+      "id": "linear",
+      "name": "Linear",
+      "category": "productivity",
+      "description": "Create and inspect issues with approval gates.",
+      "tools": ["create_task"],
+      "auth_type": "api_key",
+      "env_keys": ["LINEAR_API_KEY"],
+      "risk": "write",
+      "enabled_by_default": false
+    },
+    {
+      "id": "google-calendar",
+      "name": "Google Calendar",
+      "category": "productivity",
+      "description": "Calendar lookup and scheduling via Google APIs.",
+      "tools": ["calendar_find_event"],
+      "auth_type": "service_account",
+      "env_keys": ["GOOGLE_APPLICATION_CREDENTIALS"],
+      "scopes": ["calendar.readonly", "calendar.events"],
+      "risk": "private",
+      "enabled_by_default": false
+    },
+    {
+      "id": "local-repos",
+      "name": "Local Repositories",
+      "category": "developer",
+      "description": "Search, debug, and prepare changes in local repos.",
+      "tools": ["file_find", "workflow_run"],
+      "auth_type": "local",
+      "risk": "write"
+    },
+    {
+      "id": "mail",
+      "name": "Apple Mail",
+      "category": "mac-native",
+      "description": "Search and draft email with approval gates.",
+      "tools": ["draft_email"],
+      "auth_type": "mac_permission",
+      "risk": "private",
+      "enabled_by_default": false
+    },
+    {
+      "id": "messages",
+      "name": "Messages / iMessage",
+      "category": "mac-native",
+      "description": "Read or draft messages with strict approval gates.",
+      "tools": ["draft_email"],
+      "auth_type": "mac_permission",
+      "risk": "private",
+      "enabled_by_default": false
+    },
+    {
+      "id": "notes",
+      "name": "Apple Notes",
+      "category": "mac-native",
+      "description": "Search and summarize local notes when enabled.",
+      "tools": ["knowledge_search"],
+      "auth_type": "mac_permission",
+      "risk": "private"
+    },
+    {
+      "id": "google-drive",
+      "name": "Google Drive",
+      "category": "productivity",
+      "description": "Search, summarize, and organize Drive files.",
+      "tools": ["file_find", "file_summarize", "browser_open"],
+      "auth_type": "service_account",
+      "env_keys": ["GOOGLE_APPLICATION_CREDENTIALS"],
+      "scopes": ["drive.readonly"],
+      "risk": "private",
+      "enabled_by_default": false
+    },
+    {
+      "id": "google-docs",
+      "name": "Google Docs",
+      "category": "productivity",
+      "description": "Read, summarize, and draft document edits.",
+      "tools": ["browser_open", "browser_extract", "draft_email"],
+      "auth_type": "service_account",
+      "env_keys": ["GOOGLE_APPLICATION_CREDENTIALS"],
+      "scopes": ["documents.readonly"],
+      "risk": "private",
+      "enabled_by_default": false
+    },
+    {
+      "id": "google-sheets",
+      "name": "Google Sheets",
+      "category": "productivity",
+      "description": "Read dashboard and spreadsheet values.",
+      "tools": ["browser_open", "browser_extract"],
+      "auth_type": "service_account",
+      "env_keys": ["GOOGLE_APPLICATION_CREDENTIALS"],
+      "scopes": ["spreadsheets.readonly"],
+      "risk": "private",
+      "enabled_by_default": false
+    },
+    {
+      "id": "outlook",
+      "name": "Outlook",
+      "category": "communication",
+      "description": "Search and draft Outlook mail with approval gates.",
+      "tools": ["browser_open", "browser_extract", "draft_email"],
+      "auth_type": "browser_session",
+      "risk": "private",
+      "enabled_by_default": false
+    },
+    {
+      "id": "discord",
+      "name": "Discord",
+      "category": "communication",
+      "description": "Draft or summarize Discord activity when configured.",
+      "tools": ["browser_open", "browser_extract", "draft_email"],
+      "auth_type": "api_key",
+      "env_keys": ["DISCORD_BOT_TOKEN"],
+      "risk": "private",
+      "enabled_by_default": false
+    },
+    {
+      "id": "telegram",
+      "name": "Telegram",
+      "category": "communication",
+      "description": "Remote control and messaging bridge.",
+      "tools": ["draft_email"],
+      "auth_type": "api_key",
+      "env_keys": ["TELEGRAM_BOT_TOKEN"],
+      "risk": "private",
+      "enabled_by_default": false
+    },
+    {
+      "id": "whatsapp",
+      "name": "WhatsApp",
+      "category": "communication",
+      "description": "WhatsApp Web automation with approval gates.",
+      "tools": ["browser_open", "browser_click", "browser_extract"],
+      "auth_type": "browser_session",
+      "risk": "private",
+      "enabled_by_default": false
+    },
+    {
+      "id": "zoom",
+      "name": "Zoom",
+      "category": "meetings",
+      "description": "Meeting launch, detection, and post-meeting workflows.",
+      "tools": ["app_open", "workflow_run"],
+      "auth_type": "local_app",
+      "risk": "private"
+    },
+    {
+      "id": "google-meet",
+      "name": "Google Meet",
+      "category": "meetings",
+      "description": "Browser meeting workflows and silent meeting mode support.",
+      "tools": ["browser_open", "workflow_run"],
+      "auth_type": "browser_session",
+      "risk": "private"
+    },
+    {
+      "id": "shopify",
+      "name": "Shopify",
+      "category": "business",
+      "description": "Inspect store orders, products, and analytics.",
+      "tools": ["browser_open", "browser_extract", "integration_status"],
+      "auth_type": "api_key",
+      "env_keys": ["SHOPIFY_ACCESS_TOKEN", "SHOPIFY_STORE_DOMAIN"],
+      "risk": "private",
+      "enabled_by_default": false
+    },
+    {
+      "id": "posthog",
+      "name": "PostHog",
+      "category": "growth",
+      "description": "Inspect product analytics, funnels, and events.",
+      "tools": ["browser_open", "browser_extract", "integration_status"],
+      "auth_type": "api_key",
+      "env_keys": ["POSTHOG_API_KEY", "POSTHOG_PROJECT_ID"],
+      "risk": "private",
+      "enabled_by_default": false
+    },
+    {
+      "id": "vercel",
+      "name": "Vercel",
+      "category": "developer",
+      "description": "Inspect deployments and project status.",
+      "tools": ["browser_open", "browser_extract", "integration_status"],
+      "auth_type": "api_key",
+      "env_keys": ["VERCEL_TOKEN"],
+      "risk": "medium",
+      "enabled_by_default": false
+    },
+    {
+      "id": "sentry",
+      "name": "Sentry",
+      "category": "developer",
+      "description": "Inspect errors, releases, and issue status.",
+      "tools": ["browser_open", "browser_extract", "integration_status"],
+      "auth_type": "api_key",
+      "env_keys": ["SENTRY_AUTH_TOKEN"],
+      "risk": "medium",
+      "enabled_by_default": false
+    },
+    {
+      "id": "cloudflare",
+      "name": "Cloudflare",
+      "category": "developer",
+      "description": "Inspect zones, DNS, workers, and logs.",
+      "tools": ["workflow_run", "integration_status"],
+      "auth_type": "api_key",
+      "env_keys": ["CLOUDFLARE_API_TOKEN"],
+      "risk": "high",
+      "enabled_by_default": false
+    },
+    {
+      "id": "n8n",
+      "name": "n8n",
+      "category": "automation",
+      "description": "Trigger local or hosted n8n workflows.",
+      "tools": ["workflow_run"],
+      "auth_type": "api_key",
+      "env_keys": ["N8N_WEBHOOK_URL", "N8N_API_KEY"],
+      "risk": "write",
+      "enabled_by_default": false
+    },
+    {
+      "id": "pushover",
+      "name": "Pushover",
+      "category": "notification",
+      "description": "Send phone alerts and approval prompts.",
+      "tools": [],
+      "auth_type": "api_key",
+      "env_keys": ["PUSHOVER_TOKEN", "PUSHOVER_USER"],
+      "risk": "write",
+      "enabled_by_default": false
+    },
+    {
+      "id": "zapier",
+      "name": "Zapier",
+      "category": "automation",
+      "description": "Trigger approved Zapier webhooks.",
+      "tools": ["workflow_run"],
+      "auth_type": "api_key",
+      "env_keys": ["ZAPIER_WEBHOOK_URL"],
+      "risk": "write",
+      "enabled_by_default": false
+    }
+  ]
+}

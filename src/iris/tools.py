@@ -13,12 +13,18 @@ from urllib.parse import parse_qs, quote_plus, unquote_plus, urlparse
 
 from iris.actions import LocalAction, RiskLevel
 from iris.computer import ComputerBackend
+from iris.config import IrisConfig
+from iris.connectors import connector_health, default_manifest_dirs, get_connector
 from iris.integrations.google_vision import GoogleVisionClient
 from iris.integrations.openai_client import OpenAIResponsesClient
+from iris.knowledge import format_search_results, search_pages
 from iris.mac_controller import ActionResult, MacController
 from iris.perception import LiveScreenFrame, PerceptionService, ScreenAwarenessService
 from iris.recipes import ActionRecipeRegistry
 from iris.safety import SafetyGate, classify_action
+from iris.state import open_state
+from iris import tasks as task_store
+from iris.system import applescript_string, run_osascript
 
 
 @dataclass(frozen=True)
@@ -41,6 +47,7 @@ class ToolContext:
     computer_use_runner: Callable[[str], Any] | None = None
     session_state: dict[str, Any] | None = None
     recipes: ActionRecipeRegistry | None = None
+    config: IrisConfig | None = None
 
 
 ToolExecute = Callable[[dict[str, Any], ToolContext], ToolResult]
@@ -321,6 +328,61 @@ def _default_tools() -> list[ToolSpec]:
             execute=_audio_explain_current_song,
         ),
         ToolSpec(
+            name="integration_status",
+            description="Check whether a named external integration/provider is configured for Iris.",
+            parameters=_object_schema({"name": {"type": "string"}}),
+            risk=RiskLevel.LOW_RISK,
+            execute=_integration_status,
+        ),
+        ToolSpec(
+            name="connector_list",
+            description="List enabled/configured Iris connector manifests and their generic tools.",
+            parameters=_object_schema({"category": {"type": "string"}}, required=[]),
+            risk=RiskLevel.LOW_RISK,
+            execute=_connector_list,
+        ),
+        ToolSpec(
+            name="task_start_background",
+            description="Create a durable background agent task for a larger goal, with approval gates handled by the task runtime.",
+            parameters=_object_schema(
+                {
+                    "goal": {"type": "string"},
+                    "kind": {"type": "string"},
+                    "title": {"type": "string"},
+                },
+                required=["goal"],
+            ),
+            risk=RiskLevel.LOW_RISK,
+            execute=_task_start_background,
+        ),
+        ToolSpec(
+            name="calendar_find_event",
+            description="Search local macOS Calendar events by text and date window. Requires approval because calendar data is private.",
+            parameters=_object_schema(
+                {
+                    "query": {"type": "string"},
+                    "days_ahead": {"type": "integer"},
+                },
+                required=["query"],
+            ),
+            risk=RiskLevel.SENSITIVE,
+            execute=_calendar_find_event,
+        ),
+        ToolSpec(
+            name="reminder_create",
+            description="Create a macOS Reminders item, optionally with a due date, then open Reminders for confirmation. Requires approval.",
+            parameters=_object_schema(
+                {
+                    "title": {"type": "string"},
+                    "due": {"type": "string"},
+                    "open_app": {"type": "boolean"},
+                },
+                required=["title"],
+            ),
+            risk=RiskLevel.SENSITIVE,
+            execute=_reminder_create,
+        ),
+        ToolSpec(
             name="media_search",
             description="Search for media using the best recipe for the requested service.",
             parameters=_object_schema(
@@ -363,6 +425,19 @@ def _default_tools() -> list[ToolSpec]:
             parameters=_object_schema({"query": {"type": "string"}}),
             risk=RiskLevel.LOW_RISK,
             execute=_find_file,
+        ),
+        ToolSpec(
+            name="knowledge_search",
+            description="Search Iris local knowledge/wiki pages built from ingested notes, docs, logs, and project files.",
+            parameters=_object_schema(
+                {
+                    "query": {"type": "string"},
+                    "limit": {"type": "integer"},
+                },
+                required=["query"],
+            ),
+            risk=RiskLevel.LOW_RISK,
+            execute=_knowledge_search,
         ),
         ToolSpec(
             name="file_list_folder",
@@ -589,6 +664,19 @@ def _default_tools() -> list[ToolSpec]:
             parameters=_object_schema({"level": {"type": "integer", "minimum": 0, "maximum": 100}}),
             risk=RiskLevel.LOW_RISK,
             execute=_set_volume,
+        ),
+        ToolSpec(
+            name="app_volume_set",
+            description="Set volume for a supported app such as Spotify without changing full system volume.",
+            parameters=_object_schema(
+                {
+                    "app_name": {"type": "string"},
+                    "level": {"type": "integer", "minimum": 0, "maximum": 100},
+                },
+                required=["app_name", "level"],
+            ),
+            risk=RiskLevel.LOW_RISK,
+            execute=_set_app_volume,
         ),
         ToolSpec(
             name="change_volume",
@@ -1152,6 +1240,15 @@ def _set_volume(arguments: dict[str, Any], context: ToolContext) -> ToolResult:
     return _from_action_result(context.controller.set_volume(_int_arg(arguments, "level", 50)))
 
 
+def _set_app_volume(arguments: dict[str, Any], context: ToolContext) -> ToolResult:
+    return _from_action_result(
+        context.controller.set_app_volume(
+            _string_arg(arguments, "app_name", "Spotify"),
+            _int_arg(arguments, "level", 50),
+        )
+    )
+
+
 def _change_volume(arguments: dict[str, Any], context: ToolContext) -> ToolResult:
     return _from_action_result(context.controller.change_volume(_int_arg(arguments, "delta")))
 
@@ -1246,6 +1343,175 @@ def _audio_explain_current_song(arguments: dict[str, Any], context: ToolContext)
     )
 
 
+def _integration_status(arguments: dict[str, Any], context: ToolContext) -> ToolResult:
+    name = _string_arg(arguments, "name")
+    if not name:
+        return ToolResult(False, "I need an integration name.")
+    if context.config is None:
+        return ToolResult(False, "The connector registry is not connected in this runtime.")
+    with open_state(context.config) as db:
+        connector = get_connector(
+            db,
+            name,
+            manifest_dirs=default_manifest_dirs(context.config.project_root),
+        )
+    if connector is None:
+        return ToolResult(
+            True,
+            f"I do not have a connector manifest for {name} yet.",
+            {"name": name, "configured": False, "known": False},
+        )
+    configured = bool(connector.get("configured"))
+    health = str(connector.get("health") or "unknown")
+    message = (
+        f"{connector['name']} is configured and {health}."
+        if configured
+        else f"{connector['name']} is not configured yet."
+    )
+    return ToolResult(True, message, connector)
+
+
+def _connector_list(arguments: dict[str, Any], context: ToolContext) -> ToolResult:
+    if context.config is None:
+        return ToolResult(False, "The connector registry is not connected in this runtime.")
+    category = _string_arg(arguments, "category")
+    with open_state(context.config) as db:
+        connectors = connector_health(
+            db,
+            manifest_dirs=default_manifest_dirs(context.config.project_root),
+        )
+    if category:
+        connectors = [item for item in connectors if item.get("category") == category]
+    ready = [item for item in connectors if item.get("enabled") and item.get("configured")]
+    if not ready:
+        return ToolResult(True, "No ready connectors matched that request.", {"connectors": connectors})
+    names = ", ".join(str(item.get("name")) for item in ready[:12])
+    return ToolResult(
+        True,
+        f"Ready connectors: {names}.",
+        {"connectors": connectors, "ready_count": len(ready)},
+    )
+
+
+def _task_start_background(arguments: dict[str, Any], context: ToolContext) -> ToolResult:
+    goal = _string_arg(arguments, "goal")
+    if not goal:
+        return ToolResult(False, "I need a background task goal.")
+    if context.config is None:
+        return ToolResult(False, "The durable task store is not connected in this runtime.")
+    kind = _string_arg(arguments, "kind", "agent_background") or "agent_background"
+    title = _string_arg(arguments, "title") or _compact_text(goal, 80)
+    with open_state(context.config) as db:
+        task_id = task_store.create_task(
+            db,
+            kind=kind,
+            title=title,
+            input_value={"goal": goal},
+            metadata={"created_by": "agent_tool", "autonomy": context.config.autonomy_level},
+            status="queued",
+        )
+    return ToolResult(
+        True,
+        f"I queued a background agent task for that. Task id: {task_id[:8]}.",
+        {"task_id": task_id, "goal": goal, "status": "queued"},
+    )
+
+
+def _calendar_find_event(arguments: dict[str, Any], context: ToolContext) -> ToolResult:
+    query = _string_arg(arguments, "query")
+    if not query:
+        return ToolResult(False, "I need an event search query.")
+    days_ahead = max(1, min(_int_arg(arguments, "days_ahead", 21), 365))
+    script = f"""
+set queryText to {applescript_string(query)}
+set startWindow to current date
+set endWindow to startWindow + ({days_ahead} * days)
+set outputLines to {{}}
+tell application "Calendar"
+  repeat with cal in calendars
+    try
+      set candidateEvents to every event of cal whose start date is greater than or equal to startWindow and start date is less than or equal to endWindow
+      repeat with ev in candidateEvents
+        set eventSummary to summary of ev as text
+        set eventLocation to ""
+        set eventDescription to ""
+        try
+          set eventLocation to location of ev as text
+        end try
+        try
+          set eventDescription to description of ev as text
+        end try
+        set haystack to eventSummary & " " & eventLocation & " " & eventDescription
+        ignoring case
+          if haystack contains queryText then
+            set end of outputLines to eventSummary & " | " & ((start date of ev) as text) & " | " & eventLocation
+          end if
+        end ignoring
+      end repeat
+    end try
+  end repeat
+end tell
+set AppleScript's text item delimiters to linefeed
+return outputLines as text
+"""
+    result = run_osascript(script, timeout=20)
+    if not result.ok:
+        return ToolResult(False, _human_action_detail(result.stderr or result.stdout))
+    if not result.stdout.strip():
+        return ToolResult(True, f"I did not find a calendar event matching {query}.", [])
+    events = [line for line in result.stdout.splitlines() if line.strip()]
+    return ToolResult(
+        True,
+        "I found this on your calendar: " + "; ".join(events[:5]),
+        {"query": query, "events": events},
+    )
+
+
+def _reminder_create(arguments: dict[str, Any], context: ToolContext) -> ToolResult:
+    title = _string_arg(arguments, "title")
+    due = _string_arg(arguments, "due")
+    open_app = bool(arguments.get("open_app", True))
+    if not title:
+        return ToolResult(False, "I need a reminder title.")
+    if due:
+        script = f"""
+set reminderTitle to {applescript_string(title)}
+set dueText to {applescript_string(due)}
+try
+  set dueDate to date dueText
+  tell application "Reminders"
+    set targetList to default list
+    make new reminder at end of reminders of targetList with properties {{name:reminderTitle, remind me date:dueDate}}
+  end tell
+  return "created reminder with date"
+on error
+  tell application "Reminders"
+    set targetList to default list
+    make new reminder at end of reminders of targetList with properties {{name:reminderTitle}}
+  end tell
+  return "created reminder without date"
+end try
+"""
+    else:
+        script = f"""
+set reminderTitle to {applescript_string(title)}
+tell application "Reminders"
+  set targetList to default list
+  make new reminder at end of reminders of targetList with properties {{name:reminderTitle}}
+end tell
+return "created reminder"
+"""
+    result = run_osascript(script, timeout=20)
+    if not result.ok:
+        return ToolResult(False, _human_action_detail(result.stderr or result.stdout))
+    if open_app:
+        context.controller.open_app("Reminders")
+    message = f"I created the reminder: {title}."
+    if due and "without date" in result.stdout.lower():
+        message += " I could not parse the due date, so I saved it without a time."
+    return ToolResult(True, message, {"title": title, "due": due, "opened": open_app})
+
+
 def _media_search_or_play(arguments: dict[str, Any], context: ToolContext) -> ToolResult:
     service = _string_arg(arguments, "service", "spotify").lower()
     query = _string_arg(arguments, "query")
@@ -1337,6 +1603,46 @@ def _find_file(arguments: dict[str, Any], context: ToolContext) -> ToolResult:
             context.session_state["last_file_results"] = result.payload
         return _format_file_results([str(path) for path in result.payload])
     return _from_action_result(result)
+
+
+def _knowledge_search(arguments: dict[str, Any], context: ToolContext) -> ToolResult:
+    query = _string_arg(arguments, "query")
+    if not query:
+        return ToolResult(False, "I need a knowledge search query.")
+    if context.config is None:
+        return ToolResult(False, "The local knowledge store is not connected in this runtime.")
+    limit = max(1, min(_int_arg(arguments, "limit", 8), 20))
+    with open_state(context.config) as db:
+        results = search_pages(db, query, limit=limit)
+    if context.session_state is not None:
+        context.session_state["last_knowledge_query"] = query
+        context.session_state["last_knowledge_results"] = [
+            {
+                "page_id": item.get("page_id"),
+                "title": item.get("title"),
+                "uri": item.get("uri"),
+                "score": item.get("score"),
+            }
+            for item in results
+        ]
+    return ToolResult(
+        True,
+        format_search_results(results),
+        {
+            "query": query,
+            "results": [
+                {
+                    "page_id": item.get("page_id"),
+                    "title": item.get("title"),
+                    "summary": item.get("summary"),
+                    "snippet": item.get("snippet"),
+                    "uri": item.get("uri"),
+                    "score": item.get("score"),
+                }
+                for item in results
+            ],
+        },
+    )
 
 
 def _file_list_folder(arguments: dict[str, Any], context: ToolContext) -> ToolResult:

@@ -4,6 +4,8 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
 
+from iris.config import IrisConfig
+from iris.control_backends import control_backend_status
 from iris.mac_controller import ActionResult, MacController
 from iris.perception import LiveScreenFrame, PerceptionService, ScreenAwarenessService, Screenshot
 
@@ -144,6 +146,9 @@ class ComputerBackend:
 
     def observed_at(self) -> datetime:
         return datetime.now(timezone.utc)
+
+    def backend_health(self, config: IrisConfig | None = None) -> list[dict[str, Any]]:
+        return control_backend_status(config)
 
     def _active_context(self) -> tuple[str | None, str | None]:
         screen_context = getattr(self.perception, "screen_context", None)

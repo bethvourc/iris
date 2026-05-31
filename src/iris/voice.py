@@ -216,6 +216,8 @@ class RealtimeSpeechSession:
         self._assistant_response_active = False
         self._pending_response_text: str | None = None
         self._last_spoken_text = ""
+        self._last_printed_response_text = ""
+        self._last_response_started_at = 0.0
         self._suppress_input_until = 0.0
         self._screen_awareness = ScreenAwarenessService(
             router.perception,
@@ -367,6 +369,7 @@ class RealtimeSpeechSession:
         if event_type == "response.created":
             with self._response_state_lock:
                 self._assistant_response_active = True
+                self._last_response_started_at = time.monotonic()
                 self._suppress_input_until = max(
                     self._suppress_input_until,
                     time.monotonic() + 1.0,
@@ -401,13 +404,14 @@ class RealtimeSpeechSession:
             "response.output_text.done",
         }:
             text = str(event.get("transcript") or event.get("text") or "").strip()
-            if text:
+            if text and not self._is_duplicate_response_text(text):
                 print(f"iris> {text}")
                 with self._response_state_lock:
                     self._last_spoken_text = text
+                    self._last_printed_response_text = text
                     self._suppress_input_until = max(
                         self._suppress_input_until,
-                        time.monotonic() + 2.0,
+                        time.monotonic() + 3.0,
                     )
             return
         if event_type in {"response.output_audio.done", "response.audio.done"}:
@@ -422,6 +426,10 @@ class RealtimeSpeechSession:
             if code == "conversation_already_has_active_response":
                 with self._response_state_lock:
                     self._assistant_response_active = True
+                    self._suppress_input_until = max(
+                        self._suppress_input_until,
+                        time.monotonic() + 2.0,
+                    )
 
     def _handle_transcript(self, transcript: str) -> None:
         if self._should_ignore_transcript(transcript):
@@ -478,10 +486,17 @@ class RealtimeSpeechSession:
         if not text:
             return
         with self._response_state_lock:
+            if (
+                self._assistant_response_active
+                and self._last_response_started_at
+                and time.monotonic() - self._last_response_started_at > 30.0
+            ):
+                self._assistant_response_active = False
             if self._assistant_response_active:
                 self._pending_response_text = text
                 return
             self._assistant_response_active = True
+            self._last_response_started_at = time.monotonic()
             self._last_spoken_text = text
             self._suppress_input_until = time.monotonic() + 3.0
         self._send_json(
@@ -505,11 +520,11 @@ class RealtimeSpeechSession:
         self._send_json(
             {
                 "type": "response.create",
-                "response": {
-                    "output_modalities": ["audio"],
-                    "instructions": "Speak the local runtime result only. Keep it short.",
-                },
-            }
+            "response": {
+                "output_modalities": ["audio"],
+                "instructions": "Speak the local runtime result only. Keep it short.",
+            },
+        }
         )
 
     def _mark_response_done(self) -> None:
@@ -518,7 +533,7 @@ class RealtimeSpeechSession:
             self._assistant_response_active = False
             self._suppress_input_until = max(
                 self._suppress_input_until,
-                time.monotonic() + 2.0,
+                time.monotonic() + 3.0,
             )
             if self._pending_response_text:
                 pending = self._pending_response_text
@@ -529,9 +544,10 @@ class RealtimeSpeechSession:
     def _note_audio_output(self) -> None:
         with self._response_state_lock:
             self._assistant_response_active = True
+            self._last_response_started_at = self._last_response_started_at or time.monotonic()
             self._suppress_input_until = max(
                 self._suppress_input_until,
-                time.monotonic() + 1.5,
+                time.monotonic() + 2.5,
             )
 
     def _input_should_be_muted(self) -> bool:
@@ -553,6 +569,11 @@ class RealtimeSpeechSession:
         if time.monotonic() <= suppress_until and _similar_text(transcript, last_spoken):
             return True
         return False
+
+    def _is_duplicate_response_text(self, text: str) -> bool:
+        with self._response_state_lock:
+            last = self._last_printed_response_text
+        return _similar_text(text, last)
 
     def _send_json(self, payload: dict[str, Any]) -> None:
         if self._ws is None or self._stop.is_set():

@@ -76,6 +76,43 @@ def start_task(db: sqlite3.Connection, task_id: str) -> bool:
     return result.rowcount > 0
 
 
+def claim_next_task(
+    db: sqlite3.Connection,
+    *,
+    kinds: tuple[str, ...] = ("message", "agent_background", "workflow"),
+) -> dict[str, Any] | None:
+    placeholders = ", ".join("?" for _ in kinds)
+    row = db.execute(
+        f"""
+        SELECT * FROM agent_tasks
+        WHERE status = 'queued' AND kind IN ({placeholders})
+        ORDER BY created_at ASC
+        LIMIT 1
+        """,
+        kinds,
+    ).fetchone()
+    if row is None:
+        return None
+    task_id = str(row["task_id"])
+    now = _now()
+    result = db.execute(
+        """
+        UPDATE agent_tasks
+        SET status = 'running',
+            started_at = COALESCE(started_at, ?),
+            heartbeat_at = ?,
+            updated_at = ?
+        WHERE task_id = ? AND status = 'queued'
+        """,
+        (now, now, now, task_id),
+    )
+    db.commit()
+    if result.rowcount <= 0:
+        return None
+    claimed = db.execute("SELECT * FROM agent_tasks WHERE task_id = ?", (task_id,)).fetchone()
+    return _decode(claimed) if claimed else None
+
+
 def heartbeat_task(db: sqlite3.Connection, task_id: str) -> bool:
     now = _now()
     result = db.execute(
@@ -137,6 +174,14 @@ def request_cancel(db: sqlite3.Connection, task_id: str) -> bool:
     )
     db.commit()
     return result.rowcount > 0
+
+
+def cancel_requested(db: sqlite3.Connection, task_id: str) -> bool:
+    row = db.execute(
+        "SELECT cancel_requested FROM agent_tasks WHERE task_id = ?",
+        (task_id,),
+    ).fetchone()
+    return bool(row and int(row["cancel_requested"]))
 
 
 def resume_task(db: sqlite3.Connection, task_id: str) -> bool:

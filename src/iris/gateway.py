@@ -12,6 +12,7 @@ from iris.config import IrisConfig
 from iris.actions import RiskLevel
 from iris.sessions import add_message, ensure_session, get_session, list_sessions
 from iris.state import open_state
+from iris.supervisor import TaskSupervisor
 from iris.tasks import create_task, finish_task, get_task, heartbeat_task, list_tasks, request_cancel, resume_task, start_task
 
 
@@ -72,6 +73,12 @@ class GatewayService:
             with open_state(self.config) as db:
                 ok = resume_task(db, task_resume.group(1))
             return (200 if ok else 404), {"ok": ok}
+        if path == "/tasks/run-next":
+            result = TaskSupervisor(
+                config=self.config,
+                router_factory=self.router_factory,
+            ).run_next()
+            return (200 if result.ok else 500), result.__dict__
         approval = re.fullmatch(r"/approvals/([a-fA-F0-9]+)/(approve|deny)", path)
         if approval:
             status = "approved" if approval.group(2) == "approve" else "denied"

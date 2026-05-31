@@ -293,6 +293,34 @@ needle => {
         result = run_osascript(f"set volume output volume {bounded}", timeout=8)
         return ActionResult("set_volume", result.ok, result.stderr or f"volume set to {bounded}")
 
+    def set_app_volume(self, app_name: str, level: int) -> ActionResult:
+        bounded = max(0, min(100, level))
+        app = app_name.strip() or "Spotify"
+        self.safety_gate.allow(
+            LocalAction(
+                "set_app_volume",
+                {"app_name": app, "level": bounded},
+                risk=RiskLevel.LOW_RISK,
+            )
+        )
+        result = run_osascript(
+            f'tell application {applescript_string(app)} to set sound volume to {bounded}',
+            timeout=8,
+        )
+        if result.ok:
+            return ActionResult(
+                "set_app_volume",
+                True,
+                f"{app} volume set to {bounded}",
+                {"app_name": app, "level": bounded},
+            )
+        return ActionResult(
+            "set_app_volume",
+            False,
+            result.stderr or f"{app} does not expose scriptable volume control.",
+            {"app_name": app, "level": bounded},
+        )
+
     def change_volume(self, delta: int) -> ActionResult:
         self.safety_gate.allow(LocalAction("change_volume", {"delta": delta}))
         script = (

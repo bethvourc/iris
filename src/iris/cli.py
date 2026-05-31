@@ -10,6 +10,21 @@ from iris.actions import RiskLevel
 from iris.approvals import decide_approval, list_approvals
 from iris.audit import list_audit, record_audit
 from iris.config import DEFAULT_PROJECT_ROOT, IrisConfig
+from iris.connectors import (
+    connector_categories,
+    connector_health,
+    default_manifest_dirs,
+    get_connector,
+    list_connectors,
+    set_connector_enabled,
+)
+from iris.knowledge import (
+    format_search_results,
+    get_page,
+    ingest_folder,
+    list_pages,
+    search_pages,
+)
 from iris.meetings import list_meetings, start_silent_meeting, stop_meeting
 from iris.memory import add_memory, edit_memory, forget_memory, list_memories
 from iris.plugins import list_plugins, plugin_health, set_plugin_enabled
@@ -131,6 +146,12 @@ def build_parser() -> argparse.ArgumentParser:
     )
     control.set_defaults(func=cmd_test_control)
 
+    control_backends = subparsers.add_parser("control", help="Inspect Mac/browser control backends")
+    control_backends_sub = control_backends.add_subparsers(dest="control_command", required=True)
+    control_backends_sub.add_parser("health", help="Show control backend health").set_defaults(
+        func=cmd_control_health
+    )
+
     start = subparsers.add_parser("start", help="Start the interactive Iris session")
     start.add_argument(
         "--wake",
@@ -164,6 +185,12 @@ def build_parser() -> argparse.ArgumentParser:
     tasks_resume = tasks_sub.add_parser("resume", help="Requeue a failed, blocked, cancelled, or approval-waiting task")
     tasks_resume.add_argument("task_id")
     tasks_resume.set_defaults(func=cmd_tasks_resume)
+    tasks_sub.add_parser("run-next", help="Run one queued durable task").set_defaults(
+        func=cmd_tasks_run_next
+    )
+    tasks_worker = tasks_sub.add_parser("worker", help="Run the durable task worker loop")
+    tasks_worker.add_argument("--poll-interval", type=float, default=2.0)
+    tasks_worker.set_defaults(func=cmd_tasks_worker)
 
     plugins = subparsers.add_parser("plugins", help="Inspect and configure Iris plugins")
     plugins_sub = plugins.add_subparsers(dest="plugins_command", required=True)
@@ -175,6 +202,24 @@ def build_parser() -> argparse.ArgumentParser:
     plugins_disable.add_argument("plugin_id")
     plugins_disable.set_defaults(func=cmd_plugins_disable)
     plugins_sub.add_parser("health", help="Show plugin health").set_defaults(func=cmd_plugins_health)
+
+    connectors = subparsers.add_parser("connectors", help="Inspect and configure Iris connector manifests")
+    connectors_sub = connectors.add_subparsers(dest="connectors_command", required=True)
+    connectors_list = connectors_sub.add_parser("list", help="List connector manifests")
+    connectors_list.add_argument("--category", default=None)
+    connectors_list.add_argument("--enabled-only", action="store_true")
+    connectors_list.set_defaults(func=cmd_connectors_list)
+    connectors_show = connectors_sub.add_parser("show", help="Show one connector")
+    connectors_show.add_argument("connector_id")
+    connectors_show.set_defaults(func=cmd_connectors_show)
+    connectors_enable = connectors_sub.add_parser("enable", help="Enable a connector")
+    connectors_enable.add_argument("connector_id")
+    connectors_enable.set_defaults(func=cmd_connectors_enable)
+    connectors_disable = connectors_sub.add_parser("disable", help="Disable a connector")
+    connectors_disable.add_argument("connector_id")
+    connectors_disable.set_defaults(func=cmd_connectors_disable)
+    connectors_sub.add_parser("health", help="Show connector health").set_defaults(func=cmd_connectors_health)
+    connectors_sub.add_parser("categories", help="List connector categories").set_defaults(func=cmd_connectors_categories)
 
     sessions = subparsers.add_parser("sessions", help="Inspect Iris agent sessions")
     sessions_sub = sessions.add_subparsers(dest="sessions_command", required=True)
@@ -220,6 +265,25 @@ def build_parser() -> argparse.ArgumentParser:
     memory_forget = memory_sub.add_parser("forget", help="Forget memory")
     memory_forget.add_argument("memory_id")
     memory_forget.set_defaults(func=cmd_memory_forget)
+
+    knowledge = subparsers.add_parser("knowledge", help="Manage local Iris knowledge/wiki")
+    knowledge_sub = knowledge.add_subparsers(dest="knowledge_command", required=True)
+    knowledge_ingest = knowledge_sub.add_parser("ingest-folder", help="Ingest text notes/files into local knowledge")
+    knowledge_ingest.add_argument("path")
+    knowledge_ingest.add_argument("--limit", type=int, default=200)
+    knowledge_ingest.add_argument("--no-recursive", action="store_true")
+    knowledge_ingest.set_defaults(func=cmd_knowledge_ingest_folder)
+    knowledge_search = knowledge_sub.add_parser("search", help="Search local knowledge")
+    knowledge_search.add_argument("query")
+    knowledge_search.add_argument("--limit", type=int, default=10)
+    knowledge_search.add_argument("--json", action="store_true")
+    knowledge_search.set_defaults(func=cmd_knowledge_search)
+    knowledge_list = knowledge_sub.add_parser("list", help="List local knowledge pages")
+    knowledge_list.add_argument("--limit", type=int, default=50)
+    knowledge_list.set_defaults(func=cmd_knowledge_list)
+    knowledge_show = knowledge_sub.add_parser("show", help="Show a local knowledge page")
+    knowledge_show.add_argument("page_id")
+    knowledge_show.set_defaults(func=cmd_knowledge_show)
 
     meeting = subparsers.add_parser("meeting", help="Silent meeting mode records")
     meeting_sub = meeting.add_subparsers(dest="meeting_command", required=True)
@@ -541,6 +605,14 @@ def cmd_test_control(args: argparse.Namespace) -> int:
     return 1
 
 
+def cmd_control_health(args: argparse.Namespace) -> int:
+    from iris.control_backends import control_backend_status
+
+    config = _config(args)
+    _print_json(control_backend_status(config))
+    return 0
+
+
 def cmd_start(args: argparse.Namespace) -> int:
     from iris.voice import VoiceSession
 
@@ -623,6 +695,33 @@ def cmd_tasks_resume(args: argparse.Namespace) -> int:
     return 0 if ok else 1
 
 
+def cmd_tasks_run_next(args: argparse.Namespace) -> int:
+    from iris.supervisor import TaskSupervisor
+
+    config = _config(args)
+
+    def router_factory():
+        return _runtime(args)[-1]
+
+    result = TaskSupervisor(config=config, router_factory=router_factory).run_next()
+    _print_json(result.__dict__)
+    return 0 if result.ok else 1
+
+
+def cmd_tasks_worker(args: argparse.Namespace) -> int:
+    from iris.supervisor import TaskSupervisor
+
+    config = _config(args)
+
+    def router_factory():
+        return _runtime(args)[-1]
+
+    TaskSupervisor(config=config, router_factory=router_factory).run_forever(
+        poll_interval=args.poll_interval
+    )
+    return 0
+
+
 def cmd_plugins_list(args: argparse.Namespace) -> int:
     config = _config(args)
     with open_state(config) as db:
@@ -643,6 +742,82 @@ def cmd_plugins_health(args: argparse.Namespace) -> int:
     with open_state(config) as db:
         _print_json(plugin_health(db))
     return 0
+
+
+def cmd_connectors_list(args: argparse.Namespace) -> int:
+    config = _config(args)
+    with open_state(config) as db:
+        _print_json(
+            list_connectors(
+                db,
+                manifest_dirs=default_manifest_dirs(config.project_root),
+                category=args.category,
+                enabled_only=args.enabled_only,
+            )
+        )
+    return 0
+
+
+def cmd_connectors_show(args: argparse.Namespace) -> int:
+    config = _config(args)
+    with open_state(config) as db:
+        connector = get_connector(
+            db,
+            args.connector_id,
+            manifest_dirs=default_manifest_dirs(config.project_root),
+        )
+    if connector is None:
+        print("Connector not found.", file=sys.stderr)
+        return 1
+    _print_json(connector)
+    return 0
+
+
+def cmd_connectors_enable(args: argparse.Namespace) -> int:
+    return _set_connector(args, True)
+
+
+def cmd_connectors_disable(args: argparse.Namespace) -> int:
+    return _set_connector(args, False)
+
+
+def cmd_connectors_health(args: argparse.Namespace) -> int:
+    config = _config(args)
+    with open_state(config) as db:
+        _print_json(
+            connector_health(
+                db,
+                manifest_dirs=default_manifest_dirs(config.project_root),
+            )
+        )
+    return 0
+
+
+def cmd_connectors_categories(args: argparse.Namespace) -> int:
+    config = _config(args)
+    _print_json(connector_categories(default_manifest_dirs(config.project_root)))
+    return 0
+
+
+def _set_connector(args: argparse.Namespace, enabled: bool) -> int:
+    config = _config(args)
+    with open_state(config) as db:
+        ok = set_connector_enabled(
+            db,
+            args.connector_id,
+            enabled,
+            manifest_dirs=default_manifest_dirs(config.project_root),
+        )
+        record_audit(
+            db,
+            actor="user",
+            tool="connector.enable" if enabled else "connector.disable",
+            risk=RiskLevel.LOW_RISK,
+            result="ok" if ok else "error",
+            input_value={"connector_id": args.connector_id},
+        )
+    _print_json({"ok": ok, "connector_id": args.connector_id, "enabled": enabled})
+    return 0 if ok else 1
 
 
 def _set_plugin(args: argparse.Namespace, enabled: bool) -> int:
@@ -755,6 +930,70 @@ def cmd_memory_forget(args: argparse.Namespace) -> int:
         record_audit(db, actor="user", tool="memory.forget", risk=RiskLevel.SENSITIVE, result="ok" if ok else "error")
     _print_json({"ok": ok})
     return 0 if ok else 1
+
+
+def cmd_knowledge_ingest_folder(args: argparse.Namespace) -> int:
+    config = _config(args)
+    with open_state(config) as db:
+        result = ingest_folder(
+            db,
+            Path(args.path),
+            limit=args.limit,
+            recursive=not args.no_recursive,
+        )
+        record_audit(
+            db,
+            actor="user",
+            tool="knowledge.ingest_folder",
+            risk=RiskLevel.LOW_RISK,
+            result="ok",
+            input_value={
+                "path": args.path,
+                "limit": args.limit,
+                "recursive": not args.no_recursive,
+            },
+            output_value=result.__dict__,
+        )
+    _print_json(result.__dict__)
+    return 0
+
+
+def cmd_knowledge_search(args: argparse.Namespace) -> int:
+    config = _config(args)
+    with open_state(config) as db:
+        results = search_pages(db, args.query, limit=args.limit)
+        record_audit(
+            db,
+            actor="user",
+            tool="knowledge.search",
+            risk=RiskLevel.LOW_RISK,
+            result="ok",
+            input_value={"query": args.query, "limit": args.limit},
+            output_value={"count": len(results)},
+        )
+    if args.json:
+        _print_json(results)
+    else:
+        print(format_search_results(results))
+    return 0
+
+
+def cmd_knowledge_list(args: argparse.Namespace) -> int:
+    config = _config(args)
+    with open_state(config) as db:
+        _print_json(list_pages(db, limit=args.limit))
+    return 0
+
+
+def cmd_knowledge_show(args: argparse.Namespace) -> int:
+    config = _config(args)
+    with open_state(config) as db:
+        page = get_page(db, args.page_id)
+    if page is None:
+        print("Knowledge page not found.", file=sys.stderr)
+        return 1
+    _print_json(page)
+    return 0
 
 
 def cmd_meeting_start(args: argparse.Namespace) -> int:

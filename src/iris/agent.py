@@ -11,6 +11,7 @@ from iris.approvals import create_approval, decide_approval
 from iris.audit import record_audit
 from iris.computer import ComputerBackend
 from iris.config import IrisConfig
+from iris.connectors import connector_health, default_manifest_dirs
 from iris.integrations.google_vision import GoogleVisionClient
 from iris.integrations.openai_client import OpenAIResponsesClient
 from iris.mac_controller import MacController
@@ -59,6 +60,7 @@ class AgentPlanner:
         observations: list[dict[str, Any]],
         action_recipes: list[dict[str, Any]] | None = None,
         session_state: dict[str, Any] | None = None,
+        connector_context: list[dict[str, Any]] | None = None,
     ) -> PlannerResult:
         if not self.openai_client.available:
             return PlannerResult(
@@ -77,6 +79,7 @@ class AgentPlanner:
                 conversation_history=conversation_history,
                 observations=observations,
                 session_state=session_state or {},
+                connector_context=connector_context or [],
             )
             return _planner_result_from_json(raw)
         except Exception as exc:
@@ -96,6 +99,7 @@ class AgentPlanner:
         conversation_history: list[dict[str, str]],
         observations: list[dict[str, Any]],
         session_state: dict[str, Any],
+        connector_context: list[dict[str, Any]],
     ) -> str:
         client = self.openai_client._get_client()
         response = client.responses.create(
@@ -111,6 +115,7 @@ class AgentPlanner:
                                 {
                                     "user_profile": self.openai_client.user_profile.prompt_context(),
                                     "available_tools": tool_schemas,
+                                    "available_connectors": connector_context,
                                     "action_recipes": action_recipes,
                                     "live_screen_context": screen_context,
                                     "recent_conversation": conversation_history[-8:],
@@ -154,7 +159,7 @@ class AgentExecutor:
         computer_use_runner: Any | None = None,
         computer_backend: ComputerBackend | None = None,
         recipes: ActionRecipeRegistry | None = None,
-        max_steps: int = 4,
+        max_steps: int = 6,
     ) -> None:
         self.planner = planner
         self.registry = registry
@@ -232,6 +237,7 @@ class AgentExecutor:
                 conversation_history=self._conversation_history,
                 observations=observations,
                 session_state=self._session_state,
+                connector_context=self._connector_context(),
             )
             if plan.type == "final_answer":
                 message = plan.spoken_response or plan.user_message or "I am here."
@@ -272,6 +278,9 @@ class AgentExecutor:
                     "payload": result.payload,
                     "expected_observation": plan.expected_observation,
                     "done_condition": plan.done_condition,
+                    "post_action_screen": self._screen_context_summary()
+                    if result.ok or result.continue_planning
+                    else None,
                 }
             )
             if result.continue_planning:
@@ -332,6 +341,7 @@ class AgentExecutor:
             computer_use_runner=self.computer_use_runner,
             session_state=self._session_state,
             recipes=self.recipes,
+            config=self.config,
         )
         try:
             result = (
@@ -378,7 +388,34 @@ class AgentExecutor:
             return ToolResult(False, message)
 
     def _screen_context_summary(self) -> dict[str, Any]:
-        return self.computer_backend.observe(include_browser=False).summary()
+        summary = self.computer_backend.observe(include_browser=True).summary()
+        summary["control_backends"] = self.computer_backend.backend_health(self.config)
+        return summary
+
+    def _connector_context(self) -> list[dict[str, Any]]:
+        if self.config is None:
+            return []
+        try:
+            with open_state(self.config) as db:
+                connectors = connector_health(
+                    db,
+                    manifest_dirs=default_manifest_dirs(self.config.project_root),
+                )
+        except Exception:
+            return []
+        return [
+            {
+                "connector_id": item.get("connector_id"),
+                "name": item.get("name"),
+                "category": item.get("category"),
+                "enabled": item.get("enabled"),
+                "configured": item.get("configured"),
+                "health": item.get("health"),
+                "tools": item.get("tools"),
+            }
+            for item in connectors
+            if item.get("enabled")
+        ]
 
     def _create_approval(
         self,
@@ -497,9 +534,16 @@ Valid shapes:
 Rules:
 - Hardcoded app-command parsing is not available. Choose tools from available_tools.
 - Choose generic tools only. action_recipes are context for how to combine tools, not tools to call directly.
-- Prefer: browser_open/browser_click/browser_extract, app_open/app_activate/app_hotkey, screen_describe/screen_find_element/screen_click_element, audio_current_media/audio_explain_current_song, media_search/media_play/media_pause, file_find/file_open/workflow_run.
+- available_connectors tells you which app/service manifests exist, whether they are enabled/configured, and which generic tools they expose.
+- If a connector is disabled or missing credentials, use integration_status or explain the setup instead of pretending it works.
+- Prefer: browser_open/browser_click/browser_extract, app_open/app_activate/app_hotkey, screen_describe/screen_find_element/screen_click_element, audio_current_media/audio_explain_current_song, media_search/media_play/media_pause, app_volume_set, connector_list, integration_status, task_start_background, calendar_find_event, reminder_create, knowledge_search/file_find/file_open/workflow_run.
 - Use live_screen_context as current state, but call describe_screen for current-screen/current-tab questions.
+- Use knowledge_search when the user asks what Iris knows/remembers from local notes, docs, project context, prior logs, personal wiki, or ingested files.
 - For media requests such as playing music, prefer media_play or media_search over open_app.
+- For "turn it down in Spotify" or similar per-app volume requests, use app_volume_set before set_volume.
+- For larger goals that should keep working after the conversation, use task_start_background and include a concrete goal.
+- For "is X connected/configured", use integration_status.
+- For calendar/reminder actions, use calendar_find_event or reminder_create; these may require approval because they touch private data or create records.
 - If the user says "play it", "click it", "do it", or otherwise refers to a previous media/search action, use media_play or the relevant browser/screen tool instead of repeating the search.
 - For browser navigation, use browser_open with new_tab=false unless the user explicitly asks for a new tab.
 - If the user asks to look something up online, browse public results, research a person/company/topic, or summarize what is online, use web_research instead of only opening a search page.
