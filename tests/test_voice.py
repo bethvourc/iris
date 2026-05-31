@@ -14,6 +14,7 @@ from iris.voice import (
     _contains_wake_word,
     _is_sleep_command,
     _is_realtime_timeout,
+    _select_input_device,
     _similar_text,
     _strip_wake_words,
 )
@@ -126,6 +127,26 @@ class VoiceTests(unittest.TestCase):
         session._mark_response_done()
         self.assertEqual(len(sent), 4)
 
+    def test_select_input_device_ignores_negative_default_output_device(self) -> None:
+        sounddevice = FakeSoundDevice(
+            default_device=(-1, 0),
+            devices=[
+                {"name": "Mac mini Speakers", "max_input_channels": 0},
+                {"name": "MacBook Pro Microphone", "max_input_channels": 1},
+            ],
+        )
+        device = _select_input_device(sounddevice)
+        self.assertEqual(device.index, 1)
+        self.assertEqual(device.name, "MacBook Pro Microphone")
+
+    def test_select_input_device_raises_clear_error_without_microphone(self) -> None:
+        sounddevice = FakeSoundDevice(
+            default_device=(-1, 0),
+            devices=[{"name": "Mac mini Speakers", "max_input_channels": 0}],
+        )
+        with self.assertRaisesRegex(RuntimeError, "No microphone input device"):
+            _select_input_device(sounddevice)
+
 
 class FakePerception:
     pass
@@ -147,6 +168,20 @@ class FakeRouter:
 
 class FakeTimeout(Exception):
     pass
+
+
+class FakeDefault:
+    def __init__(self, device) -> None:  # noqa: ANN001
+        self.device = device
+
+
+class FakeSoundDevice:
+    def __init__(self, *, default_device, devices) -> None:  # noqa: ANN001
+        self.default = FakeDefault(default_device)
+        self._devices = devices
+
+    def query_devices(self):  # noqa: ANN201
+        return self._devices
 
 
 if __name__ == "__main__":

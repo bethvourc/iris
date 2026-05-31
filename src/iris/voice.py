@@ -8,6 +8,7 @@ import threading
 import time
 import base64
 from difflib import SequenceMatcher
+from dataclasses import dataclass
 from typing import Any
 
 from iris.config import IrisConfig
@@ -16,6 +17,13 @@ from iris.profile import UserProfile, infer_system_profile
 from iris.router import ActionRouter
 from iris.safety import SafetyGate
 from iris.system import run_command
+
+
+@dataclass(frozen=True)
+class AudioDevice:
+    index: int
+    name: str
+    input_channels: int
 
 
 class RealtimeTextClient:
@@ -90,6 +98,7 @@ class RealtimeAudioClient:
         import sounddevice  # type: ignore
 
         chunks: list[bytes] = []
+        input_device = _select_input_device(sounddevice)
 
         def callback(indata, frames, time_info, status) -> None:  # noqa: ANN001
             if status:
@@ -98,6 +107,7 @@ class RealtimeAudioClient:
 
         with sounddevice.RawInputStream(
             samplerate=self.sample_rate,
+            device=input_device.index,
             channels=1,
             dtype="int16",
             callback=callback,
@@ -281,9 +291,8 @@ class RealtimeSpeechSession:
             f"({self.config.screenshot_interval_seconds:.1f}s sampling)"
         )
 
-        devices = sounddevice.query_devices()
-        default_input = sounddevice.default.device[0]
-        print(f"iris> microphone device: {default_input} ({devices[default_input]['name']})")
+        input_device = _select_input_device(sounddevice)
+        print(f"iris> microphone device: {input_device.index} ({input_device.name})")
 
         def input_callback(indata, frames, time_info, status) -> None:  # noqa: ANN001
             if status:
@@ -302,6 +311,7 @@ class RealtimeSpeechSession:
         try:
             with sounddevice.RawInputStream(
                 samplerate=self.sample_rate,
+                device=input_device.index,
                 channels=1,
                 dtype="int16",
                 blocksize=2400,
@@ -629,11 +639,14 @@ class VoiceSession:
                 f"{', '.join(self.config.wake_words)}. Press Ctrl+C to stop."
             )
             self._run_realtime_speech_loop(wake_gated=True)
-            return
-        print(
-            "Type a message and press Return. Type /live or /wake for live "
-            "speech-to-speech, /listen for backup STT, /reset to reset chat."
-        )
+            if self._stop.is_set():
+                return
+            print("Type a message and press Return. Type /listen for backup STT, /reset to reset chat.")
+        else:
+            print(
+                "Type a message and press Return. Type /live or /wake for live "
+                "speech-to-speech, /listen for backup STT, /reset to reset chat."
+            )
 
         try:
             while not self._stop.is_set():
@@ -734,6 +747,7 @@ class VoiceSession:
             ).run()
         except KeyboardInterrupt:
             print()
+            self._stop.set()
         except Exception as exc:
             print(f"iris error> live speech failed: {exc}")
             print("iris> fallback available: type /listen or /listen 1.5")
@@ -757,6 +771,43 @@ def _clean_transcript(text: str) -> str:
     if len(stripped) % 2 == 0 and stripped[:half].strip() == stripped[half:].strip():
         return stripped[:half].strip()
     return stripped
+
+
+def _select_input_device(sounddevice_module: Any) -> AudioDevice:
+    devices = sounddevice_module.query_devices()
+    default_device = getattr(sounddevice_module, "default", None)
+    default_index = -1
+    if default_device is not None:
+        raw_default = getattr(default_device, "device", (-1, -1))
+        try:
+            default_index = int(raw_default[0])
+        except (TypeError, ValueError, IndexError):
+            default_index = -1
+    if 0 <= default_index < len(devices):
+        device = devices[default_index]
+        channels = _input_channels(device)
+        if channels > 0:
+            return AudioDevice(default_index, str(device.get("name", default_index)), channels)
+    for index, device in enumerate(devices):
+        channels = _input_channels(device)
+        if channels > 0:
+            return AudioDevice(index, str(device.get("name", index)), channels)
+    names = ", ".join(str(device.get("name", index)) for index, device in enumerate(devices))
+    raise RuntimeError(
+        "No microphone input device is available. macOS is reporting no input-capable audio devices. "
+        "Connect or select a microphone in System Settings > Sound > Input, then restart Iris. "
+        f"Detected devices: {names or 'none'}"
+    )
+
+
+def _input_channels(device: Any) -> int:
+    try:
+        return int(device.get("max_input_channels", 0))
+    except AttributeError:
+        try:
+            return int(device["max_input_channels"])
+        except Exception:
+            return 0
 
 
 def _contains_wake_word(text: str, wake_words: tuple[str, ...]) -> bool:
