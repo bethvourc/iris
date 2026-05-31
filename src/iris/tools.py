@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from html import unescape
 from html.parser import HTMLParser
+from pathlib import Path
 import re
 import time
 from typing import Any, Callable
@@ -362,6 +363,19 @@ def _default_tools() -> list[ToolSpec]:
             parameters=_object_schema({"query": {"type": "string"}}),
             risk=RiskLevel.LOW_RISK,
             execute=_find_file,
+        ),
+        ToolSpec(
+            name="file_list_folder",
+            description="List files in a local folder such as Downloads, Desktop, or Documents.",
+            parameters=_object_schema(
+                {
+                    "path": {"type": "string"},
+                    "limit": {"type": "integer"},
+                },
+                required=["path"],
+            ),
+            risk=RiskLevel.LOW_RISK,
+            execute=_file_list_folder,
         ),
         ToolSpec(
             name="file_open",
@@ -1312,14 +1326,76 @@ def _media_play_current(arguments: dict[str, Any], context: ToolContext) -> Tool
 
 
 def _find_file(arguments: dict[str, Any], context: ToolContext) -> ToolResult:
-    return _from_action_result(context.controller.find_file(_string_arg(arguments, "query")))
+    query = _string_arg(arguments, "query")
+    if _is_reference_to_previous_results(query) and context.session_state is not None:
+        previous = context.session_state.get("last_file_results")
+        if isinstance(previous, list):
+            return _format_file_results(previous)
+    result = context.controller.find_file(query)
+    if result.ok and isinstance(result.payload, list):
+        if context.session_state is not None:
+            context.session_state["last_file_results"] = result.payload
+        return _format_file_results([str(path) for path in result.payload])
+    return _from_action_result(result)
+
+
+def _file_list_folder(arguments: dict[str, Any], context: ToolContext) -> ToolResult:
+    raw_path = _string_arg(arguments, "path")
+    if not raw_path:
+        return ToolResult(False, "I need a folder path.")
+    folder = _resolve_common_folder(raw_path)
+    limit = max(1, min(_int_arg(arguments, "limit", 20), 100))
+    if not folder.exists():
+        return ToolResult(False, f"I couldn't find that folder: {folder}")
+    if not folder.is_dir():
+        return ToolResult(False, f"That path is not a folder: {folder}")
+    entries = sorted(
+        [entry for entry in folder.iterdir() if not entry.name.startswith(".")],
+        key=lambda entry: entry.stat().st_mtime if entry.exists() else 0,
+        reverse=True,
+    )[:limit]
+    paths = [str(entry) for entry in entries]
+    if context.session_state is not None:
+        context.session_state["last_file_results"] = paths
+        context.session_state["last_folder"] = str(folder)
+    return _format_file_results(paths, heading=f"I found {len(paths)} item(s) in {folder.name}.")
 
 
 def _file_open(arguments: dict[str, Any], context: ToolContext) -> ToolResult:
-    path = _string_arg(arguments, "path")
-    if not path:
+    raw_path = _string_arg(arguments, "path")
+    if not raw_path:
         return ToolResult(False, "I need a file path.")
+    path = str(_resolve_common_folder(raw_path))
     return _from_action_result(context.controller.open_file(path))
+
+
+def _is_reference_to_previous_results(query: str) -> bool:
+    normalized = query.strip().lower()
+    return normalized in {"", "them", "it", "the results", "those files", "list them", "list results"}
+
+
+def _resolve_common_folder(path: str) -> Path:
+    cleaned = path.strip()
+    lowered = cleaned.lower()
+    home = Path.home()
+    if lowered in {"download", "downloads", "download folder", "downloads folder", "~/downloads"}:
+        return home / "Downloads"
+    if lowered in {"desktop", "desktop folder", "~/desktop"}:
+        return home / "Desktop"
+    if lowered in {"document", "documents", "documents folder", "~/documents"}:
+        return home / "Documents"
+    return Path(cleaned).expanduser()
+
+
+def _format_file_results(paths: list[str], *, heading: str | None = None) -> ToolResult:
+    if not paths:
+        return ToolResult(True, "I found 0 results.", [])
+    names = [Path(path).name or path for path in paths]
+    lines = [heading or f"I found {len(paths)} result(s):"]
+    lines.extend(f"{index}. {name}" for index, name in enumerate(names[:20], start=1))
+    if len(paths) > 20:
+        lines.append(f"...and {len(paths) - 20} more.")
+    return ToolResult(True, "\n".join(lines), paths)
 
 
 def _workflow_run(arguments: dict[str, Any], context: ToolContext) -> ToolResult:

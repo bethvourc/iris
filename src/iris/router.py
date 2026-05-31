@@ -67,6 +67,7 @@ class ActionRouter:
         if not command:
             return RouterResult(False, "No command provided.")
         lowered = command.lower()
+        normalized_command = lowered.strip(" \t\r\n.,!?")
         if lowered in {"stop", "pause", "kill"}:
             self.safety_gate.kill()
             return RouterResult(True, "Automation paused.")
@@ -76,10 +77,10 @@ class ActionRouter:
         if lowered in {"reset", "/reset", "reset conversation"}:
             self.reset_conversation()
             return RouterResult(True, "Conversation reset.")
-        if lowered in {"approve", "approved", "yes approve", "go ahead", "yes, go ahead"}:
+        if normalized_command in {"approve", "approved", "yes approve", "go ahead", "yes, go ahead"}:
             result = self.agent_executor.approve_pending()
             return RouterResult(result.ok, result.message, result.payload)
-        if lowered in {"deny", "denied", "cancel that", "never mind", "no"}:
+        if normalized_command in {"deny", "denied", "cancel that", "never mind", "no"}:
             result = self.agent_executor.deny_pending()
             return RouterResult(result.ok, result.message, result.payload)
         result = self.agent_executor.run(command)
