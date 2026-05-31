@@ -9,7 +9,7 @@ import sys
 from iris.actions import RiskLevel
 from iris.approvals import decide_approval, list_approvals
 from iris.audit import list_audit, record_audit
-from iris.config import DEFAULT_PROJECT_ROOT, IrisConfig
+from iris.config import IrisConfig, default_project_root
 from iris.connectors import (
     connector_categories,
     connector_health,
@@ -58,7 +58,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="iris", description="Local Mac agent CLI")
     parser.add_argument(
         "--project-root",
-        default=str(DEFAULT_PROJECT_ROOT),
+        default=str(default_project_root()),
         help="Project root containing .env",
     )
     subparsers = parser.add_subparsers(dest="command", required=True)
