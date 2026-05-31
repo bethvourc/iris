@@ -297,7 +297,7 @@ class RealtimeSpeechSession:
         def input_callback(indata, frames, time_info, status) -> None:  # noqa: ANN001
             if status:
                 print(f"audio warning: {status}")
-            if self._stop.is_set():
+            if self._stop.is_set() or self._input_should_be_muted():
                 return
             self._send_json(
                 {
@@ -367,11 +367,19 @@ class RealtimeSpeechSession:
         if event_type == "response.created":
             with self._response_state_lock:
                 self._assistant_response_active = True
+                self._suppress_input_until = max(
+                    self._suppress_input_until,
+                    time.monotonic() + 1.0,
+                )
             return
         if event_type == "input_audio_buffer.speech_started":
+            if self._input_should_be_muted():
+                return
             print("iris> heard speech...")
             return
         if event_type == "input_audio_buffer.speech_stopped":
+            if self._input_should_be_muted():
+                return
             print("iris> speech stopped, waiting for transcript...")
             return
         if event_type == "input_audio_buffer.committed":
@@ -384,6 +392,7 @@ class RealtimeSpeechSession:
         if event_type in {"response.audio.delta", "response.output_audio.delta"}:
             audio = event.get("delta")
             if isinstance(audio, str) and audio:
+                self._note_audio_output()
                 output.write(base64.b64decode(audio))
             return
         if event_type in {
@@ -517,9 +526,23 @@ class RealtimeSpeechSession:
         if pending:
             self._respond_with_text(pending)
 
+    def _note_audio_output(self) -> None:
+        with self._response_state_lock:
+            self._assistant_response_active = True
+            self._suppress_input_until = max(
+                self._suppress_input_until,
+                time.monotonic() + 1.5,
+            )
+
+    def _input_should_be_muted(self) -> bool:
+        with self._response_state_lock:
+            return self._assistant_response_active or time.monotonic() <= self._suppress_input_until
+
     def _should_ignore_transcript(self, transcript: str) -> bool:
         normalized = _normalize_wake_text(transcript)
         if not normalized:
+            return True
+        if _is_filler_transcript(normalized):
             return True
         with self._response_state_lock:
             active = self._assistant_response_active
@@ -808,6 +831,17 @@ def _input_channels(device: Any) -> int:
             return int(device["max_input_channels"])
         except Exception:
             return 0
+
+
+def _is_filler_transcript(normalized: str) -> bool:
+    compact = normalized.strip()
+    if compact in {"um", "uh", "umm", "hmm", "mm", "yeah", "okay"}:
+        return True
+    words = compact.split()
+    return bool(words) and len(words) <= 3 and all(
+        word in {"um", "uh", "umm", "hmm", "mm", "like", "okay"}
+        for word in words
+    )
 
 
 def _contains_wake_word(text: str, wake_words: tuple[str, ...]) -> bool:
