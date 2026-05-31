@@ -45,6 +45,12 @@ Initialize local state:
 ./iris status
 ```
 
+If you use the local HTTP gateway, set a private token first:
+
+```bash
+IRIS_GATEWAY_TOKEN=$(python -c 'import secrets; print(secrets.token_urlsafe(32))')
+```
+
 ## macOS Permissions
 
 Run:
@@ -154,6 +160,12 @@ Background runtime:
 ./iris tasks run-next
 ./iris tasks cancel <task_id>
 ./iris tasks resume <task_id>
+```
+
+Gateway API routes other than `/health` require:
+
+```text
+Authorization: Bearer <IRIS_GATEWAY_TOKEN>
 ```
 
 ## Connector Manifests

@@ -104,6 +104,7 @@ def _config(tmp_path: Path) -> IrisConfig:
         stt_model="whisper-large-v3-turbo",
         realtime_transcription_model="gpt-4o-mini-transcribe",
         screenshot_interval_seconds=0.5,
+        gateway_token=None,
         notify_provider="pushover",
         ntfy_server="https://ntfy.sh",
         ntfy_topic=None,

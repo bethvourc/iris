@@ -100,9 +100,23 @@ class PerceptionService:
 
 
 class ScreenAwarenessService:
-    def __init__(self, perception: PerceptionService, interval_seconds: float = 1.0) -> None:
+    def __init__(
+        self,
+        perception: PerceptionService,
+        interval_seconds: float = 1.0,
+        *,
+        idle_interval_seconds: float | None = None,
+        stable_after_frames: int = 4,
+    ) -> None:
         self.perception = perception
-        self.interval_seconds = max(0.25, interval_seconds)
+        self.interval_seconds = max(0.5, interval_seconds)
+        self.idle_interval_seconds = max(
+            self.interval_seconds,
+            idle_interval_seconds
+            if idle_interval_seconds is not None
+            else self.interval_seconds * 3,
+        )
+        self.stable_after_frames = max(1, stable_after_frames)
         self._stop = threading.Event()
         self._lock = threading.Lock()
         self._frame: LiveScreenFrame | None = None
@@ -144,10 +158,23 @@ class ScreenAwarenessService:
         return frame
 
     def _loop(self) -> None:
+        previous_context: ScreenContext | None = None
+        stable_frames = 0
         while not self._stop.is_set():
             try:
-                self.capture_now()
+                frame = self.capture_now()
+                if frame.context == previous_context:
+                    stable_frames += 1
+                else:
+                    stable_frames = 0
+                    previous_context = frame.context
             except Exception as exc:
+                stable_frames = 0
                 with self._lock:
                     self._error = str(exc)
-            self._stop.wait(self.interval_seconds)
+            self._stop.wait(self._next_interval(stable_frames))
+
+    def _next_interval(self, stable_frames: int) -> float:
+        if stable_frames >= self.stable_after_frames:
+            return self.idle_interval_seconds
+        return self.interval_seconds

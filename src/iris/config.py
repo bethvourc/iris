@@ -66,6 +66,7 @@ class IrisConfig:
     stt_model: str
     realtime_transcription_model: str
     screenshot_interval_seconds: float
+    gateway_token: str | None
     notify_provider: str
     ntfy_server: str
     ntfy_topic: str | None
@@ -111,8 +112,9 @@ class IrisConfig:
                 "IRIS_REALTIME_TRANSCRIPTION_MODEL", "gpt-4o-mini-transcribe"
             ),
             screenshot_interval_seconds=_float_env(
-                "IRIS_SCREENSHOT_INTERVAL_SECONDS", 0.5
+                "IRIS_SCREENSHOT_INTERVAL_SECONDS", 1.5
             ),
+            gateway_token=os.getenv("IRIS_GATEWAY_TOKEN") or None,
             notify_provider=os.getenv("IRIS_NOTIFY_PROVIDER", "pushover"),
             ntfy_server=os.getenv("IRIS_NTFY_SERVER", "https://ntfy.sh"),
             ntfy_topic=os.getenv("IRIS_NTFY_TOPIC") or None,
