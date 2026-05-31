@@ -12,6 +12,7 @@ __pycache__/
 htmlcov/
 dist/
 build/
+tests/
 *.egg-info/
 iris-debug/
 iris_tmp_exec_test
