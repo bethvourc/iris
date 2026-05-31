@@ -51,8 +51,9 @@ class RealtimeTextClient:
                             "model": self.config.realtime_model,
                             "output_modalities": ["text"],
                             "instructions": (
-                                f"You are {self.config.agent_name}, a concise local "
-                                "Mac assistant. Prefer direct answers."
+                                f"You are {self.config.agent_name}, a natural local Mac "
+                                "agent. Be calm, conversational, and specific. Keep answers "
+                                "tight, but do not sound like a canned assistant."
                             ),
                         },
                     }
@@ -522,6 +523,7 @@ class RealtimeSpeechSession:
     def _respond_with_text(self, text: str) -> None:
         if not text:
             return
+        spoken_text = _spoken_runtime_result(text)
         with self._response_state_lock:
             if (
                 self._assistant_response_active
@@ -534,7 +536,7 @@ class RealtimeSpeechSession:
                 return
             self._assistant_response_active = True
             self._last_response_started_at = time.monotonic()
-            self._last_spoken_text = text
+            self._last_spoken_text = spoken_text
             self._suppress_input_until = time.monotonic() + 3.0
         self._send_json(
             {
@@ -546,8 +548,10 @@ class RealtimeSpeechSession:
                         {
                             "type": "input_text",
                             "text": (
-                                "Say this local Iris runtime result naturally, "
-                                f"in one short spoken sentence: {text}"
+                                "Turn this local Iris runtime result into natural live speech. "
+                                "Stay faithful to the result, but say it like a calm person in the room, "
+                                "not a status logger. Use one or two sentences, three only if the result "
+                                f"needs context: {spoken_text}"
                             ),
                         }
                     ],
@@ -559,7 +563,12 @@ class RealtimeSpeechSession:
                 "type": "response.create",
             "response": {
                 "output_modalities": ["audio"],
-                "instructions": "Speak the local runtime result only. Keep it short.",
+                "instructions": (
+                    "Speak only the local runtime result, but make it human. "
+                    "Use warm, relaxed phrasing; vary the wording; do not read raw paths, JSON, "
+                    "stack traces, or command syntax aloud. If something failed, say what happened "
+                    "plainly and what Iris is trying or needs next."
+                ),
             },
         }
         )
@@ -628,10 +637,14 @@ User profile:
 {self.user_profile.prompt_context()}
 
 Voice behavior:
-- This is live speech-to-speech, not dictation. Respond out loud with natural, short spoken replies.
-- Sound like a helpful person sitting next to {self.user_profile.preferred_name}: warm, calm, and direct.
-- Use {self.user_profile.preferred_name}'s first name occasionally, especially greetings and confirmations.
-- Keep it conversational. One or two natural sentences is usually right; do not be robotic or read raw URLs aloud.
+- This is live speech-to-speech, not dictation. Sound present, relaxed, and conversational.
+- Talk like a capable person sitting next to {self.user_profile.preferred_name}: calm, warm, lightly playful when the user is casual, never corporate.
+- Use {self.user_profile.preferred_name}'s first name occasionally, especially greetings and reassuring confirmations, but do not overuse it.
+- Do not give the same generic line every time. Avoid defaulting to “How can I help you today?” after every greeting.
+- For casual check-ins, answer like a person: acknowledge the mood, maybe add a small natural follow-up.
+- For action results, be brief but specific: say what happened, what you see, or what you need next.
+- One or two sentences is usually right. Use three if the user is explaining something or the task needs context.
+- Do not be robotic, do not read raw URLs aloud, and do not narrate internal tool names unless the user asks.
 - If asked to control the Mac, inspect the screen, open apps, find files, or run workflows, the local Iris runtime will execute it and provide a result.
 - Do not guess what is on the screen. For screen/current tab/current window questions, wait for the local Iris runtime result.
 - Ask before destructive actions, sending messages, deleting files, credentials, purchases, installs, or security/privacy changes.
@@ -852,6 +865,21 @@ def _clean_transcript(text: str) -> str:
     if len(stripped) % 2 == 0 and stripped[:half].strip() == stripped[half:].strip():
         return stripped[:half].strip()
     return stripped
+
+
+def _spoken_runtime_result(text: str) -> str:
+    cleaned = text.strip()
+    if not cleaned:
+        return ""
+    if "That needs approval before I can do it" in cleaned:
+        return "That needs approval. Say approve to continue."
+    cleaned = re.sub(r"`\./iris approvals`", "the approvals command", cleaned)
+    cleaned = re.sub(r"`([^`]+)`", r"\1", cleaned)
+    cleaned = re.sub(r"\brun\s+\./iris\s+\w+(?:\s+\w+)*", "use the matching Iris command", cleaned, flags=re.I)
+    cleaned = re.sub(r"opened\s+/Users/[^\s]+/Downloads\b", "opened your Downloads folder", cleaned, flags=re.I)
+    cleaned = re.sub(r"/Users/[^\s]+", "that local path", cleaned)
+    cleaned = cleaned.replace("OPENAI_API_KEY", "the OpenAI API key")
+    return cleaned
 
 
 def _select_input_device(sounddevice_module: Any) -> AudioDevice:

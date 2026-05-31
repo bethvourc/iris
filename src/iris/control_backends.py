@@ -76,6 +76,7 @@ def _browser_cdp_status() -> ControlBackendStatus:
         detail,
         {
             "url": os.getenv("IRIS_CHROME_CDP_URL", "http://127.0.0.1:9222"),
+            "allowed_origin": status.get("allowed_origin"),
             "profile": status.get("profile"),
         },
     )

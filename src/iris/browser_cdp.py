@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 import json
 import os
+import time
 from typing import Any
 from urllib import parse, request
 
@@ -33,13 +34,16 @@ class ChromeCDPBackend:
         self.auto_start = auto_start
 
     def available(self) -> bool:
+        chrome = ManagedChrome()
         try:
-            self._get_json("/json/version", timeout=0.5)
-            return True
+            status = chrome.status()
+            if status.ok:
+                return True
         except Exception:
-            if self.auto_start:
-                return ManagedChrome().ensure_running().ok
-            return False
+            pass
+        if self.auto_start:
+            return chrome.ensure_running().ok
+        return False
 
     def ensure_available(self) -> ActionResult:
         if self.available():
@@ -211,6 +215,13 @@ class ChromeCDPBackend:
             return ensured
         script = """
 (() => {
+  const sessionMetadata = navigator.mediaSession && navigator.mediaSession.metadata
+    ? {
+        title: navigator.mediaSession.metadata.title || '',
+        artist: navigator.mediaSession.metadata.artist || '',
+        album: navigator.mediaSession.metadata.album || '',
+      }
+    : null;
   const media = [...document.querySelectorAll('audio,video')].map((el) => ({
     tag: el.tagName.toLowerCase(),
     paused: el.paused,
@@ -222,10 +233,203 @@ class ChromeCDPBackend:
     .map((el) => String(el.getAttribute('aria-label') || el.innerText || '').replace(/\\s+/g, ' ').trim())
     .filter(Boolean)
     .slice(0, 60);
-  return {title: document.title || '', url: location.href, media, buttons};
+  return {title: document.title || '', url: location.href, mediaSession: sessionMetadata, media, buttons};
 })()
 """
         return self._evaluate_result("browser_cdp_media_state", script, result_message="Checked browser media state.")
+
+    def spotify_play_search(self, query: str | None = None) -> ActionResult:
+        ensured = self.ensure_available() if self.auto_start else None
+        if ensured is not None and not ensured.ok:
+            return ensured
+        if query:
+            opened = self.navigate(
+                f"https://open.spotify.com/search/{parse.quote_plus(query)}",
+                new_tab=False,
+            )
+            if not opened.ok:
+                return opened
+            time.sleep(2.0)
+        terms = [part for part in (query or "").lower().split() if len(part) > 1]
+        script = """
+(terms) => {
+  const normalize = (value) => String(value || '').toLowerCase().replace(/\\s+/g, ' ').trim();
+  const visible = (el) => {
+    const rect = el.getBoundingClientRect();
+    const style = window.getComputedStyle(el);
+    return rect.width > 0 && rect.height > 0 && style.visibility !== 'hidden' && style.display !== 'none';
+  };
+  const labelOf = (el) => normalize(el.getAttribute('aria-label') || el.innerText || el.title || '');
+  const scoreText = (text) => terms.reduce((score, term) => score + (text.includes(term) ? 1 : 0), 0);
+  const buttons = [...document.querySelectorAll('button,[role="button"]')].filter(visible);
+  const playButtons = buttons.filter((button) => {
+    const label = labelOf(button);
+    return label.includes('play') && !label.includes('pause');
+  });
+  const scoredButtons = playButtons
+    .map((button, index) => {
+      const container = button.closest('[data-testid], [role="row"], li, section, article') || button.parentElement || button;
+      const text = normalize(container.innerText || labelOf(button));
+      return {button, index, text, label: labelOf(button), score: scoreText(text)};
+    })
+    .sort((a, b) => (b.score - a.score) || (a.index - b.index));
+  const preferred = scoredButtons[0];
+  if (preferred && (preferred.score > 0 || terms.length === 0 || scoredButtons.length === 1)) {
+    preferred.button.scrollIntoView({block: 'center', inline: 'center'});
+    preferred.button.click();
+    return {ok: true, action: 'clicked_play', label: preferred.label, matched_text: preferred.text, score: preferred.score};
+  }
+  const trackLinks = [...document.querySelectorAll('a[href*="/track/"], a[href*="/album/"]')].filter(visible)
+    .map((link, index) => ({link, index, text: normalize(link.innerText || link.getAttribute('aria-label') || ''), score: scoreText(normalize(link.innerText || link.getAttribute('aria-label') || ''))}))
+    .sort((a, b) => (b.score - a.score) || (a.index - b.index));
+  const result = trackLinks[0];
+  if (result && (result.score > 0 || terms.length === 0 || trackLinks.length === 1)) {
+    result.link.scrollIntoView({block: 'center', inline: 'center'});
+    result.link.click();
+    return {ok: true, action: 'opened_result', matched_text: result.text, score: result.score};
+  }
+  return {ok: false, reason: 'no_playable_result', play_buttons: playButtons.length, terms};
+}
+"""
+        result = self._call_function("browser_cdp_spotify_play", script, [terms])
+        if not result.ok:
+            return result
+        payload = result.payload if isinstance(result.payload, dict) else {}
+        attempts = [payload]
+        if payload.get("ok") and payload.get("action") == "opened_result":
+            time.sleep(1.2)
+            result = self._call_function("browser_cdp_spotify_play", script, [terms])
+            if not result.ok:
+                return result
+            payload = result.payload if isinstance(result.payload, dict) else {}
+            attempts.append(payload)
+        if payload.get("ok"):
+            time.sleep(0.8)
+            state = self.media_state()
+            state_payload = state.payload if state.ok and isinstance(state.payload, dict) else {}
+            verified = _browser_media_is_playing(state_payload)
+            return ActionResult(
+                "browser_cdp_spotify_play",
+                True,
+                "Spotify playback started." if verified else "I clicked play in Spotify, but I could not verify audio yet.",
+                {
+                    "query": query,
+                    "backend": "cdp",
+                    "verified_playback": verified,
+                    "attempts": attempts,
+                    "media_state": state_payload,
+                    **payload,
+                },
+            )
+        return ActionResult(
+            "browser_cdp_spotify_play",
+            False,
+            "I opened Spotify, but I could not find a playable result yet.",
+            {"query": query, "backend": "cdp", **payload},
+        )
+
+    def youtube_play(self, query: str | None = None) -> ActionResult:
+        ensured = self.ensure_available() if self.auto_start else None
+        if ensured is not None and not ensured.ok:
+            return ensured
+        terms = [part for part in (query or "").lower().split() if len(part) > 1]
+        if query:
+            opened = self.navigate(
+                f"https://www.youtube.com/results?search_query={parse.quote_plus(query)}",
+                new_tab=False,
+            )
+            if not opened.ok:
+                return opened
+            time.sleep(1.5)
+        script = """
+(terms) => {
+  const normalize = (value) => String(value || '').toLowerCase().replace(/\\s+/g, ' ').trim();
+  const visible = (el) => {
+    const rect = el.getBoundingClientRect();
+    const style = window.getComputedStyle(el);
+    return rect.width > 0 && rect.height > 0 && style.visibility !== 'hidden' && style.display !== 'none';
+  };
+  const scoreText = (text) => terms.reduce((score, term) => score + (text.includes(term) ? 1 : 0), 0);
+  const video = document.querySelector('video');
+  if (video) {
+    const playButton = document.querySelector('.ytp-play-button, button[aria-label*="Play"], button[title*="Play"]');
+    if (video.paused) {
+      if (playButton && visible(playButton)) {
+        playButton.click();
+      } else {
+        video.play().catch(() => {});
+      }
+    }
+    return {
+      ok: !video.paused,
+      action: video.paused ? 'play_requested' : 'playing',
+      title: document.title || '',
+      currentTime: video.currentTime || 0,
+      duration: video.duration || 0,
+      url: location.href || ''
+    };
+  }
+  const links = [...document.querySelectorAll('a#video-title, ytd-video-renderer a[href*="/watch"], a[href*="/watch"]')]
+    .filter(visible)
+    .map((link, index) => {
+      const container = link.closest('ytd-video-renderer, ytd-rich-item-renderer, ytd-compact-video-renderer') || link;
+      const text = normalize(container.innerText || link.getAttribute('aria-label') || link.title || link.textContent);
+      return {link, index, text, score: scoreText(text)};
+    })
+    .filter((item) => item.text || item.link.href)
+    .sort((a, b) => (b.score - a.score) || (a.index - b.index));
+  const result = links[0];
+  if (result && (result.score > 0 || terms.length === 0 || links.length === 1)) {
+    result.link.scrollIntoView({block: 'center', inline: 'center'});
+    result.link.click();
+    return {ok: true, action: 'opened_video', matched_text: result.text, score: result.score};
+  }
+  const playButtons = [...document.querySelectorAll('button,[role="button"]')].filter(visible)
+    .filter((button) => normalize(button.getAttribute('aria-label') || button.title || button.textContent).includes('play'));
+  if (playButtons[0]) {
+    playButtons[0].click();
+    return {ok: true, action: 'clicked_play_button'};
+  }
+  return {ok: false, reason: 'no_video_or_play_button', title: document.title || '', url: location.href || ''};
+}
+"""
+        attempts = []
+        result = self._call_function("browser_cdp_youtube_play", script, [terms])
+        if not result.ok:
+            return result
+        payload = result.payload if isinstance(result.payload, dict) else {}
+        attempts.append(payload)
+        if payload.get("action") == "opened_video":
+            time.sleep(2.0)
+            result = self._call_function("browser_cdp_youtube_play", script, [[]])
+            if not result.ok:
+                return result
+            payload = result.payload if isinstance(result.payload, dict) else {}
+            attempts.append(payload)
+        if payload.get("ok"):
+            time.sleep(0.5)
+            state = self.media_state()
+            state_payload = state.payload if state.ok and isinstance(state.payload, dict) else {}
+            verified = bool(payload.get("action") == "playing" or _browser_media_is_playing(state_payload))
+            return ActionResult(
+                "browser_cdp_youtube_play",
+                True,
+                "YouTube playback started." if verified else "I clicked play on YouTube, but I could not verify audio yet.",
+                {
+                    "query": query,
+                    "backend": "cdp",
+                    "verified_playback": verified,
+                    "attempts": attempts,
+                    "media_state": state_payload,
+                    **payload,
+                },
+            )
+        return ActionResult(
+            "browser_cdp_youtube_play",
+            False,
+            "I could not find a YouTube video or play button on the current page.",
+            {"query": query, "backend": "cdp", **payload},
+        )
 
     def verify_state(self, *, text: str = "", url_contains: str = "", title_contains: str = "") -> ActionResult:
         ensured = self.ensure_available() if self.auto_start else None
@@ -316,7 +520,10 @@ class ChromeCDPBackend:
             import websocket  # type: ignore
         except Exception as exc:  # pragma: no cover - dependency/import environment
             raise RuntimeError("websocket-client is not installed") from exc
-        ws = websocket.create_connection(ws_url, timeout=4)
+        try:
+            ws = websocket.create_connection(ws_url, timeout=4, origin=self.base_url)
+        except Exception as exc:
+            raise RuntimeError(_friendly_cdp_error(str(exc))) from exc
         try:
             message_id = 1
             ws.send(json.dumps({"id": message_id, "method": method, "params": params or {}}))
@@ -348,6 +555,26 @@ def _friendly_cdp_error(detail: str) -> str:
             "Chrome CDP is not reachable. Start Chrome with "
             "`--remote-debugging-port=9222` or set IRIS_CHROME_CDP_URL."
         )
+    if "handshake status 403" in lowered or "remote-allow-origins" in lowered:
+        return (
+            "Chrome CDP is running without the Iris origin allowlist. "
+            "Quit the Iris-managed Chrome window, then run `./iris browser start-cdp`."
+        )
     if "no chrome cdp page tab" in lowered:
         return "No Chrome tab is available through CDP yet."
     return detail or "Chrome CDP action failed."
+
+
+def _browser_media_is_playing(payload: dict[str, Any]) -> bool:
+    metadata = payload.get("mediaSession")
+    if isinstance(metadata, dict) and (metadata.get("title") or metadata.get("artist")):
+        return True
+    media_items = payload.get("media")
+    if isinstance(media_items, list) and any(
+        isinstance(item, dict) and item.get("paused") is False for item in media_items
+    ):
+        return True
+    buttons = payload.get("buttons")
+    if isinstance(buttons, list) and any("pause" in str(button).lower() for button in buttons):
+        return True
+    return False

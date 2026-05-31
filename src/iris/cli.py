@@ -168,6 +168,9 @@ def build_parser() -> argparse.ArgumentParser:
     browser_sub.add_parser("start-cdp", help="Start managed Chrome with CDP enabled").set_defaults(
         func=cmd_browser_start_cdp
     )
+    browser_sub.add_parser("restart-cdp", help="Restart the Iris managed Chrome/CDP runtime").set_defaults(
+        func=cmd_browser_restart_cdp
+    )
     browser_sub.add_parser("tabs", help="List CDP Chrome tabs").set_defaults(func=cmd_browser_tabs)
 
     start = subparsers.add_parser("start", help="Start the interactive Iris session")
@@ -557,6 +560,7 @@ def cmd_doctor(args: argparse.Namespace) -> int:
         "settings_urls": settings_urls,
         "cdp_setup": (
             'open -na "Google Chrome" --args --remote-debugging-port=9222 '
+            "--remote-allow-origins=http://127.0.0.1:9222 "
             '--user-data-dir="$HOME/.iris/chrome-cdp"'
         ),
     }
@@ -745,6 +749,14 @@ def cmd_browser_start_cdp(args: argparse.Namespace) -> int:
     from iris.managed_browser import ManagedChrome
 
     result = ManagedChrome().ensure_running()
+    _print_json({"ok": result.ok, "message": result.detail, "payload": result.payload})
+    return 0 if result.ok else 1
+
+
+def cmd_browser_restart_cdp(args: argparse.Namespace) -> int:
+    from iris.managed_browser import ManagedChrome
+
+    result = ManagedChrome().restart()
     _print_json({"ok": result.ok, "message": result.detail, "payload": result.payload})
     return 0 if result.ok else 1
 

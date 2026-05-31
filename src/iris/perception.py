@@ -102,7 +102,7 @@ class PerceptionService:
 class ScreenAwarenessService:
     def __init__(self, perception: PerceptionService, interval_seconds: float = 1.0) -> None:
         self.perception = perception
-        self.interval_seconds = max(0.5, interval_seconds)
+        self.interval_seconds = max(0.25, interval_seconds)
         self._stop = threading.Event()
         self._lock = threading.Lock()
         self._frame: LiveScreenFrame | None = None

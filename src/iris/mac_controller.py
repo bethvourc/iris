@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from urllib.parse import quote, quote_plus
+import json
 import re
 import shutil
 import time
@@ -368,23 +369,31 @@ needle => {
             if not opened.ok:
                 return opened
             time.sleep(2.5)
+        terms_json = json.dumps([part for part in (query or "").lower().split() if len(part) > 1])
         script = r"""
-(() => {
+((terms) => {
   const lower = value => (value || '').toString().toLowerCase();
   const visible = element => {
     const rect = element.getBoundingClientRect();
     const style = window.getComputedStyle(element);
     return rect.width > 0 && rect.height > 0 && style.visibility !== 'hidden' && style.display !== 'none';
   };
+  const scoreText = text => terms.reduce((score, term) => score + (lower(text).includes(term) ? 1 : 0), 0);
   const buttons = [...document.querySelectorAll('button')].filter(visible);
   const playButtons = buttons.filter(button => {
     const label = lower(button.getAttribute('aria-label') || button.textContent);
     return label.includes('play') && !label.includes('pause');
   });
-  const preferred = playButtons.find(button => {
-    const label = lower(button.getAttribute('aria-label') || button.textContent);
-    return label.includes('burn') || label.includes('boy') || label.includes('win');
-  }) || playButtons[0];
+  const scoredButtons = playButtons
+    .map((button, index) => {
+      const container = button.closest('[data-testid], [role="row"], li, section, article') || button.parentElement || button;
+      const text = lower(container.innerText || button.getAttribute('aria-label') || button.textContent);
+      return {button, index, score: scoreText(text)};
+    })
+    .sort((a, b) => (b.score - a.score) || (a.index - b.index));
+  const preferred = scoredButtons[0] && (scoredButtons[0].score > 0 || terms.length === 0 || scoredButtons.length === 1)
+    ? scoredButtons[0].button
+    : null;
   if (preferred) {
     preferred.click();
     return 'clicked play';
@@ -395,8 +404,8 @@ needle => {
     return 'opened first result';
   }
   return 'no playable result found';
-})()
-"""
+})(*TERMS*)
+""".replace("*TERMS*", terms_json)
         preflight = self.browser_automation_available(browser)
         if not preflight.ok:
             return ActionResult(

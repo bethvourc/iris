@@ -5,7 +5,7 @@
       "name": "Finder",
       "category": "mac-native",
       "description": "Find, open, move, and inspect local files.",
-      "tools": ["file_find", "file_open", "file_list_folder"],
+      "tools": ["file_find", "file_open", "file_list_folder", "file_rename"],
       "auth_type": "mac_permission",
       "risk": "medium"
     },
@@ -56,8 +56,8 @@
       "id": "gmail",
       "name": "Gmail",
       "category": "communication",
-      "description": "Search and summarize Gmail with approval gates.",
-      "tools": ["gmail_search", "gmail_search_and_summarize"],
+      "description": "Search, summarize, and create Gmail compose drafts with approval gates.",
+      "tools": ["gmail_search", "gmail_search_and_summarize", "gmail_create_draft"],
       "auth_type": "browser_session",
       "risk": "private",
       "enabled_by_default": false
@@ -78,8 +78,16 @@
       "name": "Spotify",
       "category": "media",
       "description": "Search, play, pause, and control Spotify volume.",
-      "tools": ["media_search", "media_play", "media_pause", "app_volume_set", "audio_current_media"],
+      "tools": ["media_search", "media_play", "media_pause", "app_volume_set", "audio_current_media", "audio_identify_playing"],
       "auth_type": "local_app"
+    },
+    {
+      "id": "youtube",
+      "name": "YouTube",
+      "category": "media",
+      "description": "Search and play YouTube videos in the current browser tab.",
+      "tools": ["media_search", "media_play", "browser_play_media", "browser_media_state", "audio_current_media"],
+      "auth_type": "browser_session"
     },
     {
       "id": "stripe",
@@ -89,6 +97,16 @@
       "tools": ["browser_open", "browser_get_dom", "browser_extract", "screen_describe", "browser_verify_state", "integration_status"],
       "auth_type": "browser_session",
       "env_keys": ["STRIPE_API_KEY", "STRIPE_DASHBOARD_URL"],
+      "scopes": ["read_only"],
+      "risk": "private"
+    },
+    {
+      "id": "revenuecat",
+      "name": "RevenueCat",
+      "category": "business",
+      "description": "Open RevenueCat dashboards and read visible sales/revenue metrics after approval.",
+      "tools": ["recipe_run", "browser_open", "browser_get_dom", "browser_extract", "screen_describe", "browser_verify_state", "integration_status"],
+      "auth_type": "browser_session",
       "scopes": ["read_only"],
       "risk": "private"
     },

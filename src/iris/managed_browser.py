@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+import json
 import os
 import socket
 import time
@@ -21,6 +22,10 @@ class ManagedBrowserConfig:
 
     @property
     def base_url(self) -> str:
+        return f"http://{self.host}:{self.port}"
+
+    @property
+    def allowed_origin(self) -> str:
         return f"http://{self.host}:{self.port}"
 
     @classmethod
@@ -49,15 +54,26 @@ class ManagedChrome:
 
     def status(self) -> ActionResult:
         reachable = self.is_reachable()
-        detail = "Managed Chrome CDP is reachable." if reachable else "Managed Chrome CDP is not reachable."
+        websocket_ready = self._websocket_ready() if reachable else None
+        ok = reachable and websocket_ready is not False
+        if reachable and websocket_ready is False:
+            detail = (
+                "Managed Chrome CDP is reachable, but browser control is blocked by "
+                "Chrome's remote origin policy. Quit the Iris-managed Chrome window, "
+                "then run `./iris browser start-cdp`."
+            )
+        else:
+            detail = "Managed Chrome CDP is reachable." if reachable else "Managed Chrome CDP is not reachable."
         return ActionResult(
             "managed_chrome_status",
-            reachable,
+            ok,
             detail,
             {
                 "base_url": self.config.base_url,
                 "host": self.config.host,
                 "port": self.config.port,
+                "allowed_origin": self.config.allowed_origin,
+                "websocket_ready": websocket_ready,
                 "profile": str(self.config.user_data_dir),
             },
         )
@@ -70,8 +86,16 @@ class ManagedChrome:
             return False
 
     def ensure_running(self, *, wait_seconds: float = 8.0) -> ActionResult:
+        current = self.status()
+        if current.ok:
+            return current
+        if self.is_reachable() and isinstance(current.payload, dict) and current.payload.get("websocket_ready") is False:
+            restarted = self.restart(wait_seconds=wait_seconds)
+            if restarted.ok:
+                return restarted
+            return current
         if self.is_reachable():
-            return self.status()
+            return current
         launch = self.launch()
         if not launch.ok:
             return launch
@@ -87,6 +111,46 @@ class ManagedChrome:
             launch.payload,
         )
 
+    def restart(self, *, wait_seconds: float = 8.0) -> ActionResult:
+        stopped = self.stop()
+        if not stopped.ok:
+            return stopped
+        time.sleep(0.5)
+        launch = self.launch()
+        if not launch.ok:
+            return launch
+        deadline = time.monotonic() + max(0.5, wait_seconds)
+        while time.monotonic() < deadline:
+            status = self.status()
+            if status.ok:
+                return ActionResult(
+                    "managed_chrome_restart",
+                    True,
+                    "Restarted Iris-managed Chrome with CDP enabled.",
+                    status.payload,
+                )
+            time.sleep(0.25)
+        return ActionResult(
+            "managed_chrome_restart",
+            False,
+            "Chrome relaunched, but CDP browser control did not become ready in time.",
+            launch.payload,
+        )
+
+    def stop(self) -> ActionResult:
+        pattern = f"user-data-dir={self.config.user_data_dir}"
+        result = run_command(["pkill", "-f", pattern], timeout=5)
+        ok = result.ok or result.returncode == 1
+        detail = "Stopped Iris-managed Chrome." if result.ok else "No Iris-managed Chrome process was running."
+        if not ok:
+            detail = result.stderr or result.stdout or "Could not stop Iris-managed Chrome."
+        return ActionResult(
+            "managed_chrome_stop",
+            ok,
+            detail,
+            {"profile": str(self.config.user_data_dir), "pattern": pattern},
+        )
+
     def launch(self) -> ActionResult:
         self.config.user_data_dir.mkdir(parents=True, exist_ok=True)
         args = [
@@ -95,6 +159,7 @@ class ManagedChrome:
             self.config.app_name,
             "--args",
             f"--remote-debugging-port={self.config.port}",
+            f"--remote-allow-origins={self.config.allowed_origin}",
             f"--user-data-dir={self.config.user_data_dir}",
             "--no-first-run",
             "--no-default-browser-check",
@@ -106,6 +171,7 @@ class ManagedChrome:
             result.stderr or result.stdout or f"Launched {self.config.app_name} with CDP.",
             {
                 "base_url": self.config.base_url,
+                "allowed_origin": self.config.allowed_origin,
                 "profile": str(self.config.user_data_dir),
                 "args": args,
             },
@@ -117,6 +183,24 @@ class ManagedChrome:
                 return response.status == 200
         except Exception:
             return False
+
+    def _websocket_ready(self) -> bool | None:
+        try:
+            with request.urlopen(f"{self.config.base_url}/json/version", timeout=0.5) as response:
+                data = json.loads(response.read().decode("utf-8"))
+            ws_url = str(data.get("webSocketDebuggerUrl") or "")
+            if not ws_url:
+                return None
+            import websocket  # type: ignore
+
+            ws = websocket.create_connection(ws_url, timeout=0.75, origin=self.config.base_url)
+            ws.close()
+            return True
+        except Exception as exc:
+            detail = str(exc).lower()
+            if "handshake status 403" in detail or "remote-allow-origins" in detail:
+                return False
+            return None
 
 
 def managed_chrome_status() -> dict[str, Any]:

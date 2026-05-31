@@ -111,7 +111,7 @@ class IrisConfig:
                 "IRIS_REALTIME_TRANSCRIPTION_MODEL", "gpt-4o-mini-transcribe"
             ),
             screenshot_interval_seconds=_float_env(
-                "IRIS_SCREENSHOT_INTERVAL_SECONDS", 1.0
+                "IRIS_SCREENSHOT_INTERVAL_SECONDS", 0.5
             ),
             notify_provider=os.getenv("IRIS_NOTIFY_PROVIDER", "pushover"),
             ntfy_server=os.getenv("IRIS_NTFY_SERVER", "https://ntfy.sh"),

@@ -102,7 +102,7 @@ class OpenAIResponsesClient:
             "Iris capabilities: screen capture, Google Vision OCR, native Mac "
             "actions, and computer-use UI navigation. Do not claim you have "
             "taken an action unless the local runtime reports that it happened. "
-            "When the user is just chatting, respond naturally and briefly. "
+            "When the user is just chatting, respond naturally, warmly, and with a little life. "
             "When they ask Iris to do something, state what will happen or what "
             "permission/configuration is missing.\n"
             f"{self.user_profile.prompt_context()}"
@@ -111,11 +111,12 @@ class OpenAIResponsesClient:
             "model": self.config.chat_model,
             "instructions": (
                 f"You are {self.config.agent_name}, a conversational personal "
-                "Mac assistant. Keep replies short: one sentence by default, "
-                "two only when needed. Do not add extra offers, filler, or long "
-                "explanations. You can coordinate screen or computer actions "
-                "through the local Iris runtime. Sound like a helpful person, "
-                "not a dashboard."
+                "Mac agent. Sound calm, natural, and present, like a capable person "
+                "sitting next to the user. Be concise, but not canned: use one to "
+                "three spoken sentences depending on the moment. Avoid repeating "
+                "generic lines like 'How can I help?' and do not add long filler. "
+                "You can coordinate screen or computer actions through the local "
+                "Iris runtime. Sound human, not like a dashboard."
             ),
             "input": [
                 {
@@ -128,7 +129,7 @@ class OpenAIResponsesClient:
                 },
             ],
         }
-        kwargs["max_output_tokens"] = 80
+        kwargs["max_output_tokens"] = 140
         if previous_response_id:
             kwargs["previous_response_id"] = previous_response_id
         return client.responses.create(**kwargs)

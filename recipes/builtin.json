@@ -70,6 +70,42 @@
       "verification_tool": "browser_verify_state"
     },
     {
+      "name": "revenuecat_revenue_check",
+      "description": "Check RevenueCat dashboard sales/revenue from the current signed-in account. Never handle credentials; ask the user to sign in manually if needed.",
+      "service": "revenuecat",
+      "private": true,
+      "required_connectors": ["revenuecat"],
+      "tools": ["browser_open", "browser_get_dom", "browser_extract", "screen_describe", "browser_verify_state"],
+      "approval_gates": ["read_account_dashboard"],
+      "steps": [
+        {
+          "tool": "browser_open",
+          "args": {"url": "https://app.revenuecat.com", "browser": "Google Chrome", "new_tab": false},
+          "expected_observation": "RevenueCat dashboard is visible, or the user is asked to sign in manually."
+        },
+        {
+          "tool": "browser_get_dom",
+          "args": {"max_chars": 20000},
+          "expected_observation": "Dashboard text includes revenue, sales, proceeds, subscriptions, last 28 days, month, or a login prompt.",
+          "continue_on_error": true
+        },
+        {
+          "tool": "browser_extract",
+          "args": {"browser": "Google Chrome"},
+          "expected_observation": "Visible RevenueCat dashboard text is extracted by browser fallback.",
+          "continue_on_error": true
+        },
+        {
+          "tool": "screen_describe",
+          "args": {"prompt": "Read the current RevenueCat dashboard and extract this month's sales/revenue if visible. If only a different range is visible, report that exact range and value. If a login screen is visible, say the user needs to sign in."},
+          "expected_observation": "Visible dashboard values, visible date range, or login status are summarized."
+        }
+      ],
+      "fallback_steps": [],
+      "done_condition": "The answer includes a verified visible value and date range for RevenueCat sales/revenue, or clearly states that sign-in or a date filter change is required.",
+      "verification_tool": "browser_verify_state"
+    },
+    {
       "name": "calendar_event_lookup",
       "description": "Find local Calendar events by query and date window with private-data approval.",
       "service": "calendar",

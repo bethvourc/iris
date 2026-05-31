@@ -30,12 +30,36 @@
       "live_safe": true
     },
     {
+      "id": "spotify_play_song_one_shot",
+      "category": "media",
+      "input": "Open Spotify in my browser and play Capable God by Judikay.",
+      "expected_tools": ["media_play", "browser_media_state"],
+      "expected_recipe": "spotify_play_song",
+      "connector": "spotify",
+      "live_safe": true
+    },
+    {
       "id": "spotify_followup_play_it",
       "category": "media",
       "input": "Play it.",
       "expected_tools": ["media_play", "audio_current_media"],
       "expected_recipe": "spotify_play_song",
       "connector": "spotify",
+      "live_safe": true
+    },
+    {
+      "id": "ambient_song_identify_no_lyrics_search",
+      "category": "media",
+      "input": "Listen to the song playing and tell me what it is.",
+      "expected_tools": ["audio_current_media", "audio_identify_playing"],
+      "live_safe": true
+    },
+    {
+      "id": "youtube_play_current_video",
+      "category": "media",
+      "input": "Play the YouTube video on my screen.",
+      "expected_tools": ["media_play", "browser_play_media", "browser_media_state"],
+      "connector": "youtube",
       "live_safe": true
     },
     {
@@ -46,6 +70,15 @@
       "expected_recipe": "stripe_revenue_check",
       "approval_expected": true,
       "connector": "stripe"
+    },
+    {
+      "id": "revenuecat_month_sales",
+      "category": "private-dashboard",
+      "input": "Open my RevenueCat dashboard and tell me how much we made in sales this month.",
+      "expected_tools": ["recipe_run", "browser_open", "browser_get_dom", "browser_extract", "screen_describe"],
+      "expected_recipe": "revenuecat_revenue_check",
+      "approval_expected": true,
+      "connector": "revenuecat"
     },
     {
       "id": "messages_send_beth",
@@ -83,11 +116,27 @@
       "connector": "gmail"
     },
     {
+      "id": "gmail_create_draft",
+      "category": "email",
+      "input": "Create a Gmail draft to Sleazy E with subject Checking in and body I am testing Atlayer and may need a verification code.",
+      "expected_tools": ["gmail_create_draft", "draft_email"],
+      "approval_expected": true,
+      "connector": "gmail"
+    },
+    {
       "id": "native_app_inspect",
       "category": "native-ui",
       "input": "Find the search field in the current app.",
       "expected_tools": ["app_inspect", "app_find_element"],
       "live_safe": true
+    },
+    {
+      "id": "file_rename_recent_item",
+      "category": "files",
+      "input": "Rename the flight folder to flight 2.",
+      "expected_tools": ["file_rename"],
+      "approval_expected": true,
+      "connector": "finder"
     },
     {
       "id": "task_status",
