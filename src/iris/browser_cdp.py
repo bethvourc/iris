@@ -3,12 +3,12 @@ from __future__ import annotations
 from dataclasses import dataclass
 import json
 import os
-import time
 from typing import Any
 from urllib import parse, request
 
 from iris.mac_controller import ActionResult
 from iris.managed_browser import ManagedChrome
+from iris.polling import poll_until
 
 
 @dataclass(frozen=True)
@@ -29,8 +29,12 @@ class BrowserTab:
 
 
 class ChromeCDPBackend:
-    def __init__(self, base_url: str | None = None, *, auto_start: bool = False) -> None:
-        self.base_url = (base_url or os.getenv("IRIS_CHROME_CDP_URL") or "http://127.0.0.1:9222").rstrip("/")
+    def __init__(
+        self, base_url: str | None = None, *, auto_start: bool = False
+    ) -> None:
+        self.base_url = (
+            base_url or os.getenv("IRIS_CHROME_CDP_URL") or "http://127.0.0.1:9222"
+        ).rstrip("/")
         self.auto_start = auto_start
 
     def available(self) -> bool:
@@ -47,7 +51,12 @@ class ChromeCDPBackend:
 
     def ensure_available(self) -> ActionResult:
         if self.available():
-            return ActionResult("browser_cdp_ensure_available", True, "Chrome CDP is reachable.", {"base_url": self.base_url})
+            return ActionResult(
+                "browser_cdp_ensure_available",
+                True,
+                "Chrome CDP is reachable.",
+                {"base_url": self.base_url},
+            )
         return ManagedChrome().ensure_running()
 
     def list_tabs(self) -> ActionResult:
@@ -57,7 +66,9 @@ class ChromeCDPBackend:
         try:
             tabs = self._tabs()
         except Exception as exc:
-            return ActionResult("browser_cdp_tabs", False, _friendly_cdp_error(str(exc)))
+            return ActionResult(
+                "browser_cdp_tabs", False, _friendly_cdp_error(str(exc))
+            )
         return ActionResult(
             "browser_cdp_tabs",
             True,
@@ -71,7 +82,11 @@ class ChromeCDPBackend:
             return ensured
         tab = self._current_tab()
         if tab is None:
-            return ActionResult("browser_cdp_current_page", False, "No Chrome CDP page tab is available.")
+            return ActionResult(
+                "browser_cdp_current_page",
+                False,
+                "No Chrome CDP page tab is available.",
+            )
         return ActionResult(
             "browser_cdp_current_page",
             True,
@@ -85,7 +100,9 @@ class ChromeCDPBackend:
             return ensured
         try:
             if new_tab:
-                data = self._get_json(f"/json/new?{parse.quote(url, safe=':/?&=%')}", method="PUT")
+                data = self._get_json(
+                    f"/json/new?{parse.quote(url, safe=':/?&=%')}", method="PUT"
+                )
                 tab = _tab_from_json(data)
                 return ActionResult(
                     "browser_cdp_navigate",
@@ -95,7 +112,11 @@ class ChromeCDPBackend:
                 )
             tab = self._current_tab()
             if tab is None:
-                return ActionResult("browser_cdp_navigate", False, "No Chrome CDP page tab is available.")
+                return ActionResult(
+                    "browser_cdp_navigate",
+                    False,
+                    "No Chrome CDP page tab is available.",
+                )
             self._send(tab.web_socket_url, "Page.enable")
             self._send(tab.web_socket_url, "Page.navigate", {"url": url})
             return ActionResult(
@@ -105,7 +126,9 @@ class ChromeCDPBackend:
                 {"url": url, "tab_id": tab.tab_id, "backend": "cdp"},
             )
         except Exception as exc:
-            return ActionResult("browser_cdp_navigate", False, _friendly_cdp_error(str(exc)))
+            return ActionResult(
+                "browser_cdp_navigate", False, _friendly_cdp_error(str(exc))
+            )
 
     def get_dom(self, *, max_chars: int = 12000) -> ActionResult:
         ensured = self.ensure_available() if self.auto_start else None
@@ -137,7 +160,9 @@ class ChromeCDPBackend:
   }};
 }})()
 """
-        return self._evaluate_result("browser_cdp_get_dom", script, result_message="I read the browser DOM.")
+        return self._evaluate_result(
+            "browser_cdp_get_dom", script, result_message="I read the browser DOM."
+        )
 
     def click_text(self, text: str) -> ActionResult:
         ensured = self.ensure_available() if self.auto_start else None
@@ -165,8 +190,18 @@ class ChromeCDPBackend:
             return result
         payload = result.payload if isinstance(result.payload, dict) else {}
         if payload.get("ok"):
-            return ActionResult("browser_cdp_click_text", True, f"Clicked {payload.get('label') or text}.", payload)
-        return ActionResult("browser_cdp_click_text", False, f"I could not find {text} in the current tab.", payload)
+            return ActionResult(
+                "browser_cdp_click_text",
+                True,
+                f"Clicked {payload.get('label') or text}.",
+                payload,
+            )
+        return ActionResult(
+            "browser_cdp_click_text",
+            False,
+            f"I could not find {text} in the current tab.",
+            payload,
+        )
 
     def type_into(self, *, text: str, field: str = "") -> ActionResult:
         ensured = self.ensure_available() if self.auto_start else None
@@ -206,8 +241,15 @@ class ChromeCDPBackend:
             return result
         payload = result.payload if isinstance(result.payload, dict) else {}
         if payload.get("ok"):
-            return ActionResult("browser_cdp_type_into", True, "Typed into the browser field.", payload)
-        return ActionResult("browser_cdp_type_into", False, "I could not find a browser field to type into.", payload)
+            return ActionResult(
+                "browser_cdp_type_into", True, "Typed into the browser field.", payload
+            )
+        return ActionResult(
+            "browser_cdp_type_into",
+            False,
+            "I could not find a browser field to type into.",
+            payload,
+        )
 
     def media_state(self) -> ActionResult:
         ensured = self.ensure_available() if self.auto_start else None
@@ -236,12 +278,17 @@ class ChromeCDPBackend:
   return {title: document.title || '', url: location.href, mediaSession: sessionMetadata, media, buttons};
 })()
 """
-        return self._evaluate_result("browser_cdp_media_state", script, result_message="Checked browser media state.")
+        return self._evaluate_result(
+            "browser_cdp_media_state",
+            script,
+            result_message="Checked browser media state.",
+        )
 
     def spotify_play_search(self, query: str | None = None) -> ActionResult:
         ensured = self.ensure_available() if self.auto_start else None
         if ensured is not None and not ensured.ok:
             return ensured
+        terms = [part for part in (query or "").lower().split() if len(part) > 1]
         if query:
             opened = self.navigate(
                 f"https://open.spotify.com/search/{parse.quote_plus(query)}",
@@ -249,8 +296,6 @@ class ChromeCDPBackend:
             )
             if not opened.ok:
                 return opened
-            time.sleep(2.0)
-        terms = [part for part in (query or "").lower().split() if len(part) > 1]
         script = """
 (terms) => {
   const normalize = (value) => String(value || '').toLowerCase().replace(/\\s+/g, ' ').trim();
@@ -291,27 +336,46 @@ class ChromeCDPBackend:
   return {ok: false, reason: 'no_playable_result', play_buttons: playButtons.length, terms};
 }
 """
-        result = self._call_function("browser_cdp_spotify_play", script, [terms])
+        result = poll_until(
+            lambda: self._call_function("browser_cdp_spotify_play", script, [terms]),
+            _action_payload_ok,
+            timeout_seconds=2.5 if query else 0.1,
+            interval_seconds=0.25,
+        )
         if not result.ok:
             return result
         payload = result.payload if isinstance(result.payload, dict) else {}
         attempts = [payload]
         if payload.get("ok") and payload.get("action") == "opened_result":
-            time.sleep(1.2)
-            result = self._call_function("browser_cdp_spotify_play", script, [terms])
+            result = poll_until(
+                lambda: self._call_function(
+                    "browser_cdp_spotify_play", script, [terms]
+                ),
+                _action_payload_ok,
+                timeout_seconds=1.5,
+                interval_seconds=0.25,
+            )
             if not result.ok:
                 return result
             payload = result.payload if isinstance(result.payload, dict) else {}
             attempts.append(payload)
         if payload.get("ok"):
-            time.sleep(0.8)
-            state = self.media_state()
-            state_payload = state.payload if state.ok and isinstance(state.payload, dict) else {}
+            state = poll_until(
+                self.media_state,
+                _action_media_playing,
+                timeout_seconds=1.0,
+                interval_seconds=0.2,
+            )
+            state_payload = (
+                state.payload if state.ok and isinstance(state.payload, dict) else {}
+            )
             verified = _browser_media_is_playing(state_payload)
             return ActionResult(
                 "browser_cdp_spotify_play",
                 True,
-                "Spotify playback started." if verified else "I clicked play in Spotify, but I could not verify audio yet.",
+                "Spotify playback started."
+                if verified
+                else "I clicked play in Spotify, but I could not verify audio yet.",
                 {
                     "query": query,
                     "backend": "cdp",
@@ -340,7 +404,6 @@ class ChromeCDPBackend:
             )
             if not opened.ok:
                 return opened
-            time.sleep(1.5)
         script = """
 (terms) => {
   const normalize = (value) => String(value || '').toLowerCase().replace(/\\s+/g, ' ').trim();
@@ -394,27 +457,47 @@ class ChromeCDPBackend:
 }
 """
         attempts = []
-        result = self._call_function("browser_cdp_youtube_play", script, [terms])
+        result = poll_until(
+            lambda: self._call_function("browser_cdp_youtube_play", script, [terms]),
+            _action_payload_ok,
+            timeout_seconds=2.0 if query else 0.1,
+            interval_seconds=0.25,
+        )
         if not result.ok:
             return result
         payload = result.payload if isinstance(result.payload, dict) else {}
         attempts.append(payload)
         if payload.get("action") == "opened_video":
-            time.sleep(2.0)
-            result = self._call_function("browser_cdp_youtube_play", script, [[]])
+            result = poll_until(
+                lambda: self._call_function("browser_cdp_youtube_play", script, [[]]),
+                _action_payload_ok,
+                timeout_seconds=2.5,
+                interval_seconds=0.25,
+            )
             if not result.ok:
                 return result
             payload = result.payload if isinstance(result.payload, dict) else {}
             attempts.append(payload)
         if payload.get("ok"):
-            time.sleep(0.5)
-            state = self.media_state()
-            state_payload = state.payload if state.ok and isinstance(state.payload, dict) else {}
-            verified = bool(payload.get("action") == "playing" or _browser_media_is_playing(state_payload))
+            state = poll_until(
+                self.media_state,
+                _action_media_playing,
+                timeout_seconds=0.8,
+                interval_seconds=0.2,
+            )
+            state_payload = (
+                state.payload if state.ok and isinstance(state.payload, dict) else {}
+            )
+            verified = bool(
+                payload.get("action") == "playing"
+                or _browser_media_is_playing(state_payload)
+            )
             return ActionResult(
                 "browser_cdp_youtube_play",
                 True,
-                "YouTube playback started." if verified else "I clicked play on YouTube, but I could not verify audio yet.",
+                "YouTube playback started."
+                if verified
+                else "I clicked play on YouTube, but I could not verify audio yet.",
                 {
                     "query": query,
                     "backend": "cdp",
@@ -431,7 +514,9 @@ class ChromeCDPBackend:
             {"query": query, "backend": "cdp", **payload},
         )
 
-    def verify_state(self, *, text: str = "", url_contains: str = "", title_contains: str = "") -> ActionResult:
+    def verify_state(
+        self, *, text: str = "", url_contains: str = "", title_contains: str = ""
+    ) -> ActionResult:
         ensured = self.ensure_available() if self.auto_start else None
         if ensured is not None and not ensured.ok:
             return ensured
@@ -448,26 +533,41 @@ class ChromeCDPBackend:
   return {ok: checks.text && checks.url && checks.title, checks, title: document.title || '', url: location.href};
 }
 """
-        result = self._call_function("browser_cdp_verify_state", script, [text, url_contains, title_contains])
+        result = self._call_function(
+            "browser_cdp_verify_state", script, [text, url_contains, title_contains]
+        )
         if not result.ok:
             return result
         payload = result.payload if isinstance(result.payload, dict) else {}
         if payload.get("ok"):
-            return ActionResult("browser_cdp_verify_state", True, "Browser state matches.", payload)
-        return ActionResult("browser_cdp_verify_state", False, "Browser state does not match yet.", payload)
+            return ActionResult(
+                "browser_cdp_verify_state", True, "Browser state matches.", payload
+            )
+        return ActionResult(
+            "browser_cdp_verify_state",
+            False,
+            "Browser state does not match yet.",
+            payload,
+        )
 
-    def _evaluate_result(self, action: str, expression: str, *, result_message: str) -> ActionResult:
+    def _evaluate_result(
+        self, action: str, expression: str, *, result_message: str
+    ) -> ActionResult:
         try:
             payload = self.evaluate(expression)
             return ActionResult(action, True, result_message, payload)
         except Exception as exc:
             return ActionResult(action, False, _friendly_cdp_error(str(exc)))
 
-    def _call_function(self, action: str, function_body: str, args: list[Any]) -> ActionResult:
+    def _call_function(
+        self, action: str, function_body: str, args: list[Any]
+    ) -> ActionResult:
         expression = f"({function_body})(*ARGS*)"
         encoded_args = ", ".join(json.dumps(arg) for arg in args)
         expression = expression.replace("*ARGS*", encoded_args)
-        return self._evaluate_result(action, expression, result_message="Browser action completed.")
+        return self._evaluate_result(
+            action, expression, result_message="Browser action completed."
+        )
 
     def evaluate(self, expression: str) -> Any:
         tab = self._current_tab()
@@ -493,7 +593,11 @@ class ChromeCDPBackend:
         return result.get("description") or result
 
     def _current_tab(self) -> BrowserTab | None:
-        tabs = [tab for tab in self._tabs() if tab.type == "page" and not tab.url.startswith("devtools://")]
+        tabs = [
+            tab
+            for tab in self._tabs()
+            if tab.type == "page" and not tab.url.startswith("devtools://")
+        ]
         return tabs[0] if tabs else None
 
     def _tabs(self) -> list[BrowserTab]:
@@ -515,7 +619,9 @@ class ChromeCDPBackend:
         with request.urlopen(req, timeout=timeout) as response:
             return json.loads(response.read().decode("utf-8"))
 
-    def _send(self, ws_url: str, method: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
+    def _send(
+        self, ws_url: str, method: str, params: dict[str, Any] | None = None
+    ) -> dict[str, Any]:
         try:
             import websocket  # type: ignore
         except Exception as exc:  # pragma: no cover - dependency/import environment
@@ -526,7 +632,9 @@ class ChromeCDPBackend:
             raise RuntimeError(_friendly_cdp_error(str(exc))) from exc
         try:
             message_id = 1
-            ws.send(json.dumps({"id": message_id, "method": method, "params": params or {}}))
+            ws.send(
+                json.dumps({"id": message_id, "method": method, "params": params or {}})
+            )
             while True:
                 raw = ws.recv()
                 data = json.loads(raw)
@@ -550,7 +658,11 @@ def _tab_from_json(item: dict[str, Any]) -> BrowserTab:
 
 def _friendly_cdp_error(detail: str) -> str:
     lowered = (detail or "").lower()
-    if "connection refused" in lowered or "urlopen error" in lowered or "failed to establish" in lowered:
+    if (
+        "connection refused" in lowered
+        or "urlopen error" in lowered
+        or "failed to establish" in lowered
+    ):
         return (
             "Chrome CDP is not reachable. Start Chrome with "
             "`--remote-debugging-port=9222` or set IRIS_CHROME_CDP_URL."
@@ -565,6 +677,16 @@ def _friendly_cdp_error(detail: str) -> str:
     return detail or "Chrome CDP action failed."
 
 
+def _action_payload_ok(result: ActionResult) -> bool:
+    payload = result.payload if isinstance(result.payload, dict) else {}
+    return bool(result.ok and payload.get("ok"))
+
+
+def _action_media_playing(result: ActionResult) -> bool:
+    payload = result.payload if result.ok and isinstance(result.payload, dict) else {}
+    return _browser_media_is_playing(payload)
+
+
 def _browser_media_is_playing(payload: dict[str, Any]) -> bool:
     metadata = payload.get("mediaSession")
     if isinstance(metadata, dict) and (metadata.get("title") or metadata.get("artist")):
@@ -575,6 +697,8 @@ def _browser_media_is_playing(payload: dict[str, Any]) -> bool:
     ):
         return True
     buttons = payload.get("buttons")
-    if isinstance(buttons, list) and any("pause" in str(button).lower() for button in buttons):
+    if isinstance(buttons, list) and any(
+        "pause" in str(button).lower() for button in buttons
+    ):
         return True
     return False

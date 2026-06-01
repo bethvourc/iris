@@ -109,7 +109,9 @@ def claim_next_task(
     db.commit()
     if result.rowcount <= 0:
         return None
-    claimed = db.execute("SELECT * FROM agent_tasks WHERE task_id = ?", (task_id,)).fetchone()
+    claimed = db.execute(
+        "SELECT * FROM agent_tasks WHERE task_id = ?", (task_id,)
+    ).fetchone()
     return _decode(claimed) if claimed else None
 
 
@@ -182,7 +184,11 @@ def finish_task(
         "SELECT cancel_requested FROM agent_tasks WHERE task_id = ?",
         (task_id,),
     ).fetchone()
-    final_status = "cancelled" if row and int(row["cancel_requested"]) and status == "done" else status
+    final_status = (
+        "cancelled"
+        if row and int(row["cancel_requested"]) and status == "done"
+        else status
+    )
     result = db.execute(
         """
         UPDATE agent_tasks
@@ -237,7 +243,9 @@ def resume_task(db: sqlite3.Connection, task_id: str) -> bool:
 
 
 def get_task(db: sqlite3.Connection, task_id: str) -> dict[str, Any] | None:
-    row = db.execute("SELECT * FROM agent_tasks WHERE task_id = ?", (task_id,)).fetchone()
+    row = db.execute(
+        "SELECT * FROM agent_tasks WHERE task_id = ?", (task_id,)
+    ).fetchone()
     if row is None:
         return None
     task = _decode(row)

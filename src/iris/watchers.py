@@ -81,7 +81,9 @@ def run_watch_once(
     *,
     perception: PerceptionService | None = None,
 ) -> WatchResult:
-    row = db.execute("SELECT * FROM watch_rules WHERE watch_id = ?", (watch_id,)).fetchone()
+    row = db.execute(
+        "SELECT * FROM watch_rules WHERE watch_id = ?", (watch_id,)
+    ).fetchone()
     if row is None:
         raise ValueError(f"watch not found: {watch_id}")
     run_id = uuid.uuid4().hex
@@ -94,7 +96,9 @@ def run_watch_once(
     try:
         result = _execute_watch(dict(row), perception=perception)
         changed = bool(row["last_snapshot"]) and row["last_snapshot"] != result.snapshot
-        result = WatchResult(changed, result.snapshot, result.summary, result.confidence, result.details)
+        result = WatchResult(
+            changed, result.snapshot, result.summary, result.confidence, result.details
+        )
         db.execute(
             "UPDATE watch_rules SET last_snapshot = ?, updated_at = ? WHERE watch_id = ?",
             (result.snapshot, _now(), watch_id),
@@ -153,7 +157,9 @@ def _web_watch(target: str, expected: str | None, timeout: float) -> WatchResult
     return WatchResult(
         False,
         stable_hash({"status": status, "body": body[:50_000]}),
-        f"HTTP {status}; expected text {'found' if found else 'not found'}." if expected else f"HTTP {status}.",
+        f"HTTP {status}; expected text {'found' if found else 'not found'}."
+        if expected
+        else f"HTTP {status}.",
         0.9 if status < 400 else 0.55,
         {"status": status, "expected": expected, "found": found},
     )
@@ -162,14 +168,26 @@ def _web_watch(target: str, expected: str | None, timeout: float) -> WatchResult
 def _file_watch(target: str, expected: str | None) -> WatchResult:
     path = Path(target).expanduser()
     if not path.exists():
-        return WatchResult(False, stable_hash({"exists": False, "target": str(path)}), f"Missing file: {path}", 0.95, {"exists": False})
+        return WatchResult(
+            False,
+            stable_hash({"exists": False, "target": str(path)}),
+            f"Missing file: {path}",
+            0.95,
+            {"exists": False},
+        )
     stat = path.stat()
-    content = path.read_text(encoding="utf-8", errors="replace")[:50_000] if path.is_file() else ""
+    content = (
+        path.read_text(encoding="utf-8", errors="replace")[:50_000]
+        if path.is_file()
+        else ""
+    )
     found = expected in content if expected else None
     return WatchResult(
         False,
         stable_hash({"mtime": stat.st_mtime, "size": stat.st_size, "content": content}),
-        f"File expected text {'found' if found else 'not found'}." if expected else "File snapshot captured.",
+        f"File expected text {'found' if found else 'not found'}."
+        if expected
+        else "File snapshot captured.",
         0.95,
         {"exists": True, "size": stat.st_size, "expected": expected, "found": found},
     )
@@ -189,9 +207,16 @@ def _command_watch(target: str, expected: str | None, timeout: float) -> WatchRe
     return WatchResult(
         False,
         stable_hash(output),
-        f"Command expected text {'found' if found else 'not found'}." if expected else f"Command exited {completed.returncode}.",
+        f"Command expected text {'found' if found else 'not found'}."
+        if expected
+        else f"Command exited {completed.returncode}.",
         0.75 if completed.returncode else 0.9,
-        {"returncode": completed.returncode, "expected": expected, "found": found, "output": output[:2000]},
+        {
+            "returncode": completed.returncode,
+            "expected": expected,
+            "found": found,
+            "output": output[:2000],
+        },
     )
 
 
@@ -200,20 +225,39 @@ def _screen_watch(expected: str | None, perception: PerceptionService) -> WatchR
     context = perception.screen_context()
     return WatchResult(
         False,
-        stable_hash({"active_app": context.active_app, "active_window": context.active_window, "png": screenshot.png[:4096].hex()}),
+        stable_hash(
+            {
+                "active_app": context.active_app,
+                "active_window": context.active_window,
+                "png": screenshot.png[:4096].hex(),
+            }
+        ),
         "Screen snapshot captured. OCR phrase matching needs Google Vision wiring for watch jobs.",
         0.6,
-        {"active_app": context.active_app, "active_window": context.active_window, "expected": expected},
+        {
+            "active_app": context.active_app,
+            "active_window": context.active_window,
+            "expected": expected,
+        },
     )
 
 
 def _app_watch(expected: str | None, perception: PerceptionService) -> WatchResult:
     context = perception.screen_context()
-    found = expected in (context.active_app or "") if expected else bool(context.active_app)
+    found = (
+        expected in (context.active_app or "") if expected else bool(context.active_app)
+    )
     return WatchResult(
         False,
-        stable_hash({"active_app": context.active_app, "active_window": context.active_window}),
+        stable_hash(
+            {"active_app": context.active_app, "active_window": context.active_window}
+        ),
         f"Active app: {context.active_app or 'unknown'}",
         0.8,
-        {"active_app": context.active_app, "active_window": context.active_window, "expected": expected, "found": found},
+        {
+            "active_app": context.active_app,
+            "active_window": context.active_window,
+            "expected": expected,
+            "found": found,
+        },
     )

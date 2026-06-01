@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hmac
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 import re
@@ -13,10 +14,21 @@ from iris.actions import RiskLevel
 from iris.sessions import add_message, ensure_session, get_session, list_sessions
 from iris.state import open_state
 from iris.supervisor import TaskSupervisor
-from iris.tasks import create_task, finish_task, get_task, heartbeat_task, list_tasks, request_cancel, resume_task, start_task
+from iris.tasks import (
+    create_task,
+    finish_task,
+    get_task,
+    heartbeat_task,
+    list_tasks,
+    request_cancel,
+    resume_task,
+    start_task,
+)
 
 
 RouterFactory = Callable[[], Any]
+AUTH_EXEMPT_PATHS = {"/health"}
+MAX_BODY_BYTES = 1_000_000
 
 
 class GatewayService:
@@ -34,16 +46,33 @@ class GatewayService:
         print(f"Iris gateway listening on http://{host}:{port}")
         server.serve_forever()
 
-    def handle_get(self, path: str, query: dict[str, list[str]]) -> tuple[int, dict[str, Any]]:
+    def authorize(self, path: str, authorization_header: str | None) -> bool:
+        if path in AUTH_EXEMPT_PATHS:
+            return True
+        token = self.config.gateway_token
+        if not token:
+            return False
+        scheme, _, value = (authorization_header or "").partition(" ")
+        if scheme.lower() != "bearer" or not value:
+            return False
+        return hmac.compare_digest(value.strip(), token)
+
+    def handle_get(
+        self, path: str, query: dict[str, list[str]]
+    ) -> tuple[int, dict[str, Any]]:
         with open_state(self.config) as db:
             if path == "/health":
                 return 200, {"ok": True, "agent": self.config.agent_name}
             if path == "/sessions":
-                return 200, {"sessions": list_sessions(db, limit=_int_query(query, "limit", 25))}
+                return 200, {
+                    "sessions": list_sessions(db, limit=_int_query(query, "limit", 25))
+                }
             session_match = re.fullmatch(r"/sessions/([a-fA-F0-9]+)", path)
             if session_match:
                 session = get_session(db, session_match.group(1))
-                return (200, session) if session else (404, {"error": "session not found"})
+                return (
+                    (200, session) if session else (404, {"error": "session not found"})
+                )
             if path == "/tasks":
                 return 200, {
                     "tasks": list_tasks(
@@ -60,7 +89,9 @@ class GatewayService:
                 return 200, {"approvals": list_approvals(db)}
         return 404, {"error": "not found"}
 
-    def handle_post(self, path: str, body: dict[str, Any]) -> tuple[int, dict[str, Any]]:
+    def handle_post(
+        self, path: str, body: dict[str, Any]
+    ) -> tuple[int, dict[str, Any]]:
         if path == "/messages":
             return self._handle_message(body)
         task_cancel = re.fullmatch(r"/tasks/([a-fA-F0-9]+)/cancel", path)
@@ -108,7 +139,13 @@ class GatewayService:
                 channel=channel,
                 title=_title_from_message(text),
             )
-            add_message(db, session_id=session_id, role="user", content=text, metadata={"channel": channel})
+            add_message(
+                db,
+                session_id=session_id,
+                role="user",
+                content=text,
+                metadata={"channel": channel},
+            )
             task_id = create_task(
                 db,
                 session_id=session_id,
@@ -135,7 +172,11 @@ class GatewayService:
                     db,
                     task_id,
                     status=status,
-                    result_value={"message": result.message, "payload": result.payload, "ok": result.ok},
+                    result_value={
+                        "message": result.message,
+                        "payload": result.payload,
+                        "ok": result.ok,
+                    },
                     error=None if result.ok else result.message,
                 )
             return 200, {
@@ -149,7 +190,12 @@ class GatewayService:
         except Exception as exc:
             with open_state(self.config) as db:
                 finish_task(db, task_id, status="failed", error=str(exc))
-            return 500, {"ok": False, "session_id": session_id, "task_id": task_id, "error": str(exc)}
+            return 500, {
+                "ok": False,
+                "session_id": session_id,
+                "task_id": task_id,
+                "error": str(exc),
+            }
 
 
 class _GatewayHandler(BaseHTTPRequestHandler):
@@ -157,11 +203,15 @@ class _GatewayHandler(BaseHTTPRequestHandler):
 
     def do_GET(self) -> None:  # noqa: N802
         parsed = urlparse(self.path)
+        if not self._authorize(parsed.path):
+            return
         status, payload = self.gateway.handle_get(parsed.path, parse_qs(parsed.query))
         self._write_json(status, payload)
 
     def do_POST(self) -> None:  # noqa: N802
         parsed = urlparse(self.path)
+        if not self._authorize(parsed.path):
+            return
         try:
             body = self._read_body()
         except ValueError as exc:
@@ -173,10 +223,18 @@ class _GatewayHandler(BaseHTTPRequestHandler):
     def log_message(self, format: str, *args: Any) -> None:
         return
 
+    def _authorize(self, path: str) -> bool:
+        if self.gateway.authorize(path, self.headers.get("Authorization")):
+            return True
+        self._write_json(401, {"error": "gateway authorization required"})
+        return False
+
     def _read_body(self) -> dict[str, Any]:
         length = int(self.headers.get("Content-Length") or "0")
         if length <= 0:
             return {}
+        if length > MAX_BODY_BYTES:
+            raise ValueError("JSON body is too large")
         raw = self.rfile.read(length)
         try:
             value = json.loads(raw.decode("utf-8"))

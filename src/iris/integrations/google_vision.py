@@ -45,7 +45,9 @@ class GoogleVisionClient:
         annotation = response.full_text_annotation
         return OcrResult(text=annotation.text if annotation else "")
 
-    def label_image(self, image_bytes: bytes, max_results: int = 10) -> list[LabelResult]:
+    def label_image(
+        self, image_bytes: bytes, max_results: int = 10
+    ) -> list[LabelResult]:
         from google.cloud import vision  # type: ignore
 
         client = self._get_client()

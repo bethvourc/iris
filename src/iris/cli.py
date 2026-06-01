@@ -9,7 +9,7 @@ import sys
 from iris.actions import RiskLevel
 from iris.approvals import decide_approval, list_approvals
 from iris.audit import list_audit, record_audit
-from iris.config import DEFAULT_PROJECT_ROOT, IrisConfig
+from iris.config import IrisConfig, default_project_root
 from iris.connectors import (
     connector_categories,
     connector_health,
@@ -28,7 +28,7 @@ from iris.knowledge import (
 from iris.meetings import list_meetings, start_silent_meeting, stop_meeting
 from iris.memory import add_memory, edit_memory, forget_memory, list_memories
 from iris.plugins import list_plugins, plugin_health, set_plugin_enabled
-from iris.profile import load_user_profile, save_user_profile
+from iris.profile import has_user_profile, load_user_profile, save_user_profile
 from iris.providers import ProviderRegistry
 from iris.safety import AutomationPaused, SafetyGate
 from iris.sessions import get_session, list_sessions
@@ -58,7 +58,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="iris", description="Local Mac agent CLI")
     parser.add_argument(
         "--project-root",
-        default=str(DEFAULT_PROJECT_ROOT),
+        default=str(default_project_root()),
         help="Project root containing .env",
     )
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -66,13 +66,25 @@ def build_parser() -> argparse.ArgumentParser:
     subparsers.add_parser("init", help="Initialize Iris local state").set_defaults(
         func=cmd_init
     )
-    subparsers.add_parser("status", help="Show local configuration status").set_defaults(
-        func=cmd_status
+    setup = subparsers.add_parser("setup", help="Run first-time local Iris setup")
+    setup.add_argument("--name", default=None, help="Preferred name Iris should use")
+    setup.add_argument("--full-name", default=None, help="Full display name")
+    setup.add_argument("--pronouns", default=None, help="Pronouns, e.g. he/him")
+    setup.add_argument(
+        "--skip-profile",
+        action="store_true",
+        help="Skip profile setup and keep inferred defaults",
     )
-    subparsers.add_parser("providers", help="Show provider registry and model routes").set_defaults(
-        func=cmd_providers
+    setup.set_defaults(func=cmd_setup)
+    subparsers.add_parser(
+        "status", help="Show local configuration status"
+    ).set_defaults(func=cmd_status)
+    subparsers.add_parser(
+        "providers", help="Show provider registry and model routes"
+    ).set_defaults(func=cmd_providers)
+    profile = subparsers.add_parser(
+        "profile", help="Show or update the local user profile"
     )
-    profile = subparsers.add_parser("profile", help="Show or update the local user profile")
     profile_sub = profile.add_subparsers(dest="profile_command", required=True)
     profile_sub.add_parser("show", help="Show current user profile").set_defaults(
         func=cmd_profile_show
@@ -82,14 +94,20 @@ def build_parser() -> argparse.ArgumentParser:
     profile_set.add_argument("--full-name", default=None, help="Full display name")
     profile_set.add_argument("--pronouns", default=None, help="Pronouns, e.g. he/him")
     profile_set.set_defaults(func=cmd_profile_set)
-    configure = subparsers.add_parser("configure-provider", help="Print provider configuration guidance")
+    configure = subparsers.add_parser(
+        "configure-provider", help="Print provider configuration guidance"
+    )
     configure.add_argument("provider", choices=["openai", "groq", "pushover", "ntfy"])
     configure.set_defaults(func=cmd_configure_provider)
     subparsers.add_parser(
         "permissions", help="Check macOS permissions needed by Iris"
     ).set_defaults(func=cmd_permissions)
-    doctor = subparsers.add_parser("doctor", help="Check permissions, connectors, and control backends")
-    doctor.add_argument("--json", action="store_true", help="Print machine-readable status")
+    doctor = subparsers.add_parser(
+        "doctor", help="Check permissions, connectors, and control backends"
+    )
+    doctor.add_argument(
+        "--json", action="store_true", help="Print machine-readable status"
+    )
     doctor.add_argument(
         "--open",
         choices=["microphone", "screen", "accessibility", "automation"],
@@ -114,7 +132,9 @@ def build_parser() -> argparse.ArgumentParser:
     notify_test.add_argument("--title", default=None)
     notify_test.set_defaults(func=cmd_test_notify)
 
-    screen = subparsers.add_parser("test-screen", help="Capture and describe the screen")
+    screen = subparsers.add_parser(
+        "test-screen", help="Capture and describe the screen"
+    )
     screen.add_argument(
         "--local",
         action="store_true",
@@ -141,11 +161,13 @@ def build_parser() -> argparse.ArgumentParser:
     )
     voice.set_defaults(func=cmd_test_voice)
 
-    subparsers.add_parser("test-vision", help="Run Google Vision OCR on the screen").set_defaults(
-        func=cmd_test_vision
-    )
+    subparsers.add_parser(
+        "test-vision", help="Run Google Vision OCR on the screen"
+    ).set_defaults(func=cmd_test_vision)
 
-    control = subparsers.add_parser("test-control", help="Run a safe live Mac control test")
+    control = subparsers.add_parser(
+        "test-control", help="Run a safe live Mac control test"
+    )
     control.add_argument(
         "-y",
         "--yes",
@@ -154,24 +176,32 @@ def build_parser() -> argparse.ArgumentParser:
     )
     control.set_defaults(func=cmd_test_control)
 
-    control_backends = subparsers.add_parser("control", help="Inspect Mac/browser control backends")
-    control_backends_sub = control_backends.add_subparsers(dest="control_command", required=True)
-    control_backends_sub.add_parser("health", help="Show control backend health").set_defaults(
-        func=cmd_control_health
+    control_backends = subparsers.add_parser(
+        "control", help="Inspect Mac/browser control backends"
     )
+    control_backends_sub = control_backends.add_subparsers(
+        dest="control_command", required=True
+    )
+    control_backends_sub.add_parser(
+        "health", help="Show control backend health"
+    ).set_defaults(func=cmd_control_health)
 
-    browser = subparsers.add_parser("browser", help="Manage the Iris controlled browser runtime")
+    browser = subparsers.add_parser(
+        "browser", help="Manage the Iris controlled browser runtime"
+    )
     browser_sub = browser.add_subparsers(dest="browser_command", required=True)
-    browser_sub.add_parser("status", help="Show managed Chrome/CDP status").set_defaults(
-        func=cmd_browser_status
+    browser_sub.add_parser(
+        "status", help="Show managed Chrome/CDP status"
+    ).set_defaults(func=cmd_browser_status)
+    browser_sub.add_parser(
+        "start-cdp", help="Start managed Chrome with CDP enabled"
+    ).set_defaults(func=cmd_browser_start_cdp)
+    browser_sub.add_parser(
+        "restart-cdp", help="Restart the Iris managed Chrome/CDP runtime"
+    ).set_defaults(func=cmd_browser_restart_cdp)
+    browser_sub.add_parser("tabs", help="List CDP Chrome tabs").set_defaults(
+        func=cmd_browser_tabs
     )
-    browser_sub.add_parser("start-cdp", help="Start managed Chrome with CDP enabled").set_defaults(
-        func=cmd_browser_start_cdp
-    )
-    browser_sub.add_parser("restart-cdp", help="Restart the Iris managed Chrome/CDP runtime").set_defaults(
-        func=cmd_browser_restart_cdp
-    )
-    browser_sub.add_parser("tabs", help="List CDP Chrome tabs").set_defaults(func=cmd_browser_tabs)
 
     start = subparsers.add_parser("start", help="Start the interactive Iris session")
     start.add_argument(
@@ -191,7 +221,9 @@ def build_parser() -> argparse.ArgumentParser:
     serve.add_argument("--port", type=int, default=8765)
     serve.set_defaults(func=cmd_serve)
 
-    tasks = subparsers.add_parser("tasks", help="Inspect and control durable agent tasks")
+    tasks = subparsers.add_parser(
+        "tasks", help="Inspect and control durable agent tasks"
+    )
     tasks_sub = tasks.add_subparsers(dest="tasks_command", required=True)
     tasks_list = tasks_sub.add_parser("list", help="List tasks")
     tasks_list.add_argument("--status", default=None)
@@ -203,13 +235,17 @@ def build_parser() -> argparse.ArgumentParser:
     tasks_cancel = tasks_sub.add_parser("cancel", help="Request task cancellation")
     tasks_cancel.add_argument("task_id")
     tasks_cancel.set_defaults(func=cmd_tasks_cancel)
-    tasks_resume = tasks_sub.add_parser("resume", help="Requeue a failed, blocked, cancelled, or approval-waiting task")
+    tasks_resume = tasks_sub.add_parser(
+        "resume", help="Requeue a failed, blocked, cancelled, or approval-waiting task"
+    )
     tasks_resume.add_argument("task_id")
     tasks_resume.set_defaults(func=cmd_tasks_resume)
     tasks_sub.add_parser("run-next", help="Run one queued durable task").set_defaults(
         func=cmd_tasks_run_next
     )
-    tasks_worker = tasks_sub.add_parser("worker", help="Run the durable task worker loop")
+    tasks_worker = tasks_sub.add_parser(
+        "worker", help="Run the durable task worker loop"
+    )
     tasks_worker.add_argument("--poll-interval", type=float, default=2.0)
     tasks_worker.set_defaults(func=cmd_tasks_worker)
 
@@ -221,23 +257,39 @@ def build_parser() -> argparse.ArgumentParser:
     evals_run = evals_sub.add_parser("run", help="Run static or live evals")
     evals_run.add_argument("--file", default=None)
     evals_run.add_argument("--case", default=None, help="Run one case id")
-    evals_run.add_argument("--live-agent", action="store_true", help="Run cases through the live local agent")
-    evals_run.add_argument("--include-unsafe", action="store_true", help="Allow live eval cases not marked live_safe")
+    evals_run.add_argument(
+        "--live-agent",
+        action="store_true",
+        help="Run cases through the live local agent",
+    )
+    evals_run.add_argument(
+        "--include-unsafe",
+        action="store_true",
+        help="Allow live eval cases not marked live_safe",
+    )
     evals_run.add_argument("--output", default=None)
     evals_run.set_defaults(func=cmd_evals_run)
 
-    plugins = subparsers.add_parser("plugins", help="Inspect and configure Iris plugins")
+    plugins = subparsers.add_parser(
+        "plugins", help="Inspect and configure Iris plugins"
+    )
     plugins_sub = plugins.add_subparsers(dest="plugins_command", required=True)
-    plugins_sub.add_parser("list", help="List plugins").set_defaults(func=cmd_plugins_list)
+    plugins_sub.add_parser("list", help="List plugins").set_defaults(
+        func=cmd_plugins_list
+    )
     plugins_enable = plugins_sub.add_parser("enable", help="Enable a plugin")
     plugins_enable.add_argument("plugin_id")
     plugins_enable.set_defaults(func=cmd_plugins_enable)
     plugins_disable = plugins_sub.add_parser("disable", help="Disable a plugin")
     plugins_disable.add_argument("plugin_id")
     plugins_disable.set_defaults(func=cmd_plugins_disable)
-    plugins_sub.add_parser("health", help="Show plugin health").set_defaults(func=cmd_plugins_health)
+    plugins_sub.add_parser("health", help="Show plugin health").set_defaults(
+        func=cmd_plugins_health
+    )
 
-    connectors = subparsers.add_parser("connectors", help="Inspect and configure Iris connector manifests")
+    connectors = subparsers.add_parser(
+        "connectors", help="Inspect and configure Iris connector manifests"
+    )
     connectors_sub = connectors.add_subparsers(dest="connectors_command", required=True)
     connectors_list = connectors_sub.add_parser("list", help="List connector manifests")
     connectors_list.add_argument("--category", default=None)
@@ -249,11 +301,17 @@ def build_parser() -> argparse.ArgumentParser:
     connectors_enable = connectors_sub.add_parser("enable", help="Enable a connector")
     connectors_enable.add_argument("connector_id")
     connectors_enable.set_defaults(func=cmd_connectors_enable)
-    connectors_disable = connectors_sub.add_parser("disable", help="Disable a connector")
+    connectors_disable = connectors_sub.add_parser(
+        "disable", help="Disable a connector"
+    )
     connectors_disable.add_argument("connector_id")
     connectors_disable.set_defaults(func=cmd_connectors_disable)
-    connectors_sub.add_parser("health", help="Show connector health").set_defaults(func=cmd_connectors_health)
-    connectors_sub.add_parser("categories", help="List connector categories").set_defaults(func=cmd_connectors_categories)
+    connectors_sub.add_parser("health", help="Show connector health").set_defaults(
+        func=cmd_connectors_health
+    )
+    connectors_sub.add_parser(
+        "categories", help="List connector categories"
+    ).set_defaults(func=cmd_connectors_categories)
 
     sessions = subparsers.add_parser("sessions", help="Inspect Iris agent sessions")
     sessions_sub = sessions.add_subparsers(dest="sessions_command", required=True)
@@ -267,7 +325,11 @@ def build_parser() -> argparse.ArgumentParser:
     watch = subparsers.add_parser("watch", help="Manage watch rules")
     watch_sub = watch.add_subparsers(dest="watch_command", required=True)
     watch_add = watch_sub.add_parser("add", help="Add a watch rule")
-    watch_add.add_argument("--kind", required=True, choices=["web", "file", "command", "screen", "app", "repo"])
+    watch_add.add_argument(
+        "--kind",
+        required=True,
+        choices=["web", "file", "command", "screen", "app", "repo"],
+    )
     watch_add.add_argument("--name", required=True)
     watch_add.add_argument("--target", required=True)
     watch_add.add_argument("--expected", default=None)
@@ -275,7 +337,9 @@ def build_parser() -> argparse.ArgumentParser:
     watch_add.add_argument("--interval", type=float, default=60.0)
     watch_add.add_argument("--timeout", type=float, default=120.0)
     watch_add.set_defaults(func=cmd_watch_add)
-    watch_sub.add_parser("list", help="List watch rules").set_defaults(func=cmd_watch_list)
+    watch_sub.add_parser("list", help="List watch rules").set_defaults(
+        func=cmd_watch_list
+    )
     watch_run = watch_sub.add_parser("run", help="Run a watch once")
     watch_run.add_argument("watch_id")
     watch_run.set_defaults(func=cmd_watch_run)
@@ -305,9 +369,13 @@ def build_parser() -> argparse.ArgumentParser:
     )
     memory_scan.set_defaults(func=cmd_memory_scan_machine)
 
-    knowledge = subparsers.add_parser("knowledge", help="Manage local Iris knowledge/wiki")
+    knowledge = subparsers.add_parser(
+        "knowledge", help="Manage local Iris knowledge/wiki"
+    )
     knowledge_sub = knowledge.add_subparsers(dest="knowledge_command", required=True)
-    knowledge_ingest = knowledge_sub.add_parser("ingest-folder", help="Ingest text notes/files into local knowledge")
+    knowledge_ingest = knowledge_sub.add_parser(
+        "ingest-folder", help="Ingest text notes/files into local knowledge"
+    )
     knowledge_ingest.add_argument("path")
     knowledge_ingest.add_argument("--limit", type=int, default=200)
     knowledge_ingest.add_argument("--no-recursive", action="store_true")
@@ -320,7 +388,9 @@ def build_parser() -> argparse.ArgumentParser:
     knowledge_list = knowledge_sub.add_parser("list", help="List local knowledge pages")
     knowledge_list.add_argument("--limit", type=int, default=50)
     knowledge_list.set_defaults(func=cmd_knowledge_list)
-    knowledge_show = knowledge_sub.add_parser("show", help="Show a local knowledge page")
+    knowledge_show = knowledge_sub.add_parser(
+        "show", help="Show a local knowledge page"
+    )
     knowledge_show.add_argument("page_id")
     knowledge_show.set_defaults(func=cmd_knowledge_show)
 
@@ -334,7 +404,9 @@ def build_parser() -> argparse.ArgumentParser:
     meeting_stop = meeting_sub.add_parser("stop", help="Stop a running meeting")
     meeting_stop.add_argument("--meeting-id", default=None)
     meeting_stop.set_defaults(func=cmd_meeting_stop)
-    meeting_sub.add_parser("list", help="List meetings").set_defaults(func=cmd_meeting_list)
+    meeting_sub.add_parser("list", help="List meetings").set_defaults(
+        func=cmd_meeting_list
+    )
 
     subparsers.add_parser("workflows", help="List built-in workflows").set_defaults(
         func=cmd_workflows
@@ -387,13 +459,23 @@ def _runtime(args: argparse.Namespace):
         google_vision=google_vision,
         config=config,
     )
-    return config, safety_gate, perception, controller, openai_client, google_vision, router
+    return (
+        config,
+        safety_gate,
+        perception,
+        controller,
+        openai_client,
+        google_vision,
+        router,
+    )
 
 
 def cmd_init(args: argparse.Namespace) -> int:
     config = _config(args)
     path = ensure_state(config)
+    profile_exists = False
     with open_state(config) as db:
+        profile_exists = has_user_profile(db)
         record_audit(
             db,
             actor="user",
@@ -403,6 +485,11 @@ def cmd_init(args: argparse.Namespace) -> int:
             output_value={"state_db": str(path)},
         )
     print(f"Initialized Iris state: {path}")
+    if not profile_exists:
+        if sys.stdin.isatty():
+            _run_profile_setup(config, interactive=True)
+        else:
+            print("Run `./iris setup` to personalize Iris.")
     return 0
 
 
@@ -479,6 +566,37 @@ def cmd_configure_provider(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_setup(args: argparse.Namespace) -> int:
+    config = _config(args)
+    if args.skip_profile:
+        inferred = load_user_profile(config)
+        result = _save_profile_setup(
+            config,
+            preferred_name=inferred.preferred_name,
+            full_name=inferred.full_name,
+            pronouns=inferred.pronouns,
+        )
+        _print_json({**result, "skipped": True})
+        return 0
+    if any((args.name, args.full_name, args.pronouns)):
+        result = _save_profile_setup(
+            config,
+            preferred_name=args.name,
+            full_name=args.full_name,
+            pronouns=args.pronouns,
+        )
+        _print_json(result)
+        return 0
+    if not sys.stdin.isatty():
+        print(
+            "No setup values provided. Run `./iris setup --name <name>` or use an interactive terminal.",
+            file=sys.stderr,
+        )
+        return 1
+    _run_profile_setup(config, interactive=True)
+    return 0
+
+
 def cmd_profile_show(args: argparse.Namespace) -> int:
     config = _config(args)
     with open_state(config) as db:
@@ -489,7 +607,10 @@ def cmd_profile_show(args: argparse.Namespace) -> int:
 
 def cmd_profile_set(args: argparse.Namespace) -> int:
     if not any((args.name, args.full_name, args.pronouns)):
-        print("Provide at least one of --name, --full-name, or --pronouns.", file=sys.stderr)
+        print(
+            "Provide at least one of --name, --full-name, or --pronouns.",
+            file=sys.stderr,
+        )
         return 1
     config = _config(args)
     with open_state(config) as db:
@@ -510,6 +631,70 @@ def cmd_profile_set(args: argparse.Namespace) -> int:
         )
     _print_json({"memory_id": memory_id, "profile": profile.__dict__})
     return 0
+
+
+def _run_profile_setup(config: IrisConfig, *, interactive: bool) -> None:
+    inferred = load_user_profile(config)
+    if not interactive:
+        print("Run `./iris setup` to personalize Iris.")
+        return
+    print("Let's personalize Iris.")
+    preferred_name = _prompt_default("What should I call you?", inferred.preferred_name)
+    full_name = _prompt_default(
+        "Full name? Press Enter to use the detected value.", inferred.full_name
+    )
+    pronouns = _prompt_optional("Pronouns? Press Enter to skip.")
+    result = _save_profile_setup(
+        config,
+        preferred_name=preferred_name,
+        full_name=full_name,
+        pronouns=pronouns,
+    )
+    profile = result["profile"]
+    print(f"Saved profile. Iris will call you {profile['preferred_name']}.")
+
+
+def _save_profile_setup(
+    config: IrisConfig,
+    *,
+    preferred_name: str | None,
+    full_name: str | None,
+    pronouns: str | None,
+) -> dict[str, object]:
+    with open_state(config) as db:
+        memory_id = save_user_profile(
+            db,
+            full_name=_clean_optional(full_name),
+            preferred_name=_clean_optional(preferred_name),
+            pronouns=_clean_optional(pronouns),
+        )
+        profile = load_user_profile(config, db)
+        record_audit(
+            db,
+            actor="user",
+            tool="setup.profile",
+            risk=RiskLevel.LOW_RISK,
+            result="ok",
+            output_value={"memory_id": memory_id, "profile": profile.__dict__},
+        )
+    return {"memory_id": memory_id, "profile": profile.__dict__}
+
+
+def _prompt_default(question: str, default: str) -> str:
+    value = input(f"{question} [{default}] ").strip()
+    return value or default
+
+
+def _prompt_optional(question: str) -> str | None:
+    value = input(f"{question} ").strip()
+    return value or None
+
+
+def _clean_optional(value: str | None) -> str | None:
+    if value is None:
+        return None
+    cleaned = value.strip()
+    return cleaned or None
 
 
 def cmd_permissions(args: argparse.Namespace) -> int:
@@ -577,11 +762,17 @@ def cmd_doctor(args: argparse.Namespace) -> int:
     for item in backends:
         status = "ready" if item["available"] else "missing"
         print(f"  {item['name']}: {status} - {item['detail']}")
-    if not any(item["backend_id"] == "browser_cdp" and item["available"] for item in backends):
+    if not any(
+        item["backend_id"] == "browser_cdp" and item["available"] for item in backends
+    ):
         print("  CDP setup:")
         print(f"    {report['cdp_setup']}")
     ready = [item for item in connectors if item.get("health") == "ready"]
-    needs_setup = [item for item in connectors if item.get("enabled") and item.get("health") != "ready"]
+    needs_setup = [
+        item
+        for item in connectors
+        if item.get("enabled") and item.get("health") != "ready"
+    ]
     print(f"Connectors: {len(ready)} ready, {len(needs_setup)} enabled needing setup")
     print(
         "Machine context: "
@@ -604,7 +795,9 @@ def _doctor_ok(report: dict[str, object]) -> bool:
         for item in permissions
     )
     backend_ok = any(
-        isinstance(item, dict) and item.get("backend_id") == "accessibility" and item.get("available")
+        isinstance(item, dict)
+        and item.get("backend_id") == "accessibility"
+        and item.get("available")
         for item in backends
     )
     return permission_ok and backend_ok
@@ -676,7 +869,9 @@ def cmd_test_voice(args: argparse.Namespace) -> int:
         return 1
     if args.remote:
         client = RealtimeTextClient(config)
-        response = client.send_text_once("Say one short sentence confirming Iris is online.")
+        response = client.send_text_once(
+            "Say one short sentence confirming Iris is online."
+        )
         print(f"Realtime response: {response}")
     if args.listen:
         print(f"Listening for {args.seconds:.1f} seconds...")
@@ -780,9 +975,7 @@ def cmd_start(args: argparse.Namespace) -> int:
         router=router,
         safety_gate=safety_gate,
         user_profile=user_profile,
-    ).run_terminal_loop(
-        wake_mode=args.wake or args.live
-    )
+    ).run_terminal_loop(wake_mode=args.wake or args.live)
     return 0
 
 
@@ -1077,7 +1270,14 @@ def cmd_watch_add(args: argparse.Namespace) -> int:
             interval_seconds=args.interval,
             timeout_seconds=args.timeout,
         )
-        record_audit(db, actor="user", tool="watch.add", risk=RiskLevel.LOW_RISK, result="ok", output_value={"watch_id": watch_id})
+        record_audit(
+            db,
+            actor="user",
+            tool="watch.add",
+            risk=RiskLevel.LOW_RISK,
+            result="ok",
+            output_value={"watch_id": watch_id},
+        )
     _print_json({"watch_id": watch_id})
     return 0
 
@@ -1096,7 +1296,15 @@ def cmd_watch_run(args: argparse.Namespace) -> int:
     perception = PerceptionService()
     with open_state(config) as db:
         result = run_watch_once(db, args.watch_id, perception=perception)
-        record_audit(db, actor="user", tool="watch.run", risk=RiskLevel.LOW_RISK, result="ok", input_value={"watch_id": args.watch_id}, output_value=result.__dict__)
+        record_audit(
+            db,
+            actor="user",
+            tool="watch.run",
+            risk=RiskLevel.LOW_RISK,
+            result="ok",
+            input_value={"watch_id": args.watch_id},
+            output_value=result.__dict__,
+        )
     _print_json(result.__dict__)
     return 0
 
@@ -1112,7 +1320,14 @@ def cmd_memory_add(args: argparse.Namespace) -> int:
             confidence=args.confidence,
             sensitive=args.sensitive,
         )
-        record_audit(db, actor="user", tool="memory.add", risk=RiskLevel.LOW_RISK, result="ok", output_value={"memory_id": memory_id})
+        record_audit(
+            db,
+            actor="user",
+            tool="memory.add",
+            risk=RiskLevel.LOW_RISK,
+            result="ok",
+            output_value={"memory_id": memory_id},
+        )
     _print_json({"memory_id": memory_id})
     return 0
 
@@ -1128,7 +1343,13 @@ def cmd_memory_edit(args: argparse.Namespace) -> int:
     config = _config(args)
     with open_state(config) as db:
         ok = edit_memory(db, args.memory_id, args.content)
-        record_audit(db, actor="user", tool="memory.edit", risk=RiskLevel.SENSITIVE, result="ok" if ok else "error")
+        record_audit(
+            db,
+            actor="user",
+            tool="memory.edit",
+            risk=RiskLevel.SENSITIVE,
+            result="ok" if ok else "error",
+        )
     _print_json({"ok": ok})
     return 0 if ok else 1
 
@@ -1137,7 +1358,13 @@ def cmd_memory_forget(args: argparse.Namespace) -> int:
     config = _config(args)
     with open_state(config) as db:
         ok = forget_memory(db, args.memory_id)
-        record_audit(db, actor="user", tool="memory.forget", risk=RiskLevel.SENSITIVE, result="ok" if ok else "error")
+        record_audit(
+            db,
+            actor="user",
+            tool="memory.forget",
+            risk=RiskLevel.SENSITIVE,
+            result="ok" if ok else "error",
+        )
     _print_json({"ok": ok})
     return 0 if ok else 1
 
@@ -1240,8 +1467,21 @@ def cmd_meeting_start(args: argparse.Namespace) -> int:
             title=args.title,
             disclosure_spoken=args.disclosure_spoken,
         )
-        record_audit(db, actor="user", tool="meeting.start", risk=RiskLevel.LOW_RISK, result="ok", output_value={"meeting_id": meeting_id})
-    _print_json({"meeting_id": meeting_id, "silent": True, "consent_required": config.meeting_consent_required})
+        record_audit(
+            db,
+            actor="user",
+            tool="meeting.start",
+            risk=RiskLevel.LOW_RISK,
+            result="ok",
+            output_value={"meeting_id": meeting_id},
+        )
+    _print_json(
+        {
+            "meeting_id": meeting_id,
+            "silent": True,
+            "consent_required": config.meeting_consent_required,
+        }
+    )
     return 0
 
 
@@ -1249,7 +1489,14 @@ def cmd_meeting_stop(args: argparse.Namespace) -> int:
     config = _config(args)
     with open_state(config) as db:
         result = stop_meeting(db, config, args.meeting_id)
-        record_audit(db, actor="user", tool="meeting.stop", risk=RiskLevel.LOW_RISK, result="ok", output_value=result)
+        record_audit(
+            db,
+            actor="user",
+            tool="meeting.stop",
+            risk=RiskLevel.LOW_RISK,
+            result="ok",
+            output_value=result,
+        )
     _print_json(result)
     return 0
 
@@ -1274,7 +1521,9 @@ def cmd_run_workflow(args: argparse.Namespace) -> int:
             db,
             actor="user",
             tool="workflow.run",
-            risk=RiskLevel.SENSITIVE if result.get("approval_id") else RiskLevel.LOW_RISK,
+            risk=RiskLevel.SENSITIVE
+            if result.get("approval_id")
+            else RiskLevel.LOW_RISK,
             result=str(result["status"]),
             output_value=result,
         )
@@ -1293,7 +1542,13 @@ def cmd_approve(args: argparse.Namespace) -> int:
     config = _config(args)
     with open_state(config) as db:
         ok = decide_approval(db, args.approval_id, "approved")
-        record_audit(db, actor="user", tool="approve", risk=RiskLevel.SENSITIVE, result="ok" if ok else "error")
+        record_audit(
+            db,
+            actor="user",
+            tool="approve",
+            risk=RiskLevel.SENSITIVE,
+            result="ok" if ok else "error",
+        )
     _print_json({"ok": ok})
     return 0 if ok else 1
 
@@ -1302,7 +1557,13 @@ def cmd_deny(args: argparse.Namespace) -> int:
     config = _config(args)
     with open_state(config) as db:
         ok = decide_approval(db, args.approval_id, "denied")
-        record_audit(db, actor="user", tool="deny", risk=RiskLevel.SENSITIVE, result="ok" if ok else "error")
+        record_audit(
+            db,
+            actor="user",
+            tool="deny",
+            risk=RiskLevel.SENSITIVE,
+            result="ok" if ok else "error",
+        )
     _print_json({"ok": ok})
     return 0 if ok else 1
 

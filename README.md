@@ -45,6 +45,24 @@ Initialize local state:
 ./iris status
 ```
 
+Personalize Iris:
+
+```bash
+./iris setup
+```
+
+For non-interactive setup:
+
+```bash
+./iris setup --name Clinton --pronouns he/him
+```
+
+If you use the local HTTP gateway, set a private token first:
+
+```bash
+IRIS_GATEWAY_TOKEN=$(python -c 'import secrets; print(secrets.token_urlsafe(32))')
+```
+
 ## macOS Permissions
 
 Run:
@@ -101,6 +119,7 @@ quit
 ./iris providers
 ./iris profile show
 ./iris profile set --name Clinton --pronouns he/him
+./iris setup
 ./iris test-screen
 ./iris test-vision
 ./iris test-voice --listen
@@ -154,6 +173,12 @@ Background runtime:
 ./iris tasks run-next
 ./iris tasks cancel <task_id>
 ./iris tasks resume <task_id>
+```
+
+Gateway API routes other than `/health` require:
+
+```text
+Authorization: Bearer <IRIS_GATEWAY_TOKEN>
 ```
 
 ## Connector Manifests

@@ -43,7 +43,11 @@ class ManagedBrowserConfig:
         return cls(
             host=host,
             port=port,
-            user_data_dir=Path(os.getenv("IRIS_CHROME_CDP_PROFILE", str(Path.home() / ".iris" / "chrome-cdp"))).expanduser(),
+            user_data_dir=Path(
+                os.getenv(
+                    "IRIS_CHROME_CDP_PROFILE", str(Path.home() / ".iris" / "chrome-cdp")
+                )
+            ).expanduser(),
             app_name=os.getenv("IRIS_CHROME_APP_NAME", "Google Chrome"),
         )
 
@@ -63,7 +67,11 @@ class ManagedChrome:
                 "then run `./iris browser start-cdp`."
             )
         else:
-            detail = "Managed Chrome CDP is reachable." if reachable else "Managed Chrome CDP is not reachable."
+            detail = (
+                "Managed Chrome CDP is reachable."
+                if reachable
+                else "Managed Chrome CDP is not reachable."
+            )
         return ActionResult(
             "managed_chrome_status",
             ok,
@@ -80,7 +88,9 @@ class ManagedChrome:
 
     def is_reachable(self, *, timeout: float = 0.25) -> bool:
         try:
-            with socket.create_connection((self.config.host, self.config.port), timeout=timeout):
+            with socket.create_connection(
+                (self.config.host, self.config.port), timeout=timeout
+            ):
                 return True
         except OSError:
             return False
@@ -89,7 +99,11 @@ class ManagedChrome:
         current = self.status()
         if current.ok:
             return current
-        if self.is_reachable() and isinstance(current.payload, dict) and current.payload.get("websocket_ready") is False:
+        if (
+            self.is_reachable()
+            and isinstance(current.payload, dict)
+            and current.payload.get("websocket_ready") is False
+        ):
             restarted = self.restart(wait_seconds=wait_seconds)
             if restarted.ok:
                 return restarted
@@ -141,9 +155,15 @@ class ManagedChrome:
         pattern = f"user-data-dir={self.config.user_data_dir}"
         result = run_command(["pkill", "-f", pattern], timeout=5)
         ok = result.ok or result.returncode == 1
-        detail = "Stopped Iris-managed Chrome." if result.ok else "No Iris-managed Chrome process was running."
+        detail = (
+            "Stopped Iris-managed Chrome."
+            if result.ok
+            else "No Iris-managed Chrome process was running."
+        )
         if not ok:
-            detail = result.stderr or result.stdout or "Could not stop Iris-managed Chrome."
+            detail = (
+                result.stderr or result.stdout or "Could not stop Iris-managed Chrome."
+            )
         return ActionResult(
             "managed_chrome_stop",
             ok,
@@ -168,7 +188,9 @@ class ManagedChrome:
         return ActionResult(
             "managed_chrome_launch",
             result.ok,
-            result.stderr or result.stdout or f"Launched {self.config.app_name} with CDP.",
+            result.stderr
+            or result.stdout
+            or f"Launched {self.config.app_name} with CDP.",
             {
                 "base_url": self.config.base_url,
                 "allowed_origin": self.config.allowed_origin,
@@ -179,21 +201,27 @@ class ManagedChrome:
 
     def _version_ready(self) -> bool:
         try:
-            with request.urlopen(f"{self.config.base_url}/json/version", timeout=0.5) as response:
+            with request.urlopen(
+                f"{self.config.base_url}/json/version", timeout=0.5
+            ) as response:
                 return response.status == 200
         except Exception:
             return False
 
     def _websocket_ready(self) -> bool | None:
         try:
-            with request.urlopen(f"{self.config.base_url}/json/version", timeout=0.5) as response:
+            with request.urlopen(
+                f"{self.config.base_url}/json/version", timeout=0.5
+            ) as response:
                 data = json.loads(response.read().decode("utf-8"))
             ws_url = str(data.get("webSocketDebuggerUrl") or "")
             if not ws_url:
                 return None
             import websocket  # type: ignore
 
-            ws = websocket.create_connection(ws_url, timeout=0.75, origin=self.config.base_url)
+            ws = websocket.create_connection(
+                ws_url, timeout=0.75, origin=self.config.base_url
+            )
             ws.close()
             return True
         except Exception as exc:

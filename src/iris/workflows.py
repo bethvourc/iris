@@ -19,28 +19,70 @@ class Workflow:
 
 
 WORKFLOWS = [
-    Workflow("find-download", "Find recently downloaded files.", LocalAction("find_file")),
-    Workflow("summarize-pdf-email", "Summarize a PDF and draft an email.", LocalAction("draft_email")),
-    Workflow("clean-downloads", "Organize Downloads, ask before deleting.", LocalAction("move_file")),
-    Workflow("prep-meeting", "Prepare notes for the next meeting.", LocalAction("read_calendar")),
-    Workflow("meeting-followup", "Draft post-meeting follow-up email and tasks.", LocalAction("draft_email")),
-    Workflow("watch-change", "Watch a page/app/file and notify on changes.", LocalAction("watch")),
-    Workflow("calendar-book", "Schedule or book with approval.", LocalAction("create_calendar_event", risk=RiskLevel.SENSITIVE)),
-    Workflow("research-brief", "Research a topic and create a brief.", LocalAction("search")),
-    Workflow("repo-debug-pr", "Debug a repo and prepare a PR.", LocalAction("edit_file", risk=RiskLevel.SENSITIVE)),
-    Workflow("daily-brief", "Summarize calendar, inbox, tasks, and watchers.", LocalAction("daily_brief")),
+    Workflow(
+        "find-download", "Find recently downloaded files.", LocalAction("find_file")
+    ),
+    Workflow(
+        "summarize-pdf-email",
+        "Summarize a PDF and draft an email.",
+        LocalAction("draft_email"),
+    ),
+    Workflow(
+        "clean-downloads",
+        "Organize Downloads, ask before deleting.",
+        LocalAction("move_file"),
+    ),
+    Workflow(
+        "prep-meeting",
+        "Prepare notes for the next meeting.",
+        LocalAction("read_calendar"),
+    ),
+    Workflow(
+        "meeting-followup",
+        "Draft post-meeting follow-up email and tasks.",
+        LocalAction("draft_email"),
+    ),
+    Workflow(
+        "watch-change",
+        "Watch a page/app/file and notify on changes.",
+        LocalAction("watch"),
+    ),
+    Workflow(
+        "calendar-book",
+        "Schedule or book with approval.",
+        LocalAction("create_calendar_event", risk=RiskLevel.SENSITIVE),
+    ),
+    Workflow(
+        "research-brief", "Research a topic and create a brief.", LocalAction("search")
+    ),
+    Workflow(
+        "repo-debug-pr",
+        "Debug a repo and prepare a PR.",
+        LocalAction("edit_file", risk=RiskLevel.SENSITIVE),
+    ),
+    Workflow(
+        "daily-brief",
+        "Summarize calendar, inbox, tasks, and watchers.",
+        LocalAction("daily_brief"),
+    ),
 ]
 
 
 def list_workflows() -> list[dict[str, object]]:
     return [
-        {"name": workflow.name, "description": workflow.description, "action": workflow.action.name}
+        {
+            "name": workflow.name,
+            "description": workflow.description,
+            "action": workflow.action.name,
+        }
         for workflow in WORKFLOWS
     ]
 
 
 def run_workflow(db: sqlite3.Connection, name: str) -> dict[str, object]:
-    workflow = next((candidate for candidate in WORKFLOWS if candidate.name == name), None)
+    workflow = next(
+        (candidate for candidate in WORKFLOWS if candidate.name == name), None
+    )
     if workflow is None:
         raise ValueError(f"Unknown workflow: {name}")
     run_id = uuid.uuid4().hex

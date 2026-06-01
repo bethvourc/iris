@@ -48,7 +48,9 @@ def _screen_capture_status() -> ControlBackendStatus:
 
 def _accessibility_status() -> ControlBackendStatus:
     if not shutil.which("osascript"):
-        return ControlBackendStatus("accessibility", "Accessibility Tree", False, 20, "osascript is missing")
+        return ControlBackendStatus(
+            "accessibility", "Accessibility Tree", False, 20, "osascript is missing"
+        )
     result = run_osascript(
         """
 try
@@ -60,8 +62,14 @@ end try
         timeout=5,
     )
     enabled = result.ok and result.stdout.strip().lower() == "true"
-    detail = "Accessibility is enabled" if enabled else (result.stdout or result.stderr or "Accessibility is not enabled")
-    return ControlBackendStatus("accessibility", "Accessibility Tree", enabled, 20, detail)
+    detail = (
+        "Accessibility is enabled"
+        if enabled
+        else (result.stdout or result.stderr or "Accessibility is not enabled")
+    )
+    return ControlBackendStatus(
+        "accessibility", "Accessibility Tree", enabled, 20, detail
+    )
 
 
 def _browser_cdp_status() -> ControlBackendStatus:
@@ -84,7 +92,13 @@ def _browser_cdp_status() -> ControlBackendStatus:
 
 def _browser_applescript_status() -> ControlBackendStatus:
     if not shutil.which("osascript"):
-        return ControlBackendStatus("browser_applescript", "Browser AppleScript", False, 40, "osascript is missing")
+        return ControlBackendStatus(
+            "browser_applescript",
+            "Browser AppleScript",
+            False,
+            40,
+            "osascript is missing",
+        )
     result = run_osascript(
         """
 try
@@ -111,11 +125,23 @@ end try
 
 def _computer_use_status(config: IrisConfig | None) -> ControlBackendStatus:
     available = bool(config and config.openai_api_key and config.computer_use_model)
-    detail = "OpenAI computer-use configured" if available else "OpenAI computer-use is not configured"
-    return ControlBackendStatus("computer_use", "OpenAI Computer Use", available, 80, detail)
+    detail = (
+        "OpenAI computer-use configured"
+        if available
+        else "OpenAI computer-use is not configured"
+    )
+    return ControlBackendStatus(
+        "computer_use", "OpenAI Computer Use", available, 80, detail
+    )
 
 
 def _coordinate_status() -> ControlBackendStatus:
     available = bool(shutil.which("osascript"))
-    detail = "Coordinate fallback available" if available else "Coordinate fallback unavailable"
-    return ControlBackendStatus("coordinates", "Coordinate Fallback", available, 100, detail)
+    detail = (
+        "Coordinate fallback available"
+        if available
+        else "Coordinate fallback unavailable"
+    )
+    return ControlBackendStatus(
+        "coordinates", "Coordinate Fallback", available, 100, detail
+    )

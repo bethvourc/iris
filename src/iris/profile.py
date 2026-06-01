@@ -42,7 +42,9 @@ def infer_system_profile() -> UserProfile:
     )
 
 
-def load_user_profile(config: IrisConfig, db: sqlite3.Connection | None = None) -> UserProfile:
+def load_user_profile(
+    config: IrisConfig, db: sqlite3.Connection | None = None
+) -> UserProfile:
     profile = infer_system_profile()
     if db is None:
         return profile
@@ -68,6 +70,18 @@ def load_user_profile(config: IrisConfig, db: sqlite3.Connection | None = None) 
         preferred_name=str(values["preferred_name"]),
         pronouns=str(values["pronouns"]) if values.get("pronouns") else None,
     )
+
+
+def has_user_profile(db: sqlite3.Connection) -> bool:
+    row = db.execute(
+        """
+        SELECT 1
+        FROM memories
+        WHERE category = 'profile' AND user_confirmed = 1
+        LIMIT 1
+        """
+    ).fetchone()
+    return row is not None
 
 
 def save_user_profile(
