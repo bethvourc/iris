@@ -70,6 +70,18 @@ def load_user_profile(config: IrisConfig, db: sqlite3.Connection | None = None) 
     )
 
 
+def has_user_profile(db: sqlite3.Connection) -> bool:
+    row = db.execute(
+        """
+        SELECT 1
+        FROM memories
+        WHERE category = 'profile' AND user_confirmed = 1
+        LIMIT 1
+        """
+    ).fetchone()
+    return row is not None
+
+
 def save_user_profile(
     db: sqlite3.Connection,
     *,

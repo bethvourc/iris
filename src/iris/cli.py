@@ -28,7 +28,7 @@ from iris.knowledge import (
 from iris.meetings import list_meetings, start_silent_meeting, stop_meeting
 from iris.memory import add_memory, edit_memory, forget_memory, list_memories
 from iris.plugins import list_plugins, plugin_health, set_plugin_enabled
-from iris.profile import load_user_profile, save_user_profile
+from iris.profile import has_user_profile, load_user_profile, save_user_profile
 from iris.providers import ProviderRegistry
 from iris.safety import AutomationPaused, SafetyGate
 from iris.sessions import get_session, list_sessions
@@ -66,6 +66,16 @@ def build_parser() -> argparse.ArgumentParser:
     subparsers.add_parser("init", help="Initialize Iris local state").set_defaults(
         func=cmd_init
     )
+    setup = subparsers.add_parser("setup", help="Run first-time local Iris setup")
+    setup.add_argument("--name", default=None, help="Preferred name Iris should use")
+    setup.add_argument("--full-name", default=None, help="Full display name")
+    setup.add_argument("--pronouns", default=None, help="Pronouns, e.g. he/him")
+    setup.add_argument(
+        "--skip-profile",
+        action="store_true",
+        help="Skip profile setup and keep inferred defaults",
+    )
+    setup.set_defaults(func=cmd_setup)
     subparsers.add_parser("status", help="Show local configuration status").set_defaults(
         func=cmd_status
     )
@@ -393,7 +403,9 @@ def _runtime(args: argparse.Namespace):
 def cmd_init(args: argparse.Namespace) -> int:
     config = _config(args)
     path = ensure_state(config)
+    profile_exists = False
     with open_state(config) as db:
+        profile_exists = has_user_profile(db)
         record_audit(
             db,
             actor="user",
@@ -403,6 +415,11 @@ def cmd_init(args: argparse.Namespace) -> int:
             output_value={"state_db": str(path)},
         )
     print(f"Initialized Iris state: {path}")
+    if not profile_exists:
+        if sys.stdin.isatty():
+            _run_profile_setup(config, interactive=True)
+        else:
+            print("Run `./iris setup` to personalize Iris.")
     return 0
 
 
@@ -479,6 +496,37 @@ def cmd_configure_provider(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_setup(args: argparse.Namespace) -> int:
+    config = _config(args)
+    if args.skip_profile:
+        inferred = load_user_profile(config)
+        result = _save_profile_setup(
+            config,
+            preferred_name=inferred.preferred_name,
+            full_name=inferred.full_name,
+            pronouns=inferred.pronouns,
+        )
+        _print_json({**result, "skipped": True})
+        return 0
+    if any((args.name, args.full_name, args.pronouns)):
+        result = _save_profile_setup(
+            config,
+            preferred_name=args.name,
+            full_name=args.full_name,
+            pronouns=args.pronouns,
+        )
+        _print_json(result)
+        return 0
+    if not sys.stdin.isatty():
+        print(
+            "No setup values provided. Run `./iris setup --name <name>` or use an interactive terminal.",
+            file=sys.stderr,
+        )
+        return 1
+    _run_profile_setup(config, interactive=True)
+    return 0
+
+
 def cmd_profile_show(args: argparse.Namespace) -> int:
     config = _config(args)
     with open_state(config) as db:
@@ -510,6 +558,68 @@ def cmd_profile_set(args: argparse.Namespace) -> int:
         )
     _print_json({"memory_id": memory_id, "profile": profile.__dict__})
     return 0
+
+
+def _run_profile_setup(config: IrisConfig, *, interactive: bool) -> None:
+    inferred = load_user_profile(config)
+    if not interactive:
+        print("Run `./iris setup` to personalize Iris.")
+        return
+    print("Let's personalize Iris.")
+    preferred_name = _prompt_default("What should I call you?", inferred.preferred_name)
+    full_name = _prompt_default("Full name? Press Enter to use the detected value.", inferred.full_name)
+    pronouns = _prompt_optional("Pronouns? Press Enter to skip.")
+    result = _save_profile_setup(
+        config,
+        preferred_name=preferred_name,
+        full_name=full_name,
+        pronouns=pronouns,
+    )
+    profile = result["profile"]
+    print(f"Saved profile. Iris will call you {profile['preferred_name']}.")
+
+
+def _save_profile_setup(
+    config: IrisConfig,
+    *,
+    preferred_name: str | None,
+    full_name: str | None,
+    pronouns: str | None,
+) -> dict[str, object]:
+    with open_state(config) as db:
+        memory_id = save_user_profile(
+            db,
+            full_name=_clean_optional(full_name),
+            preferred_name=_clean_optional(preferred_name),
+            pronouns=_clean_optional(pronouns),
+        )
+        profile = load_user_profile(config, db)
+        record_audit(
+            db,
+            actor="user",
+            tool="setup.profile",
+            risk=RiskLevel.LOW_RISK,
+            result="ok",
+            output_value={"memory_id": memory_id, "profile": profile.__dict__},
+        )
+    return {"memory_id": memory_id, "profile": profile.__dict__}
+
+
+def _prompt_default(question: str, default: str) -> str:
+    value = input(f"{question} [{default}] ").strip()
+    return value or default
+
+
+def _prompt_optional(question: str) -> str | None:
+    value = input(f"{question} ").strip()
+    return value or None
+
+
+def _clean_optional(value: str | None) -> str | None:
+    if value is None:
+        return None
+    cleaned = value.strip()
+    return cleaned or None
 
 
 def cmd_permissions(args: argparse.Namespace) -> int:

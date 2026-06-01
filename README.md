@@ -45,6 +45,18 @@ Initialize local state:
 ./iris status
 ```
 
+Personalize Iris:
+
+```bash
+./iris setup
+```
+
+For non-interactive setup:
+
+```bash
+./iris setup --name Clinton --pronouns he/him
+```
+
 If you use the local HTTP gateway, set a private token first:
 
 ```bash
@@ -107,6 +119,7 @@ quit
 ./iris providers
 ./iris profile show
 ./iris profile set --name Clinton --pronouns he/him
+./iris setup
 ./iris test-screen
 ./iris test-vision
 ./iris test-voice --listen
