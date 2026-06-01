@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import pytest
+
 from iris.polling import poll_until
+from iris.safety import AutomationPaused, CancellationToken
 
 
 def test_poll_until_returns_when_ready() -> None:
@@ -55,3 +58,27 @@ def test_poll_until_returns_last_value_on_timeout() -> None:
     )
 
     assert result == 3
+
+
+def test_poll_until_stops_when_cancelled_during_wait() -> None:
+    token = CancellationToken()
+    now = 0.0
+
+    def monotonic() -> float:
+        return now
+
+    def sleep(seconds: float) -> None:
+        nonlocal now
+        now += seconds
+        token.cancel("stop polling")
+
+    with pytest.raises(AutomationPaused, match="stop polling"):
+        poll_until(
+            lambda: {"ready": False},
+            lambda value: bool(value["ready"]),
+            timeout_seconds=5.0,
+            interval_seconds=0.25,
+            monotonic=monotonic,
+            sleep=sleep,
+            cancellation_token=token,
+        )

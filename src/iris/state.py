@@ -24,6 +24,19 @@ CREATE TABLE IF NOT EXISTS audit_events (
   details_json TEXT NOT NULL DEFAULT '{}'
 );
 
+CREATE TABLE IF NOT EXISTS run_trace_events (
+  trace_id TEXT PRIMARY KEY,
+  run_id TEXT NOT NULL,
+  event_name TEXT NOT NULL,
+  component TEXT NOT NULL,
+  status TEXT NOT NULL,
+  started_at TEXT NOT NULL,
+  finished_at TEXT,
+  duration_ms REAL,
+  error TEXT,
+  details_json TEXT NOT NULL DEFAULT '{}'
+);
+
 CREATE TABLE IF NOT EXISTS approvals (
   approval_id TEXT PRIMARY KEY,
   run_id TEXT,

@@ -1514,6 +1514,7 @@ def _gmail_search_and_summarize(
         _visible_text_ready,
         timeout_seconds=3.0,
         interval_seconds=0.3,
+        cancellation_token=context.cancellation_token,
     )
     if not visible.ok:
         return _from_action_result(visible)
@@ -2334,7 +2335,12 @@ def _media_search_or_play(
         if recipe and context.session_state is not None:
             context.session_state["current_recipe"] = recipe.name
     if action == "play" and surface == "auto":
-        web_result = _spotify_web_cdp(query, action=action, browser=browser)
+        web_result = _spotify_web_cdp(
+            query,
+            action=action,
+            browser=browser,
+            cancellation_token=context.cancellation_token,
+        )
         if web_result is not None:
             if web_result.ok:
                 _remember_media(
@@ -2364,7 +2370,12 @@ def _media_search_or_play(
             ):
                 return _from_action_result(web_result)
     if surface == "browser":
-        cdp_result = _spotify_web_cdp(query, action=action, browser=browser)
+        cdp_result = _spotify_web_cdp(
+            query,
+            action=action,
+            browser=browser,
+            cancellation_token=context.cancellation_token,
+        )
         if cdp_result is not None:
             if cdp_result.ok:
                 _remember_media(
@@ -2429,7 +2440,12 @@ def _media_search_or_play(
                     message = f"I tried to start {query} in Spotify."
             return ToolResult(True, message, app_result.payload)
         return _from_action_result(app_result)
-    web_result = _spotify_web_cdp(query, action=action, browser=browser)
+    web_result = _spotify_web_cdp(
+        query,
+        action=action,
+        browser=browser,
+        cancellation_token=context.cancellation_token,
+    )
     if web_result is None or (
         not web_result.ok
         and "Chrome CDP is running without the Iris origin allowlist"
@@ -2453,12 +2469,18 @@ def _media_search_or_play(
     return _from_action_result(web_result)
 
 
-def _spotify_web_cdp(query: str, *, action: str, browser: str) -> ActionResult | None:
+def _spotify_web_cdp(
+    query: str,
+    *,
+    action: str,
+    browser: str,
+    cancellation_token: CancellationToken | None = None,
+) -> ActionResult | None:
     if not _prefer_cdp(browser):
         return None
     cdp = _chrome_cdp()
     if action == "play":
-        return cdp.spotify_play_search(query)
+        return cdp.spotify_play_search(query, cancellation_token=cancellation_token)
     url = f"https://open.spotify.com/search/{quote_plus(query)}"
     return cdp.navigate(url, new_tab=False)
 
@@ -2489,7 +2511,10 @@ def _youtube_media_play(arguments: dict[str, Any], context: ToolContext) -> Tool
                 browser=browser,
             )
         return opened
-    result = _chrome_cdp().youtube_play(query or None)
+    result = _chrome_cdp().youtube_play(
+        query or None,
+        cancellation_token=context.cancellation_token,
+    )
     if result.ok:
         payload = result.payload if isinstance(result.payload, dict) else {}
         verified = bool(payload.get("verified_playback"))

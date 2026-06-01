@@ -477,8 +477,7 @@ class RealtimeSpeechSession:
                 self._respond_with_text("Stopping that after the current step.")
                 return
             if _is_status_question(lowered):
-                active = self._active_agent_request or "the last request"
-                self._respond_with_text(f"I'm still working on {active}.")
+                self._respond_with_text(self._active_agent_status_message())
                 return
             self._pending_agent_texts.put(transcript)
             now = time.monotonic()
@@ -526,6 +525,19 @@ class RealtimeSpeechSession:
                 self._pending_agent_texts.get_nowait()
             except queue.Empty:
                 return
+
+    def _active_agent_status_message(self) -> str:
+        status = self.router.agent_executor.current_status()
+        active = self._active_agent_request or str(
+            status.get("request") or "the request"
+        )
+        stage = str(status.get("stage") or "").replace("_", " ")
+        tool_name = str(status.get("tool_name") or "").replace("_", " ")
+        if stage == "executing tool" and tool_name:
+            return f"I'm still working on {active}. Current step: {tool_name}."
+        if stage:
+            return f"I'm still working on {active}. Current step: {stage}."
+        return f"I'm still working on {active}."
 
     def _respond_with_text(self, text: str) -> None:
         if not text:
