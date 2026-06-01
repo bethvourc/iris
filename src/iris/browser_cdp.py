@@ -3,12 +3,12 @@ from __future__ import annotations
 from dataclasses import dataclass
 import json
 import os
-import time
 from typing import Any
 from urllib import parse, request
 
 from iris.mac_controller import ActionResult
 from iris.managed_browser import ManagedChrome
+from iris.polling import poll_until
 
 
 @dataclass(frozen=True)
@@ -242,6 +242,7 @@ class ChromeCDPBackend:
         ensured = self.ensure_available() if self.auto_start else None
         if ensured is not None and not ensured.ok:
             return ensured
+        terms = [part for part in (query or "").lower().split() if len(part) > 1]
         if query:
             opened = self.navigate(
                 f"https://open.spotify.com/search/{parse.quote_plus(query)}",
@@ -249,8 +250,6 @@ class ChromeCDPBackend:
             )
             if not opened.ok:
                 return opened
-            time.sleep(2.0)
-        terms = [part for part in (query or "").lower().split() if len(part) > 1]
         script = """
 (terms) => {
   const normalize = (value) => String(value || '').toLowerCase().replace(/\\s+/g, ' ').trim();
@@ -291,21 +290,34 @@ class ChromeCDPBackend:
   return {ok: false, reason: 'no_playable_result', play_buttons: playButtons.length, terms};
 }
 """
-        result = self._call_function("browser_cdp_spotify_play", script, [terms])
+        result = poll_until(
+            lambda: self._call_function("browser_cdp_spotify_play", script, [terms]),
+            _action_payload_ok,
+            timeout_seconds=2.5 if query else 0.1,
+            interval_seconds=0.25,
+        )
         if not result.ok:
             return result
         payload = result.payload if isinstance(result.payload, dict) else {}
         attempts = [payload]
         if payload.get("ok") and payload.get("action") == "opened_result":
-            time.sleep(1.2)
-            result = self._call_function("browser_cdp_spotify_play", script, [terms])
+            result = poll_until(
+                lambda: self._call_function("browser_cdp_spotify_play", script, [terms]),
+                _action_payload_ok,
+                timeout_seconds=1.5,
+                interval_seconds=0.25,
+            )
             if not result.ok:
                 return result
             payload = result.payload if isinstance(result.payload, dict) else {}
             attempts.append(payload)
         if payload.get("ok"):
-            time.sleep(0.8)
-            state = self.media_state()
+            state = poll_until(
+                self.media_state,
+                _action_media_playing,
+                timeout_seconds=1.0,
+                interval_seconds=0.2,
+            )
             state_payload = state.payload if state.ok and isinstance(state.payload, dict) else {}
             verified = _browser_media_is_playing(state_payload)
             return ActionResult(
@@ -340,7 +352,6 @@ class ChromeCDPBackend:
             )
             if not opened.ok:
                 return opened
-            time.sleep(1.5)
         script = """
 (terms) => {
   const normalize = (value) => String(value || '').toLowerCase().replace(/\\s+/g, ' ').trim();
@@ -394,21 +405,34 @@ class ChromeCDPBackend:
 }
 """
         attempts = []
-        result = self._call_function("browser_cdp_youtube_play", script, [terms])
+        result = poll_until(
+            lambda: self._call_function("browser_cdp_youtube_play", script, [terms]),
+            _action_payload_ok,
+            timeout_seconds=2.0 if query else 0.1,
+            interval_seconds=0.25,
+        )
         if not result.ok:
             return result
         payload = result.payload if isinstance(result.payload, dict) else {}
         attempts.append(payload)
         if payload.get("action") == "opened_video":
-            time.sleep(2.0)
-            result = self._call_function("browser_cdp_youtube_play", script, [[]])
+            result = poll_until(
+                lambda: self._call_function("browser_cdp_youtube_play", script, [[]]),
+                _action_payload_ok,
+                timeout_seconds=2.5,
+                interval_seconds=0.25,
+            )
             if not result.ok:
                 return result
             payload = result.payload if isinstance(result.payload, dict) else {}
             attempts.append(payload)
         if payload.get("ok"):
-            time.sleep(0.5)
-            state = self.media_state()
+            state = poll_until(
+                self.media_state,
+                _action_media_playing,
+                timeout_seconds=0.8,
+                interval_seconds=0.2,
+            )
             state_payload = state.payload if state.ok and isinstance(state.payload, dict) else {}
             verified = bool(payload.get("action") == "playing" or _browser_media_is_playing(state_payload))
             return ActionResult(
@@ -563,6 +587,16 @@ def _friendly_cdp_error(detail: str) -> str:
     if "no chrome cdp page tab" in lowered:
         return "No Chrome tab is available through CDP yet."
     return detail or "Chrome CDP action failed."
+
+
+def _action_payload_ok(result: ActionResult) -> bool:
+    payload = result.payload if isinstance(result.payload, dict) else {}
+    return bool(result.ok and payload.get("ok"))
+
+
+def _action_media_playing(result: ActionResult) -> bool:
+    payload = result.payload if result.ok and isinstance(result.payload, dict) else {}
+    return _browser_media_is_playing(payload)
 
 
 def _browser_media_is_playing(payload: dict[str, Any]) -> bool:

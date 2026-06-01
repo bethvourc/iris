@@ -6,7 +6,6 @@ from html import unescape
 from html.parser import HTMLParser
 from pathlib import Path
 import re
-import time
 from typing import Any, Callable
 from urllib import request
 from urllib.parse import parse_qs, quote_plus, unquote_plus, urlparse
@@ -22,6 +21,7 @@ from iris.integrations.openai_client import OpenAIResponsesClient
 from iris.knowledge import format_search_results, search_pages
 from iris.mac_controller import ActionResult, MacController
 from iris.perception import LiveScreenFrame, PerceptionService, ScreenAwarenessService
+from iris.polling import poll_until
 from iris.recipes import ActionRecipeRegistry
 from iris.safety import CancellationToken, SafetyGate, classify_action
 from iris.state import open_state
@@ -1096,6 +1096,18 @@ def _human_action_detail(detail: str) -> str:
     return detail
 
 
+def _human_tool_error(message: str) -> str:
+    lowered = message.lower()
+    if (
+        "javascript through applescript is turned off" in lowered
+        or "allow javascript from apple events" in lowered
+    ):
+        return "Chrome automation is off, so I’ll use screen clicks instead."
+    if "OpenAI Responses API failed" in message:
+        return "The model call failed before I could finish that step."
+    return message
+
+
 def _open_app(arguments: dict[str, Any], context: ToolContext) -> ToolResult:
     computer = _computer(context)
     return _from_action_result(computer.open_app(_string_arg(arguments, "app_name")))
@@ -1425,8 +1437,12 @@ def _gmail_search_and_summarize(arguments: dict[str, Any], context: ToolContext)
     opened = context.controller.gmail_search(query, browser)
     if not opened.ok:
         return _from_action_result(opened)
-    time.sleep(2.0)
-    visible = context.controller.gmail_visible_text(browser)
+    visible = poll_until(
+        lambda: context.controller.gmail_visible_text(browser),
+        _visible_text_ready,
+        timeout_seconds=3.0,
+        interval_seconds=0.3,
+    )
     if not visible.ok:
         return _from_action_result(visible)
     payload = visible.payload if isinstance(visible.payload, dict) else {}
@@ -1446,6 +1462,14 @@ def _gmail_search_and_summarize(arguments: dict[str, Any], context: ToolContext)
         summary,
         {"query": query, "browser": browser, "text_preview": _compact_text(text, 1200)},
     )
+
+
+def _visible_text_ready(result: ActionResult) -> bool:
+    if not result.ok:
+        return False
+    payload = result.payload if isinstance(result.payload, dict) else {}
+    text = str(payload.get("text") or result.detail or "").strip()
+    return bool(text)
 
 
 def _gmail_create_draft(arguments: dict[str, Any], context: ToolContext) -> ToolResult:
