@@ -31,7 +31,36 @@
         }
       ],
       "done_condition": "A native or browser media observation confirms Spotify is playing or the visible UI has changed to pause/playing.",
-      "verification_tool": "audio_current_media"
+      "verification_tool": "audio_current_media",
+      "metadata": {
+        "failure_message": "I tried Spotify, but I could not verify playback yet."
+      }
+    },
+    {
+      "name": "youtube_play_video",
+      "description": "Play a requested or currently visible YouTube video in the current browser tab and verify media state.",
+      "service": "youtube",
+      "required_connectors": ["youtube"],
+      "tools": ["media_play", "browser_play_media", "browser_media_state"],
+      "steps": [
+        {
+          "tool": "media_play",
+          "args": {"service": "youtube", "surface": "browser"},
+          "expected_observation": "The requested or current YouTube video starts playing."
+        }
+      ],
+      "fallback_steps": [
+        {
+          "tool": "browser_play_media",
+          "args": {"service": "youtube", "browser": "Google Chrome"},
+          "expected_observation": "Browser automation clicks or requests YouTube playback."
+        }
+      ],
+      "done_condition": "Browser media state confirms the YouTube video is playing or a Pause control is visible.",
+      "verification_tool": "browser_media_state",
+      "metadata": {
+        "failure_message": "I tried YouTube, but I could not verify playback yet."
+      }
     },
     {
       "name": "stripe_revenue_check",
@@ -67,7 +96,11 @@
       ],
       "fallback_steps": [],
       "done_condition": "The answer includes a verified visible value for today's Stripe sales/revenue, or clearly states that sign-in is required.",
-      "verification_tool": "browser_verify_state"
+      "verification_tool": "browser_verify_state",
+      "metadata": {
+        "verification_args": {"text": "Stripe"},
+        "failure_message": "I opened Stripe, but I could not verify that the dashboard content is visible yet."
+      }
     },
     {
       "name": "revenuecat_revenue_check",
@@ -103,7 +136,11 @@
       ],
       "fallback_steps": [],
       "done_condition": "The answer includes a verified visible value and date range for RevenueCat sales/revenue, or clearly states that sign-in or a date filter change is required.",
-      "verification_tool": "browser_verify_state"
+      "verification_tool": "browser_verify_state",
+      "metadata": {
+        "verification_args": {"text": "RevenueCat"},
+        "failure_message": "I opened RevenueCat, but I could not verify that the dashboard content is visible yet."
+      }
     },
     {
       "name": "calendar_event_lookup",
@@ -142,6 +179,27 @@
       "verification_tool": "app_inspect"
     },
     {
+      "name": "message_send",
+      "description": "Send an iMessage/SMS through macOS Messages after approval and report the Messages action result.",
+      "service": "messages",
+      "private": true,
+      "required_connectors": ["messages"],
+      "tools": ["message_send"],
+      "approval_gates": ["send_message"],
+      "steps": [
+        {
+          "tool": "message_send",
+          "args": {},
+          "expected_observation": "Messages accepts the recipient/body send request."
+        }
+      ],
+      "done_condition": "The message send tool reports success, or Iris explains why Messages could not send.",
+      "verification_tool": "",
+      "metadata": {
+        "failure_message": "I could not send the message."
+      }
+    },
+    {
       "name": "gmail_summarize_thread",
       "description": "Search Gmail and summarize visible messages after approval for private email content.",
       "service": "gmail",
@@ -158,6 +216,68 @@
       ],
       "done_condition": "The requested Gmail content is summarized, or Iris asks the user to sign in/search manually.",
       "verification_tool": "browser_get_dom"
+    },
+    {
+      "name": "gmail_create_draft",
+      "description": "Create a Gmail compose draft in the current browser after approval.",
+      "service": "gmail",
+      "private": true,
+      "required_connectors": ["gmail"],
+      "tools": ["gmail_create_draft", "browser_verify_state"],
+      "approval_gates": ["write_email_draft"],
+      "steps": [
+        {
+          "tool": "gmail_create_draft",
+          "args": {"browser": "Google Chrome"},
+          "expected_observation": "Gmail compose opens with recipient, subject, and body filled."
+        }
+      ],
+      "done_condition": "A Gmail compose draft is visible for user review.",
+      "verification_tool": "browser_verify_state",
+      "metadata": {
+        "verification_args": {"url_contains": "mail.google.com"},
+        "failure_message": "I opened Gmail draft flow, but I could not verify the compose window yet."
+      }
+    },
+    {
+      "name": "finder_open_item",
+      "description": "Open a local file or folder using Finder/open after resolving the path or recent file context.",
+      "service": "finder",
+      "required_connectors": ["finder"],
+      "tools": ["file_open"],
+      "steps": [
+        {
+          "tool": "file_open",
+          "args": {},
+          "expected_observation": "The requested file or folder opens."
+        }
+      ],
+      "done_condition": "The file open tool reports success.",
+      "verification_tool": "",
+      "metadata": {
+        "failure_message": "I could not open that file or folder."
+      }
+    },
+    {
+      "name": "finder_rename_item",
+      "description": "Rename a local file or folder after approval, resolving references from the last file/folder context.",
+      "service": "finder",
+      "private": true,
+      "required_connectors": ["finder"],
+      "tools": ["file_rename"],
+      "approval_gates": ["rename_file"],
+      "steps": [
+        {
+          "tool": "file_rename",
+          "args": {},
+          "expected_observation": "The requested file or folder is renamed."
+        }
+      ],
+      "done_condition": "The destination path exists and the old path has been renamed.",
+      "verification_tool": "",
+      "metadata": {
+        "failure_message": "I could not rename that file or folder."
+      }
     },
     {
       "name": "github_failing_ci",

@@ -127,6 +127,12 @@ quit
 ./iris doctor
 ./iris browser start-cdp
 ./iris browser tabs
+./iris browser current
+./iris controls apps
+./iris controls inspect
+./iris controls find "search"
+./iris recipes list
+./iris recipes show spotify_play_song
 ./iris notify test
 ./iris approvals
 ./iris audit

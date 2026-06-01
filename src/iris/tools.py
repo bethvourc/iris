@@ -339,9 +339,31 @@ def _default_tools() -> list[ToolSpec]:
         ToolSpec(
             name="browser_click_element",
             description="Click a browser element by visible text, role label, or aria label using CDP first.",
-            parameters=_object_schema({"text": {"type": "string"}}, required=["text"]),
+            parameters=_object_schema(
+                {
+                    "text": {"type": "string"},
+                    "selector": {"type": "string"},
+                    "role": {"type": "string"},
+                    "exact": {"type": "boolean"},
+                },
+                required=[],
+            ),
             risk=RiskLevel.LOW_RISK,
             execute=_browser_click_element,
+        ),
+        ToolSpec(
+            name="browser_focus_element",
+            description="Focus a browser element or field by selector, accessible label, role, placeholder, or text.",
+            parameters=_object_schema(
+                {
+                    "field": {"type": "string"},
+                    "selector": {"type": "string"},
+                    "role": {"type": "string"},
+                },
+                required=[],
+            ),
+            risk=RiskLevel.LOW_RISK,
+            execute=_browser_focus_element,
         ),
         ToolSpec(
             name="browser_type",
@@ -362,6 +384,19 @@ def _default_tools() -> list[ToolSpec]:
             ),
             risk=RiskLevel.SENSITIVE,
             execute=_browser_type_into,
+        ),
+        ToolSpec(
+            name="browser_submit",
+            description="Submit the current browser form or press Enter in a focused field.",
+            parameters=_object_schema(
+                {
+                    "field": {"type": "string"},
+                    "selector": {"type": "string"},
+                },
+                required=[],
+            ),
+            risk=RiskLevel.LOW_RISK,
+            execute=_browser_submit,
         ),
         ToolSpec(
             name="browser_verify_state",
@@ -1328,15 +1363,35 @@ def _browser_click(arguments: dict[str, Any], context: ToolContext) -> ToolResul
 def _browser_click_element(
     arguments: dict[str, Any], context: ToolContext
 ) -> ToolResult:
-    result = _chrome_cdp().click_text(_string_arg(arguments, "text"))
+    result = _chrome_cdp().click_element(
+        text=_string_arg(arguments, "text"),
+        selector=_string_arg(arguments, "selector"),
+        role=_string_arg(arguments, "role"),
+        exact=bool(arguments.get("exact")),
+    )
     if result.ok:
+        _remember_selection(context, result.payload)
         return _from_action_result(result)
     return _browser_click(
         {"text": _string_arg(arguments, "text"), "browser": "Google Chrome"}, context
     )
 
 
+def _browser_focus_element(
+    arguments: dict[str, Any], context: ToolContext
+) -> ToolResult:
+    result = _chrome_cdp().focus_element(
+        field=_string_arg(arguments, "field"),
+        selector=_string_arg(arguments, "selector"),
+        role=_string_arg(arguments, "role"),
+    )
+    if result.ok:
+        _remember_selection(context, result.payload)
+    return _from_action_result(result)
+
+
 def _browser_type_into(arguments: dict[str, Any], context: ToolContext) -> ToolResult:
+    context.assert_not_cancelled()
     result = _chrome_cdp().type_into(
         field=_string_arg(arguments, "field"),
         text=_string_arg(arguments, "text"),
@@ -1344,6 +1399,14 @@ def _browser_type_into(arguments: dict[str, Any], context: ToolContext) -> ToolR
     if result.ok:
         return _from_action_result(result)
     return _type_text({"text": _string_arg(arguments, "text")}, context)
+
+
+def _browser_submit(arguments: dict[str, Any], context: ToolContext) -> ToolResult:
+    result = _chrome_cdp().submit(
+        field=_string_arg(arguments, "field"),
+        selector=_string_arg(arguments, "selector"),
+    )
+    return _from_action_result(result)
 
 
 def _browser_verify_state(
@@ -2659,7 +2722,10 @@ def _file_open(arguments: dict[str, Any], context: ToolContext) -> ToolResult:
     if not raw_path:
         return ToolResult(False, "I need a file path.")
     path = str(_resolve_common_folder(raw_path))
-    return _from_action_result(context.controller.open_file(path))
+    result = _from_action_result(context.controller.open_file(path))
+    if result.ok and context.session_state is not None:
+        context.session_state["last_file_target"] = path
+    return result
 
 
 def _file_rename(arguments: dict[str, Any], context: ToolContext) -> ToolResult:
@@ -2692,6 +2758,7 @@ def _file_rename(arguments: dict[str, Any], context: ToolContext) -> ToolResult:
                 str(destination) if str(item) == str(path) else item
                 for item in previous
             ]
+        context.session_state["last_file_target"] = str(destination)
     return ToolResult(
         True,
         f"Renamed {path.name} to {destination.name}.",
@@ -2823,6 +2890,7 @@ def _workflow_run(arguments: dict[str, Any], context: ToolContext) -> ToolResult
 
 
 def _recipe_run(arguments: dict[str, Any], context: ToolContext) -> ToolResult:
+    context.assert_not_cancelled()
     recipe_name = _string_arg(arguments, "recipe_name") or _string_arg(
         arguments, "name"
     )
@@ -2844,10 +2912,18 @@ def _recipe_run(arguments: dict[str, Any], context: ToolContext) -> ToolResult:
     inputs = raw_inputs if isinstance(raw_inputs, dict) else {}
     max_steps = max(1, min(_int_arg(arguments, "max_steps", 8), 20))
     observations: list[dict[str, Any]] = []
-    tool_registry = ToolRegistry.default()
+    custom_registry = (context.session_state or {}).get("_tool_registry")
+    tool_registry = (
+        custom_registry
+        if isinstance(custom_registry, ToolRegistry)
+        else ToolRegistry.default()
+    )
+    if context.session_state is not None:
+        context.session_state["current_recipe"] = recipe.name
 
     def run_steps(steps: Any) -> bool:
         for step in list(steps)[:max_steps]:
+            context.assert_not_cancelled()
             if not step.tool or step.tool == "recipe_run":
                 continue
             step_args = _recipe_step_args(step.args, inputs)
@@ -2885,14 +2961,15 @@ def _recipe_run(arguments: dict[str, Any], context: ToolContext) -> ToolResult:
     fallback_ok = True
     if not primary_ok and recipe.fallback_steps:
         fallback_ok = run_steps(recipe.fallback_steps)
-    ok = primary_ok or fallback_ok
+    steps_ok = primary_ok or fallback_ok
+    verification = _verify_recipe(recipe, inputs, context, tool_registry)
+    observations.append(verification)
+    ok = steps_ok and bool(verification.get("ok"))
     final_observation = (
         str(observations[-1]["message"]) if observations else recipe.description
     )
-    if recipe.done_condition:
-        final_observation = (
-            f"{final_observation} Done condition: {recipe.done_condition}"
-        )
+    if not ok and recipe.metadata.get("failure_message"):
+        final_observation = str(recipe.metadata["failure_message"])
     return ToolResult(
         ok,
         final_observation,
@@ -2901,10 +2978,62 @@ def _recipe_run(arguments: dict[str, Any], context: ToolContext) -> ToolResult:
             "service": recipe.service,
             "done_condition": recipe.done_condition,
             "verification_tool": recipe.verification_tool,
+            "verified": bool(verification.get("ok")),
             "observations": observations,
         },
-        continue_planning=ok,
+        continue_planning=not ok,
     )
+
+
+def _verify_recipe(
+    recipe: Any,
+    inputs: dict[str, Any],
+    context: ToolContext,
+    tool_registry: ToolRegistry,
+) -> dict[str, Any]:
+    if not recipe.verification_tool:
+        return {
+            "tool": "recipe_verification",
+            "ok": True,
+            "message": "Recipe does not declare a verification tool.",
+            "verification_unavailable": True,
+        }
+    context.assert_not_cancelled()
+    args = _recipe_step_args(
+        recipe.metadata.get("verification_args", {})
+        if isinstance(recipe.metadata, dict)
+        else {},
+        inputs,
+    )
+    tool = tool_registry.get(recipe.verification_tool)
+    if tool is None:
+        return {
+            "tool": recipe.verification_tool,
+            "ok": False,
+            "message": "Verification tool is not available.",
+        }
+    try:
+        result = tool_registry.execute_approved(recipe.verification_tool, args, context)
+    except Exception as exc:
+        result = ToolResult(False, _human_tool_error(str(exc)))
+    verified = bool(result.ok)
+    if recipe.metadata.get("verification_requires_payload_key") and isinstance(
+        result.payload, dict
+    ):
+        verified = bool(
+            result.payload.get(recipe.metadata["verification_requires_payload_key"])
+        )
+    observation = {
+        "tool": recipe.verification_tool,
+        "arguments": args,
+        "ok": verified,
+        "message": result.message,
+        "payload": result.payload,
+        "done_condition": recipe.done_condition,
+    }
+    if context.session_state is not None:
+        context.session_state["last_verification"] = observation
+    return observation
 
 
 def _watch_change(arguments: dict[str, Any], context: ToolContext) -> ToolResult:
@@ -2997,6 +3126,7 @@ def _remember_media(
         "browser": browser,
         "url": f"https://open.spotify.com/search/{quote_plus(query)}",
     }
+    context.session_state["last_media_target"] = context.session_state["last_media"]
 
 
 def _remember_browser(
@@ -3011,6 +3141,18 @@ def _remember_browser(
     context.session_state["last_opened_url"] = url
     context.session_state["current_browser_task"] = current_task or url
     context.session_state["last_browser"] = browser
+    context.session_state["active_tab"] = {"browser": browser, "url": url}
+
+
+def _remember_selection(context: ToolContext, payload: Any | None) -> None:
+    if context.session_state is None or not isinstance(payload, dict):
+        return
+    context.session_state["last_selected_element"] = {
+        "label": payload.get("label") or "",
+        "role": payload.get("role") or "",
+        "tag": payload.get("tag") or "",
+        "url": payload.get("url") or "",
+    }
 
 
 def _friendly_opened_url(url: str, browser: str | None = None) -> str:

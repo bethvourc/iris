@@ -202,6 +202,29 @@ def build_parser() -> argparse.ArgumentParser:
     browser_sub.add_parser("tabs", help="List CDP Chrome tabs").set_defaults(
         func=cmd_browser_tabs
     )
+    browser_sub.add_parser(
+        "current", help="Show the current CDP Chrome tab"
+    ).set_defaults(func=cmd_browser_current)
+
+    controls = subparsers.add_parser(
+        "controls", help="Inspect and operate native macOS UI through Accessibility"
+    )
+    controls_sub = controls.add_subparsers(dest="controls_command", required=True)
+    controls_sub.add_parser("apps", help="List visible apps and windows").set_defaults(
+        func=cmd_controls_apps
+    )
+    controls_inspect = controls_sub.add_parser(
+        "inspect", help="Inspect the focused app Accessibility tree"
+    )
+    controls_inspect.add_argument("--max-depth", type=int, default=3)
+    controls_inspect.add_argument("--max-items", type=int, default=120)
+    controls_inspect.set_defaults(func=cmd_controls_inspect)
+    controls_find = controls_sub.add_parser("find", help="Find a UI element")
+    controls_find.add_argument("description")
+    controls_find.set_defaults(func=cmd_controls_find)
+    controls_click = controls_sub.add_parser("click", help="Click a UI element")
+    controls_click.add_argument("description")
+    controls_click.set_defaults(func=cmd_controls_click)
 
     start = subparsers.add_parser("start", help="Start the interactive Iris session")
     start.add_argument(
@@ -269,6 +292,24 @@ def build_parser() -> argparse.ArgumentParser:
     )
     evals_run.add_argument("--output", default=None)
     evals_run.set_defaults(func=cmd_evals_run)
+
+    recipes = subparsers.add_parser("recipes", help="Inspect and run action recipes")
+    recipes_sub = recipes.add_subparsers(dest="recipes_command", required=True)
+    recipes_sub.add_parser("list", help="List available recipes").set_defaults(
+        func=cmd_recipes_list
+    )
+    recipes_show = recipes_sub.add_parser("show", help="Show one recipe")
+    recipes_show.add_argument("recipe_name")
+    recipes_show.set_defaults(func=cmd_recipes_show)
+    recipes_run = recipes_sub.add_parser("run", help="Run a recipe through Iris tools")
+    recipes_run.add_argument("recipe_name")
+    recipes_run.add_argument(
+        "--input",
+        action="append",
+        default=[],
+        help="Recipe input as key=value. Can be passed multiple times.",
+    )
+    recipes_run.set_defaults(func=cmd_recipes_run)
 
     plugins = subparsers.add_parser(
         "plugins", help="Inspect and configure Iris plugins"
@@ -964,6 +1005,49 @@ def cmd_browser_tabs(args: argparse.Namespace) -> int:
     return 0 if result.ok else 1
 
 
+def cmd_browser_current(args: argparse.Namespace) -> int:
+    from iris.browser_cdp import ChromeCDPBackend
+
+    result = ChromeCDPBackend(auto_start=True).current_page()
+    _print_json({"ok": result.ok, "message": result.detail, "payload": result.payload})
+    return 0 if result.ok else 1
+
+
+def cmd_controls_apps(args: argparse.Namespace) -> int:
+    from iris.accessibility_backend import AccessibilityBackend
+
+    result = AccessibilityBackend().list_apps_windows()
+    _print_json({"ok": result.ok, "message": result.detail, "payload": result.payload})
+    return 0 if result.ok else 1
+
+
+def cmd_controls_inspect(args: argparse.Namespace) -> int:
+    from iris.accessibility_backend import AccessibilityBackend
+
+    result = AccessibilityBackend().inspect_focused_app(
+        max_depth=args.max_depth,
+        max_items=args.max_items,
+    )
+    _print_json({"ok": result.ok, "message": result.detail, "payload": result.payload})
+    return 0 if result.ok else 1
+
+
+def cmd_controls_find(args: argparse.Namespace) -> int:
+    from iris.accessibility_backend import AccessibilityBackend
+
+    result = AccessibilityBackend().find_element(args.description)
+    _print_json({"ok": result.ok, "message": result.detail, "payload": result.payload})
+    return 0 if result.ok else 1
+
+
+def cmd_controls_click(args: argparse.Namespace) -> int:
+    from iris.accessibility_backend import AccessibilityBackend
+
+    result = AccessibilityBackend().click_element(args.description)
+    _print_json({"ok": result.ok, "message": result.detail, "payload": result.payload})
+    return 0 if result.ok else 1
+
+
 def cmd_start(args: argparse.Namespace) -> int:
     from iris.voice import VoiceSession
 
@@ -1125,6 +1209,64 @@ def cmd_evals_run(args: argparse.Namespace) -> int:
     return 0 if all(result.passed for result in results) else 1
 
 
+def cmd_recipes_list(args: argparse.Namespace) -> int:
+    from iris.recipes import ActionRecipeRegistry
+
+    config = _config(args)
+    recipes = ActionRecipeRegistry.default(config.project_root)
+    _print_json(recipes.schemas())
+    return 0
+
+
+def cmd_recipes_show(args: argparse.Namespace) -> int:
+    from iris.recipes import ActionRecipeRegistry
+
+    config = _config(args)
+    recipe = ActionRecipeRegistry.default(config.project_root).get(args.recipe_name)
+    if recipe is None:
+        print("Recipe not found.", file=sys.stderr)
+        return 1
+    _print_json(recipe.schema())
+    return 0
+
+
+def cmd_recipes_run(args: argparse.Namespace) -> int:
+    from iris.tools import ToolContext, ToolRegistry
+
+    (
+        config,
+        safety_gate,
+        perception,
+        controller,
+        openai_client,
+        google_vision,
+        router,
+    ) = _runtime(args)
+    inputs = _parse_key_value_args(args.input)
+    registry = ToolRegistry.default()
+    tool_context = ToolContext(
+        controller=controller,
+        perception=perception,
+        safety_gate=safety_gate,
+        openai_client=openai_client,
+        google_vision=google_vision,
+        computer=router.agent_executor.computer_backend,
+        screen_awareness=router.screen_awareness,
+        computer_use_runner=router.agent_executor.computer_use_runner,
+        session_state={},
+        recipes=router.agent_executor.recipes,
+        config=config,
+        approved_tool_call=True,
+    )
+    result = registry.execute_approved(
+        "recipe_run",
+        {"recipe_name": args.recipe_name, "inputs": inputs},
+        tool_context,
+    )
+    _print_json({"ok": result.ok, "message": result.message, "payload": result.payload})
+    return 0 if result.ok else 1
+
+
 def cmd_plugins_list(args: argparse.Namespace) -> int:
     config = _config(args)
     with open_state(config) as db:
@@ -1237,6 +1379,15 @@ def _set_plugin(args: argparse.Namespace, enabled: bool) -> int:
         )
     _print_json({"ok": ok, "plugin_id": args.plugin_id, "enabled": enabled})
     return 0 if ok else 1
+
+
+def _parse_key_value_args(items: list[str]) -> dict[str, str]:
+    values: dict[str, str] = {}
+    for item in items:
+        key, sep, value = str(item).partition("=")
+        if sep and key.strip():
+            values[key.strip()] = value
+    return values
 
 
 def cmd_sessions_list(args: argparse.Namespace) -> int:

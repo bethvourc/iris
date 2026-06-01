@@ -186,7 +186,7 @@ class AgentExecutor:
         )
         self.max_steps = max(1, max_steps)
         self._conversation_history: list[dict[str, str]] = []
-        self._session_state: dict[str, Any] = {}
+        self._session_state: dict[str, Any] = _initial_session_state()
         self._current_cancellation_token: CancellationToken | None = None
 
     def set_screen_awareness(
@@ -197,7 +197,7 @@ class AgentExecutor:
 
     def reset(self) -> None:
         self._conversation_history.clear()
-        self._session_state.pop("pending_approval", None)
+        self._session_state = _initial_session_state()
 
     def cancel_current(self, reason: str = "Operation cancelled.") -> None:
         if self._current_cancellation_token is not None:
@@ -279,6 +279,7 @@ class AgentExecutor:
         token = cancellation_token or CancellationToken()
         self._current_cancellation_token = token
         self._session_state["current_user_request"] = user_request
+        self._session_state["last_goal"] = user_request
         try:
             for _step in range(self.max_steps):
                 token.throw_if_cancelled()
@@ -335,20 +336,20 @@ class AgentExecutor:
                     cancellation_token=token,
                 )
                 token.throw_if_cancelled()
-                observations.append(
-                    {
-                        "tool_name": plan.tool_name,
-                        "arguments": plan.arguments,
-                        "ok": result.ok,
-                        "message": result.message,
-                        "payload": result.payload,
-                        "expected_observation": plan.expected_observation,
-                        "done_condition": plan.done_condition,
-                        "post_action_screen": self._screen_context_summary()
-                        if result.ok or result.continue_planning
-                        else None,
-                    }
-                )
+                observation = {
+                    "tool_name": plan.tool_name,
+                    "arguments": plan.arguments,
+                    "ok": result.ok,
+                    "message": result.message,
+                    "payload": result.payload,
+                    "expected_observation": plan.expected_observation,
+                    "done_condition": plan.done_condition,
+                    "post_action_screen": self._screen_context_summary()
+                    if result.ok or result.continue_planning
+                    else None,
+                }
+                observations.append(observation)
+                _update_session_from_observation(self._session_state, observation)
                 token.throw_if_cancelled()
                 if result.continue_planning:
                     continue
@@ -647,20 +648,16 @@ Rules:
 - available_connectors tells you which app/service manifests exist, whether they are enabled/configured, and which generic tools they expose.
 - If session_context.state.last_approved_tool_observation exists, treat it as the latest observation from the approved action. Use it to answer or choose a non-duplicate next verification step; do not repeat the same approved read/open tool unless the observation is clearly insufficient.
 - If a connector is disabled or missing credentials, use integration_status or explain the setup instead of pretending it works.
-- Prefer: browser_ensure_runtime/browser_open/browser_tabs/browser_current_page/browser_get_dom/browser_click_element/browser_extract, app_windows/app_inspect/app_find_element/app_click_element/app_menu_select/app_hotkey, screen_describe/screen_find_element/screen_click_element, audio_current_media/audio_explain_current_song, media_search/media_play/media_pause, app_volume_set, connector_list, integration_status, task_start_background/task_status, calendar_find_event, reminder_create, message_send, gmail_create_draft, knowledge_search/machine_context/file_find/file_open/file_rename/workflow_run/recipe_run.
+- Prefer generic tools: browser_ensure_runtime/browser_open/browser_tabs/browser_current_page/browser_get_dom/browser_focus_element/browser_click_element/browser_type_into/browser_submit/browser_extract, app_windows/app_inspect/app_find_element/app_click_element/app_menu_select/app_type_text/app_hotkey, screen_describe/screen_find_element/screen_click_element, audio_current_media/audio_explain_current_song, media_search/media_play/media_pause, app_volume_set, connector_list, integration_status, task_start_background/task_status, calendar_find_event, reminder_create, message_send, gmail_create_draft, knowledge_search/machine_context/file_find/file_open/file_rename/workflow_run/recipe_run.
 - Use live_screen_context as current state, but call describe_screen for current-screen/current-tab questions.
 - Use knowledge_search when the user asks what Iris knows/remembers from local notes, docs, project context, prior logs, personal wiki, or ingested files.
-- For media requests such as playing music, prefer media_play or media_search over open_app. Do not use recipe_run for ordinary music playback unless media_play fails and the recipe is the only available fallback.
-- For YouTube or "the video on my screen", use media_play or browser_play_media with service="youtube". If the user says play the current video, do not ask for a title; play the current browser media.
+- For media requests such as playing music or playing the current browser video, use media_play/media_search or a matching recipe. Do not use open_app for media playback.
 - For "turn it down in Spotify" or similar per-app volume requests, use app_volume_set before set_volume.
 - For larger goals that should keep working after the conversation, use task_start_background and include a concrete goal.
 - For "is X connected/configured", use integration_status.
 - For calendar/reminder actions, use calendar_find_event or reminder_create; these may require approval because they touch private data or create records.
-- For iMessage, SMS, Messages, or "text Beth" requests, use message_send only when you have both recipient and exact body. If either is missing, ask a final_answer clarification. Do not use computer_use for Messages unless message_send fails.
-- For dashboards where the user asks for a value, do not stop after browser_open. After opening or if the page is already open, use browser_extract or screen_describe to read the current dashboard. If credentials are required, ask the user to sign in manually.
-- For Stripe sales/revenue checks, use recipe_run with recipe_name="stripe_revenue_check". It will request approval because the recipe is private. Never handle credentials; ask the user to sign in manually if needed.
-- For RevenueCat sales/revenue checks, including aliases like "revenue cat", "revenue card", or "revenue cut", use recipe_run with recipe_name="revenuecat_revenue_check". It will request approval because the recipe is private. Never handle credentials; ask the user to sign in manually if needed.
-- For Gmail draft requests, use gmail_create_draft when the user wants the draft created in Gmail. Use draft_email only when they ask for a local draft or when the recipient/body is incomplete. If the user says "create the draft" after a local draft, use gmail_create_draft with the previous draft context.
+- For private dashboards, messages, inboxes, calendars, and account pages, use a matching recipe or generic private tool and request approval before reading or writing private data. Never handle credentials; ask the user to sign in manually if needed.
+- For email draft requests, use gmail_create_draft when the user wants the draft created in the browser. Use draft_email only when they ask for a local draft or when the recipient/body is incomplete. If the user says "create the draft" after a local draft, use gmail_create_draft with the previous draft context.
 - For renaming files or folders, use file_rename. If the user refers to a recently listed/found item, pass that phrase in target and the requested new name in new_name; the tool can resolve it from session context and will ask approval.
 - If the user says "play it", "click it", "do it", or otherwise refers to a previous media/search action, use media_play or the relevant browser/screen tool instead of repeating the search.
 - For browser navigation, use browser_open with new_tab=false unless the user explicitly asks for a new tab.
@@ -676,6 +673,58 @@ Rules:
 - Do not claim an action was done unless you call a tool.
 - Do not request destructive, payment, credential, security, or sending actions without approval.
 - Keep final spoken_response conversational and human. It should feel spoken, specific, and alive, not like a generic support bot."""
+
+
+def _initial_session_state() -> dict[str, Any]:
+    return {
+        "active_app": "",
+        "active_tab": {},
+        "last_goal": "",
+        "last_selected_element": {},
+        "last_media_target": {},
+        "last_file_target": "",
+        "last_verification": {},
+    }
+
+
+def _update_session_from_observation(
+    session_state: dict[str, Any], observation: dict[str, Any]
+) -> None:
+    payload = observation.get("payload")
+    if not isinstance(payload, dict):
+        return
+    tool_name = str(observation.get("tool_name") or "")
+    if tool_name.startswith("browser_"):
+        title = str(payload.get("title") or "")
+        url = str(payload.get("url") or payload.get("last_opened_url") or "")
+        if title or url:
+            session_state["active_tab"] = {"title": title, "url": url}
+    if tool_name in {"browser_click_element", "browser_focus_element"}:
+        session_state["last_selected_element"] = {
+            "label": payload.get("label") or "",
+            "role": payload.get("role") or "",
+            "tag": payload.get("tag") or "",
+            "url": payload.get("url") or "",
+        }
+    if tool_name.startswith("app_"):
+        app = str(payload.get("app") or "")
+        if app:
+            session_state["active_app"] = app
+    if tool_name.startswith("media_") or tool_name.startswith("audio_"):
+        session_state["last_media_target"] = payload
+    if tool_name.startswith("file_"):
+        if payload.get("new_path"):
+            session_state["last_file_target"] = str(payload["new_path"])
+        elif payload.get("path"):
+            session_state["last_file_target"] = str(payload["path"])
+    if observation.get("done_condition") or "verified" in payload:
+        session_state["last_verification"] = {
+            "tool_name": tool_name,
+            "ok": observation.get("ok"),
+            "message": observation.get("message"),
+            "done_condition": observation.get("done_condition"),
+            "payload": payload,
+        }
 
 
 def _planner_result_from_json(text: str) -> PlannerResult:
