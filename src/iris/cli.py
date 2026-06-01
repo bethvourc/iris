@@ -34,6 +34,7 @@ from iris.safety import AutomationPaused, SafetyGate
 from iris.sessions import get_session, list_sessions
 from iris.state import ensure_state, open_state
 from iris.tasks import get_task, list_tasks, request_cancel, resume_task
+from iris.tracing import latest_run_id, summarize_run_trace
 from iris.watchers import add_watch, list_watches, run_watch_once
 from iris.workflows import list_workflows, run_workflow
 
@@ -426,6 +427,19 @@ def build_parser() -> argparse.ArgumentParser:
     audit = subparsers.add_parser("audit", help="Show audit trail")
     audit.add_argument("--limit", type=int, default=25)
     audit.set_defaults(func=cmd_audit)
+    diagnostics = subparsers.add_parser(
+        "diagnostics", help="Inspect run timing and response-loop diagnostics"
+    )
+    diagnostics_sub = diagnostics.add_subparsers(
+        dest="diagnostics_command", required=True
+    )
+    diagnostics_last = diagnostics_sub.add_parser(
+        "last-run", help="Show timing details for the latest traced run"
+    )
+    diagnostics_last.add_argument(
+        "--run-id", default=None, help="Inspect a specific run instead of the latest"
+    )
+    diagnostics_last.set_defaults(func=cmd_diagnostics_last_run)
     rollback = subparsers.add_parser("rollback", help="Show rollback records for a run")
     rollback.add_argument("run_id")
     rollback.set_defaults(func=cmd_rollback)
@@ -1572,6 +1586,17 @@ def cmd_audit(args: argparse.Namespace) -> int:
     config = _config(args)
     with open_state(config) as db:
         _print_json(list_audit(db, args.limit))
+    return 0
+
+
+def cmd_diagnostics_last_run(args: argparse.Namespace) -> int:
+    config = _config(args)
+    with open_state(config) as db:
+        run_id = args.run_id or latest_run_id(db)
+        if run_id is None:
+            _print_json({"ok": False, "message": "No traced runs found."})
+            return 1
+        _print_json(summarize_run_trace(db, run_id))
     return 0
 
 

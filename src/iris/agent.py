@@ -3,8 +3,9 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 import json
 import re
+import time
 import uuid
-from typing import Any, Literal
+from typing import Any, Callable, Literal, TypeVar
 
 from iris.actions import RiskLevel
 from iris.approvals import (
@@ -25,6 +26,10 @@ from iris.recipes import ActionRecipeRegistry
 from iris.safety import AutomationPaused, CancellationToken, SafetyGate
 from iris.state import open_state
 from iris.tools import ApprovalRequired, ToolContext, ToolRegistry, ToolResult
+from iris.tracing import now_iso, record_trace_event
+
+
+T = TypeVar("T")
 
 
 PlannerType = Literal["tool_call", "final_answer", "approval_request"]
@@ -188,6 +193,8 @@ class AgentExecutor:
         self._conversation_history: list[dict[str, str]] = []
         self._session_state: dict[str, Any] = {}
         self._current_cancellation_token: CancellationToken | None = None
+        self._current_run_id: str | None = None
+        self._current_status: dict[str, Any] = {}
 
     def set_screen_awareness(
         self, screen_awareness: ScreenAwarenessService | None
@@ -202,6 +209,17 @@ class AgentExecutor:
     def cancel_current(self, reason: str = "Operation cancelled.") -> None:
         if self._current_cancellation_token is not None:
             self._current_cancellation_token.cancel(reason)
+        self._set_current_status(stage="cancelling", reason=reason)
+        if self._current_run_id is not None:
+            self._trace_event(
+                self._current_run_id,
+                "cancellation_requested",
+                status="cancelled",
+                details={"reason": reason},
+            )
+
+    def current_status(self) -> dict[str, Any]:
+        return dict(self._current_status)
 
     def approve_pending(self) -> AgentRunResult:
         pending = self._session_state.get("pending_approval")
@@ -275,22 +293,59 @@ class AgentExecutor:
         cancellation_token: CancellationToken | None = None,
     ) -> AgentRunResult:
         run_id = uuid.uuid4().hex
+        run_started_at = time.monotonic()
         observations: list[dict[str, Any]] = []
         token = cancellation_token or CancellationToken()
         self._current_cancellation_token = token
+        self._current_run_id = run_id
+        self._set_current_status(
+            run_id=run_id,
+            stage="starting",
+            request=user_request,
+        )
         self._session_state["current_user_request"] = user_request
+        self._trace_event(
+            run_id,
+            "run_started",
+            details={"request_preview": user_request[:220]},
+        )
         try:
             for _step in range(self.max_steps):
                 token.throw_if_cancelled()
-                plan = self.planner.plan(
-                    user_request=user_request,
-                    tool_schemas=self.registry.schemas(),
-                    action_recipes=self.recipes.schemas(),
-                    screen_context=self._screen_context_summary(),
-                    conversation_history=self._conversation_history,
-                    observations=observations,
-                    session_state=self._session_state,
-                    connector_context=self._connector_context(),
+                screen_context = self._trace_call(
+                    run_id,
+                    "screen_context",
+                    "perception",
+                    self._screen_context_summary,
+                )
+                connector_context = self._trace_call(
+                    run_id,
+                    "connector_context",
+                    "connectors",
+                    self._connector_context,
+                )
+                plan = self._trace_call(
+                    run_id,
+                    "planner",
+                    "agent",
+                    lambda: self.planner.plan(
+                        user_request=user_request,
+                        tool_schemas=self.registry.schemas(),
+                        action_recipes=self.recipes.schemas(),
+                        screen_context=screen_context,
+                        conversation_history=self._conversation_history,
+                        observations=observations,
+                        session_state=self._session_state,
+                        connector_context=connector_context,
+                    ),
+                    details={"step": _step + 1, "observations": len(observations)},
+                )
+                self._set_current_status(
+                    run_id=run_id,
+                    stage="executing_plan",
+                    request=user_request,
+                    tool_name=plan.tool_name,
+                    plan_type=plan.type,
                 )
                 token.throw_if_cancelled()
                 if plan.type == "final_answer":
@@ -305,7 +360,11 @@ class AgentExecutor:
                         output_value={"message": message},
                     )
                     self._remember_turn(user_request, message)
-                    return AgentRunResult(True, message, run_id=run_id)
+                    return self._complete_run(
+                        run_id,
+                        run_started_at,
+                        AgentRunResult(True, message, run_id=run_id),
+                    )
                 if plan.type == "approval_request":
                     message = self._create_approval(
                         run_id=run_id,
@@ -320,14 +379,24 @@ class AgentExecutor:
                         output_value={"message": message},
                     )
                     self._remember_turn(user_request, message)
-                    return AgentRunResult(False, message, run_id=run_id)
+                    return self._complete_run(
+                        run_id,
+                        run_started_at,
+                        AgentRunResult(False, message, run_id=run_id),
+                        status="approval_required",
+                    )
                 if plan.type != "tool_call" or not plan.tool_name:
                     message = (
                         plan.spoken_response
                         or "I could not decide the next agent action."
                     )
                     self._remember_turn(user_request, message)
-                    return AgentRunResult(False, message, run_id=run_id)
+                    return self._complete_run(
+                        run_id,
+                        run_started_at,
+                        AgentRunResult(False, message, run_id=run_id),
+                        status="error",
+                    )
                 result = self._execute_tool(
                     run_id,
                     plan.tool_name,
@@ -344,7 +413,13 @@ class AgentExecutor:
                         "payload": result.payload,
                         "expected_observation": plan.expected_observation,
                         "done_condition": plan.done_condition,
-                        "post_action_screen": self._screen_context_summary()
+                        "post_action_screen": self._trace_call(
+                            run_id,
+                            "post_action_screen_context",
+                            "perception",
+                            self._screen_context_summary,
+                            details={"tool_name": plan.tool_name},
+                        )
                         if result.ok or result.continue_planning
                         else None,
                     }
@@ -385,8 +460,13 @@ class AgentExecutor:
                         },
                         error=None if result.ok else result.message,
                     )
-                    return AgentRunResult(
-                        result.ok, result.message, result.payload, run_id=run_id
+                    return self._complete_run(
+                        run_id,
+                        run_started_at,
+                        AgentRunResult(
+                            result.ok, result.message, result.payload, run_id=run_id
+                        ),
+                        status="ok" if result.ok else "error",
                     )
             message = (
                 observations[-1]["message"]
@@ -401,9 +481,20 @@ class AgentExecutor:
                 error=str(message),
             )
             self._remember_turn(user_request, str(message))
-            return AgentRunResult(False, str(message), run_id=run_id)
+            return self._complete_run(
+                run_id,
+                run_started_at,
+                AgentRunResult(False, str(message), run_id=run_id),
+                status="error",
+            )
         except AutomationPaused as exc:
             message = str(exc) or "Operation cancelled."
+            self._trace_event(
+                run_id,
+                "cancellation_observed",
+                status="cancelled",
+                details={"message": message},
+            )
             self._audit_agent_event(
                 run_id=run_id,
                 result="cancelled",
@@ -412,10 +503,28 @@ class AgentExecutor:
                 error=message,
             )
             self._remember_turn(user_request, message)
-            return AgentRunResult(False, message, run_id=run_id)
+            return self._complete_run(
+                run_id,
+                run_started_at,
+                AgentRunResult(False, message, run_id=run_id),
+                status="cancelled",
+                error=message,
+            )
+        except Exception as exc:
+            message = str(exc)
+            self._complete_run(
+                run_id,
+                run_started_at,
+                AgentRunResult(False, message, run_id=run_id),
+                status="error",
+                error=message,
+            )
+            raise
         finally:
             if self._current_cancellation_token is token:
                 self._current_cancellation_token = None
+            if self._current_run_id == run_id:
+                self._current_run_id = None
 
     def _execute_tool(
         self,
@@ -443,11 +552,33 @@ class AgentExecutor:
             approved_tool_call=approved,
             cancellation_token=cancellation_token,
         )
+        started_at = time.monotonic()
+        self._set_current_status(
+            run_id=run_id,
+            stage="executing_tool",
+            tool_name=tool_name,
+            approved=approved,
+        )
+        self._trace_event(
+            run_id,
+            "tool_started",
+            component="tool",
+            details={"tool_name": tool_name, "approved": approved},
+        )
         try:
             result = (
                 self.registry.execute_approved(tool_name, arguments, context)
                 if approved
                 else self.registry.execute(tool_name, arguments, context)
+            )
+            self._trace_event(
+                run_id,
+                "tool_finished",
+                component="tool",
+                status="ok" if result.ok else "error",
+                duration_ms=_elapsed_ms(started_at),
+                error=None if result.ok else result.message,
+                details={"tool_name": tool_name, "approved": approved},
             )
             self._audit_tool(
                 run_id=run_id,
@@ -466,6 +597,14 @@ class AgentExecutor:
                 arguments=exc.arguments,
                 reason=exc.reason,
             )
+            self._trace_event(
+                run_id,
+                "tool_finished",
+                component="tool",
+                status="approval_required",
+                duration_ms=_elapsed_ms(started_at),
+                details={"tool_name": tool_name, "approved": approved},
+            )
             self._audit_tool(
                 run_id=run_id,
                 tool=tool_name,
@@ -475,8 +614,29 @@ class AgentExecutor:
                 output_value={"message": message},
             )
             return ToolResult(False, message)
+        except AutomationPaused as exc:
+            message = str(exc) or "Operation cancelled."
+            self._trace_event(
+                run_id,
+                "tool_finished",
+                component="tool",
+                status="cancelled",
+                duration_ms=_elapsed_ms(started_at),
+                error=message,
+                details={"tool_name": tool_name, "approved": approved},
+            )
+            raise
         except Exception as exc:
             message = _human_tool_error(str(exc))
+            self._trace_event(
+                run_id,
+                "tool_finished",
+                component="tool",
+                status="error",
+                duration_ms=_elapsed_ms(started_at),
+                error=message,
+                details={"tool_name": tool_name, "approved": approved},
+            )
             self._audit_tool(
                 run_id=run_id,
                 tool=tool_name,
@@ -617,6 +777,95 @@ class AgentExecutor:
         except Exception:
             return
 
+    def _trace_event(
+        self,
+        run_id: str,
+        event_name: str,
+        *,
+        component: str = "agent",
+        status: str = "ok",
+        duration_ms: float | None = None,
+        error: str | None = None,
+        details: dict[str, Any] | None = None,
+    ) -> None:
+        if self.config is None:
+            return
+        try:
+            with open_state(self.config) as db:
+                record_trace_event(
+                    db,
+                    run_id=run_id,
+                    event_name=event_name,
+                    component=component,
+                    status=status,
+                    finished_at=now_iso() if duration_ms is not None else None,
+                    duration_ms=duration_ms,
+                    error=error,
+                    details=details,
+                )
+        except Exception:
+            return
+
+    def _trace_call(
+        self,
+        run_id: str,
+        event_name: str,
+        component: str,
+        call: Callable[[], T],
+        *,
+        details: dict[str, Any] | None = None,
+    ) -> T:
+        started_at = time.monotonic()
+        self._set_current_status(
+            run_id=run_id,
+            stage=event_name,
+            component=component,
+        )
+        try:
+            value = call()
+        except Exception as exc:
+            self._trace_event(
+                run_id,
+                event_name,
+                component=component,
+                status="error",
+                duration_ms=_elapsed_ms(started_at),
+                error=str(exc),
+                details=details,
+            )
+            raise
+        self._trace_event(
+            run_id,
+            event_name,
+            component=component,
+            duration_ms=_elapsed_ms(started_at),
+            details=details,
+        )
+        return value
+
+    def _complete_run(
+        self,
+        run_id: str,
+        started_at: float,
+        result: AgentRunResult,
+        *,
+        status: str = "ok",
+        error: str | None = None,
+    ) -> AgentRunResult:
+        self._trace_event(
+            run_id,
+            "run_finished",
+            status=status,
+            duration_ms=_elapsed_ms(started_at),
+            error=error,
+            details={"ok": result.ok, "message_preview": result.message[:220]},
+        )
+        self._set_current_status()
+        return result
+
+    def _set_current_status(self, **status: Any) -> None:
+        self._current_status = {key: value for key, value in status.items() if value}
+
     def _remember_turn(self, user_request: str, response: str) -> None:
         self._conversation_history.append({"role": "user", "text": user_request})
         self._conversation_history.append({"role": "assistant", "text": response})
@@ -718,6 +967,10 @@ def _approval_matches_pending(
     details = approval_details(approval_row)
     stored_arguments = details.get("arguments")
     return not isinstance(stored_arguments, dict) or stored_arguments == arguments
+
+
+def _elapsed_ms(started_at: float) -> float:
+    return round((time.monotonic() - started_at) * 1000.0, 2)
 
 
 def _extract_json_object(text: str) -> dict[str, Any]:
