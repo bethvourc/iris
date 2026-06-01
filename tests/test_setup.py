@@ -66,7 +66,9 @@ def test_setup_skip_profile_confirms_inferred_profile(tmp_path: Path) -> None:
         assert has_user_profile(db) is True
 
 
-def test_init_does_not_prompt_when_non_interactive(monkeypatch, tmp_path: Path, capsys) -> None:
+def test_init_does_not_prompt_when_non_interactive(
+    monkeypatch, tmp_path: Path, capsys
+) -> None:
     monkeypatch.setattr("sys.stdin", SimpleNamespace(isatty=lambda: False))
     args = SimpleNamespace(project_root=str(tmp_path))
 

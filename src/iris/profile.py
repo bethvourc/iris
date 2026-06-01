@@ -42,7 +42,9 @@ def infer_system_profile() -> UserProfile:
     )
 
 
-def load_user_profile(config: IrisConfig, db: sqlite3.Connection | None = None) -> UserProfile:
+def load_user_profile(
+    config: IrisConfig, db: sqlite3.Connection | None = None
+) -> UserProfile:
     profile = infer_system_profile()
     if db is None:
         return profile

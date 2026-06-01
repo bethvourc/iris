@@ -107,7 +107,9 @@ def classify_action(action: LocalAction) -> SafetyDecision:
     text = f"{action.name} {action.description} {action.args}".lower()
     if name in BLOCKED_ACTION_NAMES:
         return SafetyDecision(RiskLevel.BLOCKED, f"{action.name} is blocked by default")
-    if name == "run_shell" and any(pattern in text for pattern in BLOCKED_SHELL_PATTERNS):
+    if name == "run_shell" and any(
+        pattern in text for pattern in BLOCKED_SHELL_PATTERNS
+    ):
         return SafetyDecision(RiskLevel.BLOCKED, "destructive shell command is blocked")
     if name in SENSITIVE_ACTION_NAMES:
         return SafetyDecision(RiskLevel.SENSITIVE, f"{action.name} is sensitive")
@@ -150,7 +152,9 @@ class SafetyGate:
             if not self._confirm(question):
                 raise PermissionError(f"User rejected action: {action.label()}")
         if decision.risk == RiskLevel.BLOCKED:
-            raise PermissionError(f"Blocked action: {action.label()} ({decision.reason})")
+            raise PermissionError(
+                f"Blocked action: {action.label()} ({decision.reason})"
+            )
         return decision
 
     @staticmethod

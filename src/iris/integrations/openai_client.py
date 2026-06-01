@@ -38,7 +38,9 @@ def _get(value: Any, key: str, default: Any = None) -> Any:
 
 
 class OpenAIResponsesClient:
-    def __init__(self, config: IrisConfig, user_profile: UserProfile | None = None) -> None:
+    def __init__(
+        self, config: IrisConfig, user_profile: UserProfile | None = None
+    ) -> None:
         self.config = config
         self.user_profile = user_profile or infer_system_profile()
         self._client = None
@@ -238,6 +240,10 @@ class _ResponsesHTTPResource:
                 return json.loads(response.read().decode("utf-8"))
         except HTTPError as exc:
             detail = exc.read().decode("utf-8", errors="replace")
-            raise RuntimeError(f"OpenAI Responses API failed: {exc.code} {detail}") from exc
+            raise RuntimeError(
+                f"OpenAI Responses API failed: {exc.code} {detail}"
+            ) from exc
         except URLError as exc:
-            raise RuntimeError(f"OpenAI Responses API connection failed: {exc}") from exc
+            raise RuntimeError(
+                f"OpenAI Responses API connection failed: {exc}"
+            ) from exc

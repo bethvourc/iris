@@ -448,9 +448,13 @@ class RealtimeSpeechSession:
         wake_detected = _contains_wake_word(lowered, self.config.wake_words)
         if self.wake_gated and wake_detected:
             self.awake = True
-            command = _strip_wake_words(transcript, self.config.wake_words).strip(" ,.!?")
+            command = _strip_wake_words(transcript, self.config.wake_words).strip(
+                " ,.!?"
+            )
             if not command:
-                self._respond_with_text(f"I'm here, {self.user_profile.preferred_name}.")
+                self._respond_with_text(
+                    f"I'm here, {self.user_profile.preferred_name}."
+                )
                 return
             transcript = command
             lowered = transcript.lower().strip()
@@ -464,7 +468,9 @@ class RealtimeSpeechSession:
         if not self._agent_lock.acquire(blocking=False):
             lowered = transcript.lower().strip(" \t\r\n.,!?")
             if _is_interrupt_command(lowered):
-                self.router.agent_executor.cancel_current("Operation cancelled by user.")
+                self.router.agent_executor.cancel_current(
+                    "Operation cancelled by user."
+                )
                 self.router.safety_gate.kill()
                 self._clear_pending_agent_texts()
                 print("iris> stopping current automation after the active step")
@@ -562,16 +568,16 @@ class RealtimeSpeechSession:
         self._send_json(
             {
                 "type": "response.create",
-            "response": {
-                "output_modalities": ["audio"],
-                "instructions": (
-                    "Speak only the local runtime result, but make it human. "
-                    "Use warm, relaxed phrasing; vary the wording; do not read raw paths, JSON, "
-                    "stack traces, or command syntax aloud. If something failed, say what happened "
-                    "plainly and what Iris is trying or needs next."
-                ),
-            },
-        }
+                "response": {
+                    "output_modalities": ["audio"],
+                    "instructions": (
+                        "Speak only the local runtime result, but make it human. "
+                        "Use warm, relaxed phrasing; vary the wording; do not read raw paths, JSON, "
+                        "stack traces, or command syntax aloud. If something failed, say what happened "
+                        "plainly and what Iris is trying or needs next."
+                    ),
+                },
+            }
         )
 
     def _mark_response_done(self) -> None:
@@ -591,7 +597,9 @@ class RealtimeSpeechSession:
     def _note_audio_output(self) -> None:
         with self._response_state_lock:
             self._assistant_response_active = True
-            self._last_response_started_at = self._last_response_started_at or time.monotonic()
+            self._last_response_started_at = (
+                self._last_response_started_at or time.monotonic()
+            )
             self._suppress_input_until = max(
                 self._suppress_input_until,
                 time.monotonic() + 2.5,
@@ -599,7 +607,10 @@ class RealtimeSpeechSession:
 
     def _input_should_be_muted(self) -> bool:
         with self._response_state_lock:
-            return self._assistant_response_active or time.monotonic() <= self._suppress_input_until
+            return (
+                self._assistant_response_active
+                or time.monotonic() <= self._suppress_input_until
+            )
 
     def _should_ignore_transcript(self, transcript: str) -> bool:
         normalized = _normalize_wake_text(transcript)
@@ -613,7 +624,9 @@ class RealtimeSpeechSession:
             suppress_until = self._suppress_input_until
         if active:
             return True
-        if time.monotonic() <= suppress_until and _similar_text(transcript, last_spoken):
+        if time.monotonic() <= suppress_until and _similar_text(
+            transcript, last_spoken
+        ):
             return True
         return False
 
@@ -727,7 +740,9 @@ class VoiceSession:
         print(f"Toggle hotkey: {self.config.toggle_hotkey}")
         print(f"Kill hotkey: {self.config.kill_hotkey}")
         if not hotkeys_enabled:
-            print("Global hotkeys unavailable; use terminal commands: kill, resume, quit.")
+            print(
+                "Global hotkeys unavailable; use terminal commands: kill, resume, quit."
+            )
         if wake_mode:
             print(
                 "Live speech-to-speech wake mode enabled. Say one of: "
@@ -736,7 +751,9 @@ class VoiceSession:
             self._run_realtime_speech_loop(wake_gated=True)
             if self._stop.is_set():
                 return
-            print("Type a message and press Return. Type /listen for backup STT, /reset to reset chat.")
+            print(
+                "Type a message and press Return. Type /listen for backup STT, /reset to reset chat."
+            )
         else:
             print(
                 "Type a message and press Return. Type /live or /wake for live "
@@ -779,7 +796,9 @@ class VoiceSession:
             if event == "toggle":
                 self._handle_voice_once(self.config.listen_seconds)
             elif event == "kill":
-                self.router.agent_executor.cancel_current("Operation cancelled by hotkey.")
+                self.router.agent_executor.cancel_current(
+                    "Operation cancelled by hotkey."
+                )
                 print("[kill switch engaged]")
 
     def _handle_voice_once(self, seconds: float | None = None) -> None:
@@ -790,9 +809,13 @@ class VoiceSession:
             if not self.config.has_openai:
                 print("iris error> OPENAI_API_KEY is required for voice input.")
                 return
-            listen_seconds = seconds if seconds is not None else self.config.listen_seconds
+            listen_seconds = (
+                seconds if seconds is not None else self.config.listen_seconds
+            )
             print(f"iris> listening for {listen_seconds:.1f} seconds...")
-            user_text = RealtimeAudioClient(self.config).transcribe_once(seconds=listen_seconds)
+            user_text = RealtimeAudioClient(self.config).transcribe_once(
+                seconds=listen_seconds
+            )
             print(f"you said> {user_text}")
             if not user_text:
                 print("iris error> no speech detected")
@@ -877,8 +900,18 @@ def _spoken_runtime_result(text: str) -> str:
         return "That needs approval. Say approve to continue."
     cleaned = re.sub(r"`\./iris approvals`", "the approvals command", cleaned)
     cleaned = re.sub(r"`([^`]+)`", r"\1", cleaned)
-    cleaned = re.sub(r"\brun\s+\./iris\s+\w+(?:\s+\w+)*", "use the matching Iris command", cleaned, flags=re.I)
-    cleaned = re.sub(r"opened\s+/Users/[^\s]+/Downloads\b", "opened your Downloads folder", cleaned, flags=re.I)
+    cleaned = re.sub(
+        r"\brun\s+\./iris\s+\w+(?:\s+\w+)*",
+        "use the matching Iris command",
+        cleaned,
+        flags=re.I,
+    )
+    cleaned = re.sub(
+        r"opened\s+/Users/[^\s]+/Downloads\b",
+        "opened your Downloads folder",
+        cleaned,
+        flags=re.I,
+    )
     cleaned = re.sub(r"/Users/[^\s]+", "that local path", cleaned)
     cleaned = cleaned.replace("OPENAI_API_KEY", "the OpenAI API key")
     return cleaned
@@ -898,12 +931,16 @@ def _select_input_device(sounddevice_module: Any) -> AudioDevice:
         device = devices[default_index]
         channels = _input_channels(device)
         if channels > 0:
-            return AudioDevice(default_index, str(device.get("name", default_index)), channels)
+            return AudioDevice(
+                default_index, str(device.get("name", default_index)), channels
+            )
     for index, device in enumerate(devices):
         channels = _input_channels(device)
         if channels > 0:
             return AudioDevice(index, str(device.get("name", index)), channels)
-    names = ", ".join(str(device.get("name", index)) for index, device in enumerate(devices))
+    names = ", ".join(
+        str(device.get("name", index)) for index, device in enumerate(devices)
+    )
     raise RuntimeError(
         "No microphone input device is available. macOS is reporting no input-capable audio devices. "
         "Connect or select a microphone in System Settings > Sound > Input, then restart Iris. "
@@ -926,9 +963,12 @@ def _is_filler_transcript(normalized: str) -> bool:
     if compact in {"um", "uh", "umm", "hmm", "mm", "yeah", "okay"}:
         return True
     words = compact.split()
-    return bool(words) and len(words) <= 3 and all(
-        word in {"um", "uh", "umm", "hmm", "mm", "like", "okay"}
-        for word in words
+    return (
+        bool(words)
+        and len(words) <= 3
+        and all(
+            word in {"um", "uh", "umm", "hmm", "mm", "like", "okay"} for word in words
+        )
     )
 
 

@@ -47,7 +47,9 @@ def create_approval(
     return approval_id
 
 
-def list_approvals(db: sqlite3.Connection, status: str = "pending") -> list[dict[str, Any]]:
+def list_approvals(
+    db: sqlite3.Connection, status: str = "pending"
+) -> list[dict[str, Any]]:
     rows = db.execute(
         """
         SELECT approval_id, run_id, action_name, risk, status, preview, created_at, expires_at, decided_at, details_json

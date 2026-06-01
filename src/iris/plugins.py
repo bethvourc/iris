@@ -24,7 +24,13 @@ BUILTIN_PLUGINS: tuple[PluginDescriptor, ...] = (
         "Browser Control",
         "computer",
         "Control and inspect browser tabs through generic browser tools.",
-        ("browser_open", "browser_current_page", "browser_extract", "browser_click", "browser_type"),
+        (
+            "browser_open",
+            "browser_current_page",
+            "browser_extract",
+            "browser_click",
+            "browser_type",
+        ),
     ),
     PluginDescriptor(
         "mac-apps",
@@ -80,7 +86,9 @@ def list_plugins(db: sqlite3.Connection) -> list[dict[str, Any]]:
         setting = settings.get(descriptor.plugin_id)
         item = asdict(descriptor)
         item["tools"] = list(descriptor.tools)
-        item["enabled"] = bool(setting["enabled"]) if setting else descriptor.enabled_by_default
+        item["enabled"] = (
+            bool(setting["enabled"]) if setting else descriptor.enabled_by_default
+        )
         item["configured"] = bool(setting["configured"]) if setting else True
         item["updated_at"] = setting["updated_at"] if setting else None
         item["health"] = "enabled" if item["enabled"] else "disabled"
@@ -138,4 +146,6 @@ def _ensure_builtin_rows(db: sqlite3.Connection) -> None:
 
 
 def _descriptor(plugin_id: str) -> PluginDescriptor | None:
-    return next((plugin for plugin in BUILTIN_PLUGINS if plugin.plugin_id == plugin_id), None)
+    return next(
+        (plugin for plugin in BUILTIN_PLUGINS if plugin.plugin_id == plugin_id), None
+    )

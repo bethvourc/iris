@@ -110,9 +110,13 @@ class MacController:
             LocalAction("open_url", {"url": url}, risk=RiskLevel.LOW_RISK)
         )
         result = run_command(["open", url], timeout=10)
-        return ActionResult("open_url", result.ok, result.stderr or result.stdout or f"opened {url}")
+        return ActionResult(
+            "open_url", result.ok, result.stderr or result.stdout or f"opened {url}"
+        )
 
-    def open_url_in_browser(self, url: str, browser: str = "Google Chrome") -> ActionResult:
+    def open_url_in_browser(
+        self, url: str, browser: str = "Google Chrome"
+    ) -> ActionResult:
         self.safety_gate.allow(
             LocalAction(
                 "open_url_in_browser",
@@ -122,7 +126,9 @@ class MacController:
         )
         result = run_command(["open", "-a", browser, url], timeout=10)
         if result.ok:
-            return ActionResult("open_url_in_browser", True, f"opened {url} in {browser}")
+            return ActionResult(
+                "open_url_in_browser", True, f"opened {url} in {browser}"
+            )
         fallback = self.open_url(url)
         if fallback.ok:
             return ActionResult(
@@ -131,7 +137,9 @@ class MacController:
                 f"opened {url} in the default browser",
                 fallback.payload,
             )
-        return ActionResult("open_url_in_browser", False, result.stderr or fallback.detail)
+        return ActionResult(
+            "open_url_in_browser", False, result.stderr or fallback.detail
+        )
 
     def browser_javascript(
         self,
@@ -147,7 +155,7 @@ class MacController:
         )
         osa = (
             f"tell application {applescript_string(browser)}\n"
-            "  if not (exists front window) then return \"no front window\"\n"
+            '  if not (exists front window) then return "no front window"\n'
             f"  execute active tab of front window javascript {applescript_string(script)}\n"
             "end tell"
         )
@@ -158,7 +166,9 @@ class MacController:
             result.stderr or result.stdout or "ran browser JavaScript",
         )
 
-    def browser_automation_available(self, browser: str = "Google Chrome") -> ActionResult:
+    def browser_automation_available(
+        self, browser: str = "Google Chrome"
+    ) -> ActionResult:
         if browser.lower() != "google chrome":
             return ActionResult(
                 "browser_automation_available",
@@ -179,7 +189,11 @@ class MacController:
                 "browser_automation_available",
                 False,
                 "Chrome automation is off, so I’ll use screen clicks instead.",
-                {"available": False, "browser": browser, "reason": "chrome_javascript_disabled"},
+                {
+                    "available": False,
+                    "browser": browser,
+                    "reason": "chrome_javascript_disabled",
+                },
             )
         return ActionResult(
             "browser_automation_available",
@@ -191,15 +205,17 @@ class MacController:
     def browser_current_page(self, browser: str = "Google Chrome") -> ActionResult:
         script = (
             f"tell application {applescript_string(browser)}\n"
-            "  if not (exists front window) then return \"\"\n"
+            '  if not (exists front window) then return ""\n'
             "  set pageTitle to title of active tab of front window\n"
             "  set pageUrl to URL of active tab of front window\n"
-            "  return pageTitle & \"\\n\" & pageUrl\n"
+            '  return pageTitle & "\\n" & pageUrl\n'
             "end tell"
         )
         result = run_osascript(script, timeout=8)
         if not result.ok:
-            return ActionResult("browser_current_page", False, _human_browser_error(result.stderr))
+            return ActionResult(
+                "browser_current_page", False, _human_browser_error(result.stderr)
+            )
         lines = result.stdout.splitlines()
         title = lines[0] if lines else ""
         url = lines[1] if len(lines) > 1 else ""
@@ -210,7 +226,9 @@ class MacController:
             {"title": title, "url": url, "browser": browser},
         )
 
-    def browser_navigate_current(self, url: str, browser: str = "Google Chrome") -> ActionResult:
+    def browser_navigate_current(
+        self, url: str, browser: str = "Google Chrome"
+    ) -> ActionResult:
         normalized_url = url
         self.safety_gate.allow(
             LocalAction(
@@ -242,9 +260,13 @@ class MacController:
                 f"opened {normalized_url} in {browser}",
                 fallback.payload,
             )
-        return ActionResult("browser_navigate_current", False, _human_browser_error(result.stderr))
+        return ActionResult(
+            "browser_navigate_current", False, _human_browser_error(result.stderr)
+        )
 
-    def browser_extract_text(self, browser: str = "Google Chrome", max_chars: int = 12000) -> ActionResult:
+    def browser_extract_text(
+        self, browser: str = "Google Chrome", max_chars: int = 12000
+    ) -> ActionResult:
         script = f"""
 (() => {{
   const root = document.querySelector('main') || document.body;
@@ -260,9 +282,13 @@ class MacController:
                 "I read the visible browser page.",
                 {"text": result.detail, "browser": browser},
             )
-        return ActionResult("browser_extract_text", False, _human_browser_error(result.detail))
+        return ActionResult(
+            "browser_extract_text", False, _human_browser_error(result.detail)
+        )
 
-    def browser_click_text(self, text: str, browser: str = "Google Chrome") -> ActionResult:
+    def browser_click_text(
+        self, text: str, browser: str = "Google Chrome"
+    ) -> ActionResult:
         script = r"""
 needle => {
   const wanted = (needle || '').toLowerCase();
@@ -278,12 +304,20 @@ needle => {
   return 'clicked';
 }
 """
-        result = self.browser_javascript(f"({script})({applescript_string(text)})", browser)
+        result = self.browser_javascript(
+            f"({script})({applescript_string(text)})", browser
+        )
         if result.ok and "clicked" in result.detail.lower():
-            return ActionResult("browser_click_text", True, f"clicked {text}", {"text": text})
+            return ActionResult(
+                "browser_click_text", True, f"clicked {text}", {"text": text}
+            )
         if result.ok:
-            return ActionResult("browser_click_text", False, f"I could not find {text} on the page.")
-        return ActionResult("browser_click_text", False, _human_browser_error(result.detail))
+            return ActionResult(
+                "browser_click_text", False, f"I could not find {text} on the page."
+            )
+        return ActionResult(
+            "browser_click_text", False, _human_browser_error(result.detail)
+        )
 
     def new_browser_tab(self) -> ActionResult:
         return self.press_hotkey("t", ["command"])
@@ -292,7 +326,9 @@ needle => {
         bounded = max(0, min(100, level))
         self.safety_gate.allow(LocalAction("set_volume", {"level": bounded}))
         result = run_osascript(f"set volume output volume {bounded}", timeout=8)
-        return ActionResult("set_volume", result.ok, result.stderr or f"volume set to {bounded}")
+        return ActionResult(
+            "set_volume", result.ok, result.stderr or f"volume set to {bounded}"
+        )
 
     def set_app_volume(self, app_name: str, level: int) -> ActionResult:
         bounded = max(0, min(100, level))
@@ -305,7 +341,7 @@ needle => {
             )
         )
         result = run_osascript(
-            f'tell application {applescript_string(app)} to set sound volume to {bounded}',
+            f"tell application {applescript_string(app)} to set sound volume to {bounded}",
             timeout=8,
         )
         if result.ok:
@@ -333,15 +369,21 @@ needle => {
             "return nextVolume"
         )
         result = run_osascript(script, timeout=8)
-        return ActionResult("change_volume", result.ok, result.stderr or f"volume {result.stdout}")
+        return ActionResult(
+            "change_volume", result.ok, result.stderr or f"volume {result.stdout}"
+        )
 
     def spotify_search(self, query: str) -> ActionResult:
         self.safety_gate.allow(LocalAction("spotify_search", {"query": query}))
         result = self.open_url(f"spotify:search:{quote_plus(query)}")
         if result.ok:
-            return ActionResult("spotify_search", True, f"opened Spotify search for {query}")
+            return ActionResult(
+                "spotify_search", True, f"opened Spotify search for {query}"
+            )
         fallback = run_command(["open", "-a", "Spotify"], timeout=10)
-        return ActionResult("spotify_search", fallback.ok, fallback.stderr or result.detail)
+        return ActionResult(
+            "spotify_search", fallback.ok, fallback.stderr or result.detail
+        )
 
     def spotify_web_search(
         self,
@@ -369,7 +411,9 @@ needle => {
             if not opened.ok:
                 return opened
             time.sleep(2.5)
-        terms_json = json.dumps([part for part in (query or "").lower().split() if len(part) > 1])
+        terms_json = json.dumps(
+            [part for part in (query or "").lower().split() if len(part) > 1]
+        )
         script = r"""
 ((terms) => {
   const lower = value => (value || '').toString().toLowerCase();
@@ -412,7 +456,12 @@ needle => {
                 "spotify_web_play",
                 False,
                 preflight.detail,
-                {"query": query, "browser": browser, "retry_with_screen": True, **(preflight.payload or {})},
+                {
+                    "query": query,
+                    "browser": browser,
+                    "retry_with_screen": True,
+                    **(preflight.payload or {}),
+                },
             )
         result = self.browser_javascript(script, browser)
         detail = result.detail.lower()
@@ -463,7 +512,12 @@ return ""
                     "current_media",
                     True,
                     f"{artist} - {title} is {state} in {service}.",
-                    {"service": service, "state": state, "artist": artist, "title": title},
+                    {
+                        "service": service,
+                        "state": state,
+                        "artist": artist,
+                        "title": title,
+                    },
                 )
         music = run_osascript(
             """
@@ -489,9 +543,16 @@ return ""
                     "current_media",
                     True,
                     f"{artist} - {title} is {state} in {service}.",
-                    {"service": service, "state": state, "artist": artist, "title": title},
+                    {
+                        "service": service,
+                        "state": state,
+                        "artist": artist,
+                        "title": title,
+                    },
                 )
-        return ActionResult("current_media", False, "I can't detect active media metadata yet.")
+        return ActionResult(
+            "current_media", False, "I can't detect active media metadata yet."
+        )
 
     def gmail_search(self, query: str, browser: str = "Google Chrome") -> ActionResult:
         self.safety_gate.allow(
@@ -611,7 +672,9 @@ return recipientHandle
     ) -> ActionResult:
         self.safety_gate.allow(LocalAction("pause_current_media"))
         services = [preferred_service] if preferred_service else []
-        services.extend(service for service in ["Spotify", "Music"] if service not in services)
+        services.extend(
+            service for service in ["Spotify", "Music"] if service not in services
+        )
         for service in services:
             script = f"""
 try
@@ -645,21 +708,35 @@ return ""
     def spotify_next(self) -> ActionResult:
         self.safety_gate.allow(LocalAction("spotify_next"))
         result = run_osascript('tell application "Spotify" to next track', timeout=8)
-        return ActionResult("spotify_next", result.ok, result.stderr or "skipped Spotify track")
+        return ActionResult(
+            "spotify_next", result.ok, result.stderr or "skipped Spotify track"
+        )
 
     def spotify_previous(self) -> ActionResult:
         self.safety_gate.allow(LocalAction("spotify_previous"))
-        result = run_osascript('tell application "Spotify" to previous track', timeout=8)
-        return ActionResult("spotify_previous", result.ok, result.stderr or "went to previous Spotify track")
+        result = run_osascript(
+            'tell application "Spotify" to previous track', timeout=8
+        )
+        return ActionResult(
+            "spotify_previous",
+            result.ok,
+            result.stderr or "went to previous Spotify track",
+        )
 
     def open_file(self, path: str) -> ActionResult:
-        self.safety_gate.allow(LocalAction("open_file", {"path": path}, risk=RiskLevel.LOW_RISK))
+        self.safety_gate.allow(
+            LocalAction("open_file", {"path": path}, risk=RiskLevel.LOW_RISK)
+        )
         result = run_command(["open", path], timeout=10)
-        return ActionResult("open_file", result.ok, result.stderr or result.stdout or f"opened {path}")
+        return ActionResult(
+            "open_file", result.ok, result.stderr or result.stdout or f"opened {path}"
+        )
 
     def type_text(self, text: str) -> ActionResult:
         self.safety_gate.allow(
-            LocalAction("type_text", {"text_preview": text[:80]}, f"type text: {text[:40]}")
+            LocalAction(
+                "type_text", {"text_preview": text[:80]}, f"type text: {text[:40]}"
+            )
         )
         script = (
             'tell application "System Events"\n'
@@ -669,13 +746,17 @@ return ""
         result = run_osascript(script, timeout=20)
         return ActionResult("type_text", result.ok, result.stderr or "typed text")
 
-    def press_hotkey(self, key: str, modifiers: list[str] | None = None) -> ActionResult:
+    def press_hotkey(
+        self, key: str, modifiers: list[str] | None = None
+    ) -> ActionResult:
         modifiers = modifiers or []
         self.safety_gate.allow(
             LocalAction("press_hotkey", {"key": key, "modifiers": modifiers})
         )
         normalized_key = key.lower()
-        modifier_parts = [MODIFIER_NAMES[m.lower()] for m in modifiers if m.lower() in MODIFIER_NAMES]
+        modifier_parts = [
+            MODIFIER_NAMES[m.lower()] for m in modifiers if m.lower() in MODIFIER_NAMES
+        ]
         using = ""
         if modifier_parts:
             using = " using {" + ", ".join(modifier_parts) + "}"
@@ -692,7 +773,9 @@ return ""
                 "end tell"
             )
         result = run_osascript(script, timeout=10)
-        return ActionResult("press_hotkey", result.ok, result.stderr or "pressed hotkey")
+        return ActionResult(
+            "press_hotkey", result.ok, result.stderr or "pressed hotkey"
+        )
 
     def click(self, x: int, y: int, button: str = "left") -> ActionResult:
         self.safety_gate.allow(LocalAction("click", {"x": x, "y": y, "button": button}))
@@ -763,7 +846,10 @@ return ""
 
 def _chrome_javascript_disabled(detail: str) -> bool:
     lowered = detail.lower()
-    return "javascript through applescript is turned off" in lowered or "allow javascript from apple events" in lowered
+    return (
+        "javascript through applescript is turned off" in lowered
+        or "allow javascript from apple events" in lowered
+    )
 
 
 def _human_browser_error(detail: str) -> str:

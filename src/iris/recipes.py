@@ -134,9 +134,15 @@ def _recipe_from_dict(item: dict[str, Any]) -> ActionRecipe | None:
     name = str(item.get("name") or "").strip()
     if not name:
         return None
-    steps = tuple(_step_from_dict(step) for step in item.get("steps", []) if isinstance(step, dict))
+    steps = tuple(
+        _step_from_dict(step)
+        for step in item.get("steps", [])
+        if isinstance(step, dict)
+    )
     fallback_steps = tuple(
-        _step_from_dict(step) for step in item.get("fallback_steps", []) if isinstance(step, dict)
+        _step_from_dict(step)
+        for step in item.get("fallback_steps", [])
+        if isinstance(step, dict)
     )
     tools = item.get("tools")
     if isinstance(tools, list):
@@ -192,7 +198,12 @@ def _fallback_recipes() -> list[ActionRecipe]:
             name="stripe_revenue_check",
             description="Open Stripe dashboard, read today's sales/revenue, and report only verified visible values.",
             service="stripe",
-            tools=("browser_open", "browser_get_dom", "browser_extract", "screen_describe"),
+            tools=(
+                "browser_open",
+                "browser_get_dom",
+                "browser_extract",
+                "screen_describe",
+            ),
             private=True,
             required_connectors=("stripe",),
             approval_gates=("read_account_dashboard",),

@@ -124,7 +124,9 @@ class ToolRegistry:
             if name not in PLANNER_HIDDEN_TOOLS
         ]
 
-    def execute(self, name: str, arguments: dict[str, Any], context: ToolContext) -> ToolResult:
+    def execute(
+        self, name: str, arguments: dict[str, Any], context: ToolContext
+    ) -> ToolResult:
         context.assert_not_cancelled()
         tool = self.get(name)
         if tool is None:
@@ -843,7 +845,9 @@ def _default_tools() -> list[ToolSpec]:
         ToolSpec(
             name="set_volume",
             description="Set Mac output volume from 0 to 100.",
-            parameters=_object_schema({"level": {"type": "integer", "minimum": 0, "maximum": 100}}),
+            parameters=_object_schema(
+                {"level": {"type": "integer", "minimum": 0, "maximum": 100}}
+            ),
             risk=RiskLevel.LOW_RISK,
             execute=_set_volume,
         ),
@@ -1115,7 +1119,9 @@ def _open_app(arguments: dict[str, Any], context: ToolContext) -> ToolResult:
 
 def _app_activate(arguments: dict[str, Any], context: ToolContext) -> ToolResult:
     computer = _computer(context)
-    return _from_action_result(computer.activate_app(_string_arg(arguments, "app_name")))
+    return _from_action_result(
+        computer.activate_app(_string_arg(arguments, "app_name"))
+    )
 
 
 def _app_inspect(arguments: dict[str, Any], context: ToolContext) -> ToolResult:
@@ -1155,7 +1161,11 @@ def _app_click_element(arguments: dict[str, Any], context: ToolContext) -> ToolR
 def _app_menu_select(arguments: dict[str, Any], context: ToolContext) -> ToolResult:
     raw_path = arguments.get("menu_path")
     if isinstance(raw_path, str):
-        menu_path = [part.strip() for part in re.split(r"\s*(?:>|/|,)\s*", raw_path) if part.strip()]
+        menu_path = [
+            part.strip()
+            for part in re.split(r"\s*(?:>|/|,)\s*", raw_path)
+            if part.strip()
+        ]
     elif isinstance(raw_path, list):
         menu_path = [str(part).strip() for part in raw_path if str(part).strip()]
     else:
@@ -1166,7 +1176,9 @@ def _app_menu_select(arguments: dict[str, Any], context: ToolContext) -> ToolRes
 
 
 def _app_type_text(arguments: dict[str, Any], context: ToolContext) -> ToolResult:
-    return _from_action_result(_accessibility().type_text(_string_arg(arguments, "text")))
+    return _from_action_result(
+        _accessibility().type_text(_string_arg(arguments, "text"))
+    )
 
 
 def _open_url(arguments: dict[str, Any], context: ToolContext) -> ToolResult:
@@ -1182,7 +1194,9 @@ def _browser_open_url(arguments: dict[str, Any], context: ToolContext) -> ToolRe
     browser = _string_arg(arguments, "browser", "Google Chrome")
     result = context.controller.open_url_in_browser(url, browser)
     if result.ok:
-        return ToolResult(True, _friendly_opened_url(url, browser), {"url": url, "browser": browser})
+        return ToolResult(
+            True, _friendly_opened_url(url, browser), {"url": url, "browser": browser}
+        )
     return _from_action_result(result)
 
 
@@ -1195,31 +1209,57 @@ def _browser_open(arguments: dict[str, Any], context: ToolContext) -> ToolResult
         if cdp.available():
             result = cdp.navigate(url, new_tab=new_tab)
             if result.ok:
-                _remember_browser(context, url=url, browser=browser, current_task=_string_arg(arguments, "task"))
-                return ToolResult(True, _friendly_opened_url(url, browser), result.payload)
+                _remember_browser(
+                    context,
+                    url=url,
+                    browser=browser,
+                    current_task=_string_arg(arguments, "task"),
+                )
+                return ToolResult(
+                    True, _friendly_opened_url(url, browser), result.payload
+                )
     result = _computer(context).open_url(url, browser, new_tab=new_tab)
     if result.ok:
-        _remember_browser(context, url=url, browser=browser, current_task=_string_arg(arguments, "task"))
-        return ToolResult(True, _friendly_opened_url(url, browser), {"url": url, "browser": browser})
+        _remember_browser(
+            context,
+            url=url,
+            browser=browser,
+            current_task=_string_arg(arguments, "task"),
+        )
+        return ToolResult(
+            True, _friendly_opened_url(url, browser), {"url": url, "browser": browser}
+        )
     return _from_action_result(result)
 
 
-def _browser_ensure_runtime(arguments: dict[str, Any], context: ToolContext) -> ToolResult:
+def _browser_ensure_runtime(
+    arguments: dict[str, Any], context: ToolContext
+) -> ToolResult:
     result = _chrome_cdp().ensure_available()
     return _from_action_result(result)
 
 
-def _browser_current_page(arguments: dict[str, Any], context: ToolContext) -> ToolResult:
+def _browser_current_page(
+    arguments: dict[str, Any], context: ToolContext
+) -> ToolResult:
     browser = _string_arg(arguments, "browser", "Google Chrome")
     if _prefer_cdp(browser):
         cdp = _chrome_cdp()
         if cdp.available():
             result = cdp.current_page()
-            if result.ok and isinstance(result.payload, dict) and context.session_state is not None:
+            if (
+                result.ok
+                and isinstance(result.payload, dict)
+                and context.session_state is not None
+            ):
                 context.session_state["last_opened_url"] = result.payload.get("url", "")
             return _from_action_result(result)
     result = _computer(context).browser_current_page(browser)
-    if result.ok and isinstance(result.payload, dict) and context.session_state is not None:
+    if (
+        result.ok
+        and isinstance(result.payload, dict)
+        and context.session_state is not None
+    ):
         context.session_state["last_opened_url"] = result.payload.get("url", "")
     return _from_action_result(result)
 
@@ -1240,12 +1280,19 @@ def _browser_extract(arguments: dict[str, Any], context: ToolContext) -> ToolRes
                 return ToolResult(
                     True,
                     "I read the visible browser page.",
-                    {"text": text, "browser": browser, "dom": payload, "backend": "cdp"},
+                    {
+                        "text": text,
+                        "browser": browser,
+                        "dom": payload,
+                        "backend": "cdp",
+                    },
                     continue_planning=True,
                 )
     result = _from_action_result(_computer(context).browser_extract_text(browser))
     if result.ok:
-        return ToolResult(result.ok, result.message, result.payload, continue_planning=True)
+        return ToolResult(
+            result.ok, result.message, result.payload, continue_planning=True
+        )
     return result
 
 
@@ -1253,7 +1300,9 @@ def _browser_get_dom(arguments: dict[str, Any], context: ToolContext) -> ToolRes
     max_chars = max(1000, min(_int_arg(arguments, "max_chars", 12000), 30000))
     result = _from_action_result(_chrome_cdp().get_dom(max_chars=max_chars))
     if result.ok:
-        return ToolResult(result.ok, result.message, result.payload, continue_planning=True)
+        return ToolResult(
+            result.ok, result.message, result.payload, continue_planning=True
+        )
     return result
 
 
@@ -1270,15 +1319,21 @@ def _browser_click(arguments: dict[str, Any], context: ToolContext) -> ToolResul
         browser,
     )
     if result.ok:
-        return ToolResult(True, f"I clicked {_string_arg(arguments, 'text')}.", result.payload)
+        return ToolResult(
+            True, f"I clicked {_string_arg(arguments, 'text')}.", result.payload
+        )
     return _from_action_result(result)
 
 
-def _browser_click_element(arguments: dict[str, Any], context: ToolContext) -> ToolResult:
+def _browser_click_element(
+    arguments: dict[str, Any], context: ToolContext
+) -> ToolResult:
     result = _chrome_cdp().click_text(_string_arg(arguments, "text"))
     if result.ok:
         return _from_action_result(result)
-    return _browser_click({"text": _string_arg(arguments, "text"), "browser": "Google Chrome"}, context)
+    return _browser_click(
+        {"text": _string_arg(arguments, "text"), "browser": "Google Chrome"}, context
+    )
 
 
 def _browser_type_into(arguments: dict[str, Any], context: ToolContext) -> ToolResult:
@@ -1291,7 +1346,9 @@ def _browser_type_into(arguments: dict[str, Any], context: ToolContext) -> ToolR
     return _type_text({"text": _string_arg(arguments, "text")}, context)
 
 
-def _browser_verify_state(arguments: dict[str, Any], context: ToolContext) -> ToolResult:
+def _browser_verify_state(
+    arguments: dict[str, Any], context: ToolContext
+) -> ToolResult:
     return _from_action_result(
         _chrome_cdp().verify_state(
             text=_string_arg(arguments, "text"),
@@ -1315,17 +1372,26 @@ def _browser_play_media(arguments: dict[str, Any], context: ToolContext) -> Tool
             context,
         )
     if service != "spotify":
-        return ToolResult(False, f"Browser media playback for {service} is not connected yet.")
+        return ToolResult(
+            False, f"Browser media playback for {service} is not connected yet."
+        )
     result = context.controller.spotify_web_play(query or None, browser)
     if result.ok:
         if query:
-            _remember_media(context, service="spotify", query=query, surface="browser", browser=browser)
+            _remember_media(
+                context,
+                service="spotify",
+                query=query,
+                surface="browser",
+                browser=browser,
+            )
         return ToolResult(True, "I tried to start it in Spotify.", result.payload)
     tool_result = _from_action_result(result)
     if tool_result.continue_planning:
         return ToolResult(
             False,
-            result.detail or "Chrome automation is off, so I’ll use screen clicks instead.",
+            result.detail
+            or "Chrome automation is off, so I’ll use screen clicks instead.",
             result.payload,
             continue_planning=True,
         )
@@ -1363,7 +1429,9 @@ def _search_web(arguments: dict[str, Any], context: ToolContext) -> ToolResult:
     url = f"https://www.google.com/search?q={quote_plus(query)}"
     result = context.controller.open_url(url)
     if result.ok:
-        return ToolResult(True, f"I searched the web for {query}.", {"query": query, "url": url})
+        return ToolResult(
+            True, f"I searched the web for {query}.", {"query": query, "url": url}
+        )
     return _from_action_result(result)
 
 
@@ -1415,7 +1483,9 @@ def _identify_song(arguments: dict[str, Any], context: ToolContext) -> ToolResul
     message = f"The closest match I found is {title}."
     if snippet:
         message += f" {snippet}"
-    return ToolResult(True, _compact_text(message, 500), {"query": query, "results": results})
+    return ToolResult(
+        True, _compact_text(message, 500), {"query": query, "results": results}
+    )
 
 
 def _gmail_search(arguments: dict[str, Any], context: ToolContext) -> ToolResult:
@@ -1429,7 +1499,9 @@ def _gmail_search(arguments: dict[str, Any], context: ToolContext) -> ToolResult
     return _from_action_result(result)
 
 
-def _gmail_search_and_summarize(arguments: dict[str, Any], context: ToolContext) -> ToolResult:
+def _gmail_search_and_summarize(
+    arguments: dict[str, Any], context: ToolContext
+) -> ToolResult:
     query = _string_arg(arguments, "query")
     browser = _string_arg(arguments, "browser", "Google Chrome")
     if not query:
@@ -1475,7 +1547,9 @@ def _visible_text_ready(result: ActionResult) -> bool:
 def _gmail_create_draft(arguments: dict[str, Any], context: ToolContext) -> ToolResult:
     draft = _last_email_draft(context)
     to = _string_arg(arguments, "to") or str(draft.get("to") or "").strip()
-    subject = _string_arg(arguments, "subject") or str(draft.get("subject") or "").strip()
+    subject = (
+        _string_arg(arguments, "subject") or str(draft.get("subject") or "").strip()
+    )
     body = _string_arg(arguments, "body") or str(draft.get("body") or "").strip()
     browser = _string_arg(arguments, "browser", "Google Chrome")
     if not to:
@@ -1526,7 +1600,9 @@ def _latest_frame(context: ToolContext) -> LiveScreenFrame:
 
 
 def _frame_age_seconds(frame: LiveScreenFrame) -> float:
-    return max(0.0, (datetime.now(timezone.utc) - frame.screenshot.captured_at).total_seconds())
+    return max(
+        0.0, (datetime.now(timezone.utc) - frame.screenshot.captured_at).total_seconds()
+    )
 
 
 def _describe_screen(arguments: dict[str, Any], context: ToolContext) -> ToolResult:
@@ -1573,7 +1649,9 @@ def _google_vision_screen_summary(frame: LiveScreenFrame, context: ToolContext) 
     labels = context.google_vision.label_image(frame.screenshot.png, max_results=8)
     text = _compact_text(ocr.text)
     label_text = ", ".join(
-        f"{label.description} ({label.score:.0%})" for label in labels if label.description
+        f"{label.description} ({label.score:.0%})"
+        for label in labels
+        if label.description
     )
     parts = [
         "Google Vision live screen read:",
@@ -1647,12 +1725,18 @@ def _fast_live_screen_summary(frame: LiveScreenFrame, context: ToolContext) -> s
         if inspected and inspected.ok and isinstance(inspected.payload, dict):
             labels = _accessibility_labels(inspected.payload)
             if labels:
-                parts.append(f"Visible UI text: {_compact_text(', '.join(labels), 700)}")
+                parts.append(
+                    f"Visible UI text: {_compact_text(', '.join(labels), 700)}"
+                )
                 return "\n".join(parts)
     if len(parts) > 4:
         return "\n".join(parts)
     if not context.google_vision.available and not context.openai_client.available:
-        return "\n".join(parts) if frame.context.active_app or frame.context.active_window else ""
+        return (
+            "\n".join(parts)
+            if frame.context.active_app or frame.context.active_window
+            else ""
+        )
     return ""
 
 
@@ -1679,12 +1763,16 @@ def _accessibility_labels(payload: dict[str, Any]) -> list[str]:
 def _ocr_screen(arguments: dict[str, Any], context: ToolContext) -> ToolResult:
     frame = _latest_frame(context)
     if not context.google_vision.available:
-        return ToolResult(False, "GOOGLE_APPLICATION_CREDENTIALS is not configured for OCR.")
+        return ToolResult(
+            False, "GOOGLE_APPLICATION_CREDENTIALS is not configured for OCR."
+        )
     ocr = context.google_vision.extract_text(frame.screenshot.png)
     return ToolResult(True, ocr.text or "No text detected.")
 
 
-def _find_visible_element(arguments: dict[str, Any], context: ToolContext) -> ToolResult:
+def _find_visible_element(
+    arguments: dict[str, Any], context: ToolContext
+) -> ToolResult:
     description = _string_arg(arguments, "description")
     if not description:
         return ToolResult(False, "I need a visible element description.")
@@ -1699,14 +1787,22 @@ def _find_visible_element(arguments: dict[str, Any], context: ToolContext) -> To
     )
 
 
-def _screen_click_element(arguments: dict[str, Any], context: ToolContext) -> ToolResult:
-    description = _string_arg(arguments, "description") or _string_arg(arguments, "text")
+def _screen_click_element(
+    arguments: dict[str, Any], context: ToolContext
+) -> ToolResult:
+    description = _string_arg(arguments, "description") or _string_arg(
+        arguments, "text"
+    )
     if not description:
         return ToolResult(False, "I need a visible element description.")
     if context.computer_use_runner is not None:
-        result = context.computer_use_runner(f"Click the visible element: {description}")
+        result = context.computer_use_runner(
+            f"Click the visible element: {description}"
+        )
         if bool(result.ok):
-            return ToolResult(True, f"I clicked {description}.", getattr(result, "payload", None))
+            return ToolResult(
+                True, f"I clicked {description}.", getattr(result, "payload", None)
+            )
         message = str(result.message)
         if "can't use the computer-control model" not in message:
             return ToolResult(False, message)
@@ -1729,7 +1825,9 @@ def _press_hotkey(arguments: dict[str, Any], context: ToolContext) -> ToolResult
 
 
 def _type_text(arguments: dict[str, Any], context: ToolContext) -> ToolResult:
-    return _from_action_result(_computer(context).type_text(_string_arg(arguments, "text")))
+    return _from_action_result(
+        _computer(context).type_text(_string_arg(arguments, "text"))
+    )
 
 
 def _click(arguments: dict[str, Any], context: ToolContext) -> ToolResult:
@@ -1749,7 +1847,9 @@ def _scroll(arguments: dict[str, Any], context: ToolContext) -> ToolResult:
 
 
 def _set_volume(arguments: dict[str, Any], context: ToolContext) -> ToolResult:
-    return _from_action_result(context.controller.set_volume(_int_arg(arguments, "level", 50)))
+    return _from_action_result(
+        context.controller.set_volume(_int_arg(arguments, "level", 50))
+    )
 
 
 def _set_app_volume(arguments: dict[str, Any], context: ToolContext) -> ToolResult:
@@ -1762,7 +1862,9 @@ def _set_app_volume(arguments: dict[str, Any], context: ToolContext) -> ToolResu
 
 
 def _change_volume(arguments: dict[str, Any], context: ToolContext) -> ToolResult:
-    return _from_action_result(context.controller.change_volume(_int_arg(arguments, "delta")))
+    return _from_action_result(
+        context.controller.change_volume(_int_arg(arguments, "delta"))
+    )
 
 
 def _media_control(arguments: dict[str, Any], context: ToolContext) -> ToolResult:
@@ -1829,13 +1931,18 @@ def _audio_current_media(arguments: dict[str, Any], context: ToolContext) -> Too
                 )
         media_items = browser_state.payload.get("media")
         if isinstance(media_items, list) and any(
-            isinstance(item, dict) and item.get("paused") is False for item in media_items
+            isinstance(item, dict) and item.get("paused") is False
+            for item in media_items
         ):
             title = str(browser_state.payload.get("title") or "browser media").strip()
             return ToolResult(
                 True,
                 f"Browser media is playing on {title}.",
-                {"service": "browser", "state": "playing", "source": browser_state.payload},
+                {
+                    "service": "browser",
+                    "state": "playing",
+                    "source": browser_state.payload,
+                },
             )
     state = context.session_state or {}
     media = state.get("last_media") if isinstance(state.get("last_media"), dict) else {}
@@ -1845,7 +1952,9 @@ def _audio_current_media(arguments: dict[str, Any], context: ToolContext) -> Too
     return _from_action_result(result)
 
 
-def _audio_identify_playing(arguments: dict[str, Any], context: ToolContext) -> ToolResult:
+def _audio_identify_playing(
+    arguments: dict[str, Any], context: ToolContext
+) -> ToolResult:
     metadata = _audio_current_media(arguments, context)
     if metadata.ok:
         return metadata
@@ -1855,7 +1964,9 @@ def _audio_identify_playing(arguments: dict[str, Any], context: ToolContext) -> 
     )
 
 
-def _audio_explain_current_song(arguments: dict[str, Any], context: ToolContext) -> ToolResult:
+def _audio_explain_current_song(
+    arguments: dict[str, Any], context: ToolContext
+) -> ToolResult:
     artist = _string_arg(arguments, "artist")
     title = _string_arg(arguments, "title")
     if not (artist and title):
@@ -1872,14 +1983,19 @@ def _audio_explain_current_song(arguments: dict[str, Any], context: ToolContext)
         artist = artist or str(payload.get("artist") or "").strip()
         title = title or str(payload.get("title") or "").strip()
     if not (artist and title):
-        return ToolResult(False, "I need the song title and artist before I can explain it.")
+        return ToolResult(
+            False, "I need the song title and artist before I can explain it."
+        )
     question = _string_arg(arguments, "question", "meaning themes background")
     query = f"{artist} {title} song meaning themes background"
     if question:
         query = f"{artist} {title} {question}"
     research = _web_research({"query": query, "max_results": 4}, context)
     if not research.ok:
-        return ToolResult(False, f"I found {artist} - {title}, but I couldn't pull enough public context to explain it.")
+        return ToolResult(
+            False,
+            f"I found {artist} - {title}, but I couldn't pull enough public context to explain it.",
+        )
     message = research.message.replace(
         f"Here’s what I found publicly for {query}:",
         f"For {title} by {artist}, here’s the public context I found:",
@@ -1887,7 +2003,12 @@ def _audio_explain_current_song(arguments: dict[str, Any], context: ToolContext)
     return ToolResult(
         True,
         _compact_text(message, 900),
-        {"artist": artist, "title": title, "query": query, "research": research.payload},
+        {
+            "artist": artist,
+            "title": title,
+            "query": query,
+            "research": research.payload,
+        },
     )
 
 
@@ -1896,7 +2017,9 @@ def _integration_status(arguments: dict[str, Any], context: ToolContext) -> Tool
     if not name:
         return ToolResult(False, "I need an integration name.")
     if context.config is None:
-        return ToolResult(False, "The connector registry is not connected in this runtime.")
+        return ToolResult(
+            False, "The connector registry is not connected in this runtime."
+        )
     with open_state(context.config) as db:
         connector = get_connector(
             db,
@@ -1921,7 +2044,9 @@ def _integration_status(arguments: dict[str, Any], context: ToolContext) -> Tool
 
 def _connector_list(arguments: dict[str, Any], context: ToolContext) -> ToolResult:
     if context.config is None:
-        return ToolResult(False, "The connector registry is not connected in this runtime.")
+        return ToolResult(
+            False, "The connector registry is not connected in this runtime."
+        )
     category = _string_arg(arguments, "category")
     with open_state(context.config) as db:
         connectors = connector_health(
@@ -1930,9 +2055,15 @@ def _connector_list(arguments: dict[str, Any], context: ToolContext) -> ToolResu
         )
     if category:
         connectors = [item for item in connectors if item.get("category") == category]
-    ready = [item for item in connectors if item.get("enabled") and item.get("configured")]
+    ready = [
+        item for item in connectors if item.get("enabled") and item.get("configured")
+    ]
     if not ready:
-        return ToolResult(True, "No ready connectors matched that request.", {"connectors": connectors})
+        return ToolResult(
+            True,
+            "No ready connectors matched that request.",
+            {"connectors": connectors},
+        )
     names = ", ".join(str(item.get("name")) for item in ready[:12])
     return ToolResult(
         True,
@@ -1941,12 +2072,16 @@ def _connector_list(arguments: dict[str, Any], context: ToolContext) -> ToolResu
     )
 
 
-def _task_start_background(arguments: dict[str, Any], context: ToolContext) -> ToolResult:
+def _task_start_background(
+    arguments: dict[str, Any], context: ToolContext
+) -> ToolResult:
     goal = _string_arg(arguments, "goal")
     if not goal:
         return ToolResult(False, "I need a background task goal.")
     if context.config is None:
-        return ToolResult(False, "The durable task store is not connected in this runtime.")
+        return ToolResult(
+            False, "The durable task store is not connected in this runtime."
+        )
     kind = _string_arg(arguments, "kind", "agent_background") or "agent_background"
     title = _string_arg(arguments, "title") or _compact_text(goal, 80)
     with open_state(context.config) as db:
@@ -1955,7 +2090,10 @@ def _task_start_background(arguments: dict[str, Any], context: ToolContext) -> T
             kind=kind,
             title=title,
             input_value={"goal": goal},
-            metadata={"created_by": "agent_tool", "autonomy": context.config.autonomy_level},
+            metadata={
+                "created_by": "agent_tool",
+                "autonomy": context.config.autonomy_level,
+            },
             status="queued",
         )
     return ToolResult(
@@ -1967,7 +2105,9 @@ def _task_start_background(arguments: dict[str, Any], context: ToolContext) -> T
 
 def _task_status(arguments: dict[str, Any], context: ToolContext) -> ToolResult:
     if context.config is None:
-        return ToolResult(False, "The durable task store is not connected in this runtime.")
+        return ToolResult(
+            False, "The durable task store is not connected in this runtime."
+        )
     limit = max(1, min(_int_arg(arguments, "limit", 5), 20))
     with open_state(context.config) as db:
         running = task_store.list_tasks(db, status="running", limit=limit)
@@ -1986,7 +2126,9 @@ def _task_status(arguments: dict[str, Any], context: ToolContext) -> ToolResult:
             f"I have {len(queued)} queued task{'s' if len(queued) != 1 else ''}.",
             {"running": running, "queued": queued, "recent": recent},
         )
-    return ToolResult(True, "No Iris background task is running right now.", {"recent": recent})
+    return ToolResult(
+        True, "No Iris background task is running right now.", {"recent": recent}
+    )
 
 
 def _machine_context(arguments: dict[str, Any], context: ToolContext) -> ToolResult:
@@ -2046,7 +2188,9 @@ return outputLines as text
     if not result.ok:
         return ToolResult(False, _human_action_detail(result.stderr or result.stdout))
     if not result.stdout.strip():
-        return ToolResult(True, f"I did not find a calendar event matching {query}.", [])
+        return ToolResult(
+            True, f"I did not find a calendar event matching {query}.", []
+        )
     events = [line for line in result.stdout.splitlines() if line.strip()]
     return ToolResult(
         True,
@@ -2171,7 +2315,9 @@ def _parse_due_time(text: str) -> tuple[int, int]:
     return 9, 0
 
 
-def _media_search_or_play(arguments: dict[str, Any], context: ToolContext) -> ToolResult:
+def _media_search_or_play(
+    arguments: dict[str, Any], context: ToolContext
+) -> ToolResult:
     service = _media_service(_string_arg(arguments, "service", "spotify"))
     query = _string_arg(arguments, "query")
     surface = _string_arg(arguments, "surface", "auto").lower() or "auto"
@@ -2191,8 +2337,16 @@ def _media_search_or_play(arguments: dict[str, Any], context: ToolContext) -> To
         web_result = _spotify_web_cdp(query, action=action, browser=browser)
         if web_result is not None:
             if web_result.ok:
-                _remember_media(context, service="spotify", query=query, surface="browser", browser=browser)
-                payload = web_result.payload if isinstance(web_result.payload, dict) else {}
+                _remember_media(
+                    context,
+                    service="spotify",
+                    query=query,
+                    surface="browser",
+                    browser=browser,
+                )
+                payload = (
+                    web_result.payload if isinstance(web_result.payload, dict) else {}
+                )
                 verified = bool(payload.get("verified_playback"))
                 return ToolResult(
                     True,
@@ -2204,14 +2358,25 @@ def _media_search_or_play(arguments: dict[str, Any], context: ToolContext) -> To
                     web_result.payload,
                     continue_planning=not verified,
                 )
-            if "Chrome CDP is running without the Iris origin allowlist" in web_result.detail:
+            if (
+                "Chrome CDP is running without the Iris origin allowlist"
+                in web_result.detail
+            ):
                 return _from_action_result(web_result)
     if surface == "browser":
         cdp_result = _spotify_web_cdp(query, action=action, browser=browser)
         if cdp_result is not None:
             if cdp_result.ok:
-                _remember_media(context, service="spotify", query=query, surface="browser", browser=browser)
-                payload = cdp_result.payload if isinstance(cdp_result.payload, dict) else {}
+                _remember_media(
+                    context,
+                    service="spotify",
+                    query=query,
+                    surface="browser",
+                    browser=browser,
+                )
+                payload = (
+                    cdp_result.payload if isinstance(cdp_result.payload, dict) else {}
+                )
                 verified = bool(payload.get("verified_playback"))
                 message = (
                     f"Spotify is playing {query}."
@@ -2220,8 +2385,16 @@ def _media_search_or_play(arguments: dict[str, Any], context: ToolContext) -> To
                     if action == "play"
                     else f"I opened Spotify in your browser and searched for {query}."
                 )
-                return ToolResult(True, message, cdp_result.payload, continue_planning=action == "play" and not verified)
-            if "Chrome CDP is running without the Iris origin allowlist" in cdp_result.detail:
+                return ToolResult(
+                    True,
+                    message,
+                    cdp_result.payload,
+                    continue_planning=action == "play" and not verified,
+                )
+            if (
+                "Chrome CDP is running without the Iris origin allowlist"
+                in cdp_result.detail
+            ):
                 return _from_action_result(cdp_result)
         result = (
             context.controller.spotify_web_play(query, browser)
@@ -2229,7 +2402,13 @@ def _media_search_or_play(arguments: dict[str, Any], context: ToolContext) -> To
             else context.controller.spotify_web_search(query, browser)
         )
         if result.ok:
-            _remember_media(context, service="spotify", query=query, surface="browser", browser=browser)
+            _remember_media(
+                context,
+                service="spotify",
+                query=query,
+                surface="browser",
+                browser=browser,
+            )
             message = (
                 f"I started Spotify in your browser and looked for {query}."
                 if action == "play"
@@ -2240,7 +2419,9 @@ def _media_search_or_play(arguments: dict[str, Any], context: ToolContext) -> To
     app_result = context.controller.spotify_search(query)
     if app_result.ok or surface == "app":
         if app_result.ok:
-            _remember_media(context, service="spotify", query=query, surface="app", browser=browser)
+            _remember_media(
+                context, service="spotify", query=query, surface="app", browser=browser
+            )
             message = f"I opened Spotify and searched for {query}."
             if action == "play":
                 play = context.controller.spotify_play_pause()
@@ -2251,7 +2432,8 @@ def _media_search_or_play(arguments: dict[str, Any], context: ToolContext) -> To
     web_result = _spotify_web_cdp(query, action=action, browser=browser)
     if web_result is None or (
         not web_result.ok
-        and "Chrome CDP is running without the Iris origin allowlist" not in web_result.detail
+        and "Chrome CDP is running without the Iris origin allowlist"
+        not in web_result.detail
     ):
         web_result = (
             context.controller.spotify_web_play(query, browser)
@@ -2259,7 +2441,9 @@ def _media_search_or_play(arguments: dict[str, Any], context: ToolContext) -> To
             else context.controller.spotify_web_search(query, browser)
         )
     if web_result.ok:
-        _remember_media(context, service="spotify", query=query, surface="browser", browser=browser)
+        _remember_media(
+            context, service="spotify", query=query, surface="browser", browser=browser
+        )
         message = (
             f"I started Spotify and looked for {query}."
             if action == "play"
@@ -2288,18 +2472,35 @@ def _youtube_media_play(arguments: dict[str, Any], context: ToolContext) -> Tool
             return ToolResult(False, "I need something to search on YouTube.")
         url = f"https://www.youtube.com/results?search_query={quote_plus(query)}"
         opened = _browser_open(
-            {"url": url, "browser": browser, "new_tab": False, "task": "youtube_search"},
+            {
+                "url": url,
+                "browser": browser,
+                "new_tab": False,
+                "task": "youtube_search",
+            },
             context,
         )
         if opened.ok:
-            _remember_media(context, service="youtube", query=query, surface="browser", browser=browser)
+            _remember_media(
+                context,
+                service="youtube",
+                query=query,
+                surface="browser",
+                browser=browser,
+            )
         return opened
     result = _chrome_cdp().youtube_play(query or None)
     if result.ok:
         payload = result.payload if isinstance(result.payload, dict) else {}
         verified = bool(payload.get("verified_playback"))
         media_query = query or str(payload.get("title") or "current YouTube video")
-        _remember_media(context, service="youtube", query=media_query, surface="browser", browser=browser)
+        _remember_media(
+            context,
+            service="youtube",
+            query=media_query,
+            surface="browser",
+            browser=browser,
+        )
         return ToolResult(
             True,
             (
@@ -2333,11 +2534,23 @@ def _media_play_current(arguments: dict[str, Any], context: ToolContext) -> Tool
     state = context.session_state or {}
     media = state.get("last_media") if isinstance(state.get("last_media"), dict) else {}
     query = _string_arg(media, "query") if isinstance(media, dict) else ""
-    remembered_surface = _string_arg(media, "surface") if isinstance(media, dict) else ""
-    remembered_service = _media_service(_string_arg(media, "service")) if isinstance(media, dict) else ""
-    if service == "youtube" or remembered_service == "youtube" or _current_browser_is_youtube():
+    remembered_surface = (
+        _string_arg(media, "surface") if isinstance(media, dict) else ""
+    )
+    remembered_service = (
+        _media_service(_string_arg(media, "service")) if isinstance(media, dict) else ""
+    )
+    if (
+        service == "youtube"
+        or remembered_service == "youtube"
+        or _current_browser_is_youtube()
+    ):
         return _youtube_media_play(
-            {"service": "youtube", "query": query if remembered_service == "youtube" else "", "browser": browser},
+            {
+                "service": "youtube",
+                "query": query if remembered_service == "youtube" else "",
+                "browser": browser,
+            },
             context,
         )
     if service and service != "spotify":
@@ -2346,7 +2559,13 @@ def _media_play_current(arguments: dict[str, Any], context: ToolContext) -> Tool
         result = context.controller.spotify_web_play(query or None, browser)
         if result.ok:
             if query:
-                _remember_media(context, service="spotify", query=query, surface="browser", browser=browser)
+                _remember_media(
+                    context,
+                    service="spotify",
+                    query=query,
+                    surface="browser",
+                    browser=browser,
+                )
             return ToolResult(True, "I tried to start it in Spotify.", result.payload)
         return _from_action_result(result)
     result = context.controller.spotify_play_pause()
@@ -2374,7 +2593,9 @@ def _knowledge_search(arguments: dict[str, Any], context: ToolContext) -> ToolRe
     if not query:
         return ToolResult(False, "I need a knowledge search query.")
     if context.config is None:
-        return ToolResult(False, "The local knowledge store is not connected in this runtime.")
+        return ToolResult(
+            False, "The local knowledge store is not connected in this runtime."
+        )
     limit = max(1, min(_int_arg(arguments, "limit", 8), 20))
     with open_state(context.config) as db:
         results = search_pages(db, query, limit=limit)
@@ -2428,7 +2649,9 @@ def _file_list_folder(arguments: dict[str, Any], context: ToolContext) -> ToolRe
     if context.session_state is not None:
         context.session_state["last_file_results"] = paths
         context.session_state["last_folder"] = str(folder)
-    return _format_file_results(paths, heading=f"I found {len(paths)} item(s) in {folder.name}.")
+    return _format_file_results(
+        paths, heading=f"I found {len(paths)} item(s) in {folder.name}."
+    )
 
 
 def _file_open(arguments: dict[str, Any], context: ToolContext) -> ToolResult:
@@ -2466,7 +2689,8 @@ def _file_rename(arguments: dict[str, Any], context: ToolContext) -> ToolResult:
         previous = context.session_state.get("last_file_results")
         if isinstance(previous, list):
             context.session_state["last_file_results"] = [
-                str(destination) if str(item) == str(path) else item for item in previous
+                str(destination) if str(item) == str(path) else item
+                for item in previous
             ]
     return ToolResult(
         True,
@@ -2477,14 +2701,28 @@ def _file_rename(arguments: dict[str, Any], context: ToolContext) -> ToolResult:
 
 def _is_reference_to_previous_results(query: str) -> bool:
     normalized = query.strip().lower()
-    return normalized in {"", "them", "it", "the results", "those files", "list them", "list results"}
+    return normalized in {
+        "",
+        "them",
+        "it",
+        "the results",
+        "those files",
+        "list them",
+        "list results",
+    }
 
 
 def _resolve_common_folder(path: str) -> Path:
     cleaned = path.strip()
     lowered = cleaned.lower()
     home = Path.home()
-    if lowered in {"download", "downloads", "download folder", "downloads folder", "~/downloads"}:
+    if lowered in {
+        "download",
+        "downloads",
+        "download folder",
+        "downloads folder",
+        "~/downloads",
+    }:
         return home / "Downloads"
     if lowered in {"desktop", "desktop folder", "~/desktop"}:
         return home / "Desktop"
@@ -2509,7 +2747,11 @@ def _resolve_file_reference(reference: str, context: ToolContext) -> Path | None
         folder = Path(last_folder).expanduser()
         if folder.exists() and folder.is_dir():
             try:
-                candidates.extend(entry for entry in folder.iterdir() if not entry.name.startswith("."))
+                candidates.extend(
+                    entry
+                    for entry in folder.iterdir()
+                    if not entry.name.startswith(".")
+                )
             except OSError:
                 pass
     if not candidates:
@@ -2518,7 +2760,10 @@ def _resolve_file_reference(reference: str, context: ToolContext) -> Path | None
         return candidates[0] if len(candidates) == 1 else None
     normalized = _name_terms(cleaned)
     scored = sorted(
-        ((candidate, _path_match_score(candidate, normalized)) for candidate in candidates),
+        (
+            (candidate, _path_match_score(candidate, normalized))
+            for candidate in candidates
+        ),
         key=lambda item: item[1],
         reverse=True,
     )
@@ -2570,11 +2815,17 @@ def _workflow_run(arguments: dict[str, Any], context: ToolContext) -> ToolResult
     name = _string_arg(arguments, "name")
     if not name:
         return ToolResult(False, "I need a workflow name.")
-    return ToolResult(True, f"Workflow {name} is ready to run through `./iris run {name}`.", {"name": name})
+    return ToolResult(
+        True,
+        f"Workflow {name} is ready to run through `./iris run {name}`.",
+        {"name": name},
+    )
 
 
 def _recipe_run(arguments: dict[str, Any], context: ToolContext) -> ToolResult:
-    recipe_name = _string_arg(arguments, "recipe_name") or _string_arg(arguments, "name")
+    recipe_name = _string_arg(arguments, "recipe_name") or _string_arg(
+        arguments, "name"
+    )
     if not recipe_name:
         return ToolResult(False, "I need a recipe name.")
     registry = context.recipes or ActionRecipeRegistry.default(
@@ -2603,7 +2854,11 @@ def _recipe_run(arguments: dict[str, Any], context: ToolContext) -> ToolResult:
             tool = tool_registry.get(step.tool)
             if tool is None:
                 observations.append(
-                    {"tool": step.tool, "ok": False, "message": "Tool is not available."}
+                    {
+                        "tool": step.tool,
+                        "ok": False,
+                        "message": "Tool is not available.",
+                    }
                 )
                 if not step.continue_on_error:
                     return False
@@ -2631,9 +2886,13 @@ def _recipe_run(arguments: dict[str, Any], context: ToolContext) -> ToolResult:
     if not primary_ok and recipe.fallback_steps:
         fallback_ok = run_steps(recipe.fallback_steps)
     ok = primary_ok or fallback_ok
-    final_observation = str(observations[-1]["message"]) if observations else recipe.description
+    final_observation = (
+        str(observations[-1]["message"]) if observations else recipe.description
+    )
     if recipe.done_condition:
-        final_observation = f"{final_observation} Done condition: {recipe.done_condition}"
+        final_observation = (
+            f"{final_observation} Done condition: {recipe.done_condition}"
+        )
     return ToolResult(
         ok,
         final_observation,
@@ -2716,7 +2975,9 @@ def _computer_use(arguments: dict[str, Any], context: ToolContext) -> ToolResult
     if context.computer_use_runner is None:
         return ToolResult(False, "Computer-use is not connected in this runtime.")
     result = context.computer_use_runner(instruction)
-    return ToolResult(bool(result.ok), str(result.message), getattr(result, "payload", None))
+    return ToolResult(
+        bool(result.ok), str(result.message), getattr(result, "payload", None)
+    )
 
 
 def _remember_media(
@@ -2765,7 +3026,9 @@ def _friendly_opened_url(url: str, browser: str | None = None) -> str:
     return f"I opened {target}."
 
 
-def _recipe_step_args(step_args: dict[str, Any], inputs: dict[str, Any]) -> dict[str, Any]:
+def _recipe_step_args(
+    step_args: dict[str, Any], inputs: dict[str, Any]
+) -> dict[str, Any]:
     resolved = {key: _recipe_value(value, inputs) for key, value in step_args.items()}
     for key, value in inputs.items():
         resolved.setdefault(key, value)
@@ -2852,7 +3115,11 @@ def _format_research_summary(query: str, results: list[dict[str, str]]) -> str:
     lines = []
     for item in results[:2]:
         title = item.get("title") or _domain(item.get("url", ""))
-        snippet = item.get("page_text") or item.get("snippet") or "No short description available."
+        snippet = (
+            item.get("page_text")
+            or item.get("snippet")
+            or "No short description available."
+        )
         lines.append(f"{title}: {_compact_text(snippet, 150)}")
     joined = " ".join(lines)
     return _compact_text(f"Here’s what I found for {query}: {joined}", 520)
@@ -2861,7 +3128,9 @@ def _format_research_summary(query: str, results: list[dict[str, str]]) -> str:
 def _summarize_visible_email_text(query: str, text: str) -> str:
     cleaned = _compact_text(text, 1800)
     if not cleaned:
-        return f"I searched Gmail for {query}, but I do not see readable message text yet."
+        return (
+            f"I searched Gmail for {query}, but I do not see readable message text yet."
+        )
     lines = [line.strip() for line in text.splitlines() if line.strip()]
     useful = [
         line
@@ -2909,7 +3178,11 @@ class _DuckDuckGoHTMLParser(HTMLParser):
         attrs_dict = {key: value or "" for key, value in attrs}
         classes = set(attrs_dict.get("class", "").split())
         if tag == "a" and "result__a" in classes:
-            self._current = {"title": "", "url": attrs_dict.get("href", ""), "snippet": ""}
+            self._current = {
+                "title": "",
+                "url": attrs_dict.get("href", ""),
+                "snippet": "",
+            }
             self._capture_title = True
             return
         if self._current is not None and "result__snippet" in classes:

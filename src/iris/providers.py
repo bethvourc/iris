@@ -55,9 +55,16 @@ class ProviderRegistry:
 
     def route(self, purpose: str) -> ModelRoute:
         if purpose == "realtime":
-            return ModelRoute(purpose, "openai", self.config.realtime_model, (("mock", "mock-realtime"),))
+            return ModelRoute(
+                purpose,
+                "openai",
+                self.config.realtime_model,
+                (("mock", "mock-realtime"),),
+            )
         if purpose in {"reasoning", "vision"}:
-            return ModelRoute(purpose, "openai", self.config.chat_model, (("openai", "gpt-5.4"),))
+            return ModelRoute(
+                purpose, "openai", self.config.chat_model, (("openai", "gpt-5.4"),)
+            )
         if purpose == "computer-use":
             return ModelRoute(
                 purpose,
@@ -73,8 +80,15 @@ class ProviderRegistry:
                 (("openai", self.config.realtime_model),),
             )
         if purpose in {"fast-intent", "research"}:
-            return ModelRoute(purpose, "groq", self.config.fast_intent_model, (("openai", self.config.chat_model),))
+            return ModelRoute(
+                purpose,
+                "groq",
+                self.config.fast_intent_model,
+                (("openai", self.config.chat_model),),
+            )
         if purpose == "notification":
             provider = self.config.notify_provider
-            return ModelRoute(purpose, provider, f"{provider}-push", (("ntfy", "ntfy-push"),))
+            return ModelRoute(
+                purpose, provider, f"{provider}-push", (("ntfy", "ntfy-push"),)
+            )
         return ModelRoute(purpose, "openai", self.config.chat_model, ())

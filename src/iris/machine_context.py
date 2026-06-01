@@ -10,7 +10,9 @@ from iris.connectors import connector_health, default_manifest_dirs
 from iris.memory import add_memory
 
 
-def collect_machine_context(config: IrisConfig, db: sqlite3.Connection | None = None) -> dict[str, Any]:
+def collect_machine_context(
+    config: IrisConfig, db: sqlite3.Connection | None = None
+) -> dict[str, Any]:
     home = Path.home()
     context: dict[str, Any] = {
         "installed_apps": _installed_apps(),
@@ -82,8 +84,12 @@ def _common_folders(home: Path) -> list[str]:
 
 def _browser_profiles(home: Path) -> dict[str, bool]:
     return {
-        "chrome_default": (home / "Library" / "Application Support" / "Google" / "Chrome" / "Default").exists(),
-        "chrome_profiles": (home / "Library" / "Application Support" / "Google" / "Chrome").exists(),
+        "chrome_default": (
+            home / "Library" / "Application Support" / "Google" / "Chrome" / "Default"
+        ).exists(),
+        "chrome_profiles": (
+            home / "Library" / "Application Support" / "Google" / "Chrome"
+        ).exists(),
         "safari": (home / "Library" / "Safari").exists(),
     }
 
@@ -91,13 +97,21 @@ def _browser_profiles(home: Path) -> dict[str, bool]:
 def _memory_records(context: dict[str, Any]) -> list[tuple[str, str]]:
     records: list[tuple[str, str]] = []
     if context.get("installed_apps"):
-        records.append(("machine_apps", json.dumps(context["installed_apps"], sort_keys=True)))
+        records.append(
+            ("machine_apps", json.dumps(context["installed_apps"], sort_keys=True))
+        )
     if context.get("project_folders"):
-        records.append(("machine_projects", json.dumps(context["project_folders"], sort_keys=True)))
+        records.append(
+            ("machine_projects", json.dumps(context["project_folders"], sort_keys=True))
+        )
     if context.get("common_folders"):
-        records.append(("machine_folders", json.dumps(context["common_folders"], sort_keys=True)))
+        records.append(
+            ("machine_folders", json.dumps(context["common_folders"], sort_keys=True))
+        )
     if context.get("browser_profiles"):
-        records.append(("machine_browser", json.dumps(context["browser_profiles"], sort_keys=True)))
+        records.append(
+            ("machine_browser", json.dumps(context["browser_profiles"], sort_keys=True))
+        )
     connector_health_value = context.get("connector_health")
     if isinstance(connector_health_value, list):
         concise = [

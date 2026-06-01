@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime, timezone
 import json
 from pathlib import Path
@@ -83,7 +83,9 @@ def load_eval_cases(path: Path) -> list[AgentEvalCase]:
                 category=str(item.get("category") or "general"),
                 input_text=input_text,
                 expected_tools=tuple(
-                    str(tool).strip() for tool in item.get("expected_tools", []) if str(tool).strip()
+                    str(tool).strip()
+                    for tool in item.get("expected_tools", [])
+                    if str(tool).strip()
                 ),
                 expected_recipe=str(item.get("expected_recipe") or ""),
                 approval_expected=bool(item.get("approval_expected")),
@@ -109,7 +111,9 @@ def run_static_evals(
     recipe_names = {schema["name"] for schema in recipes.schemas()}
     results = []
     for case in cases:
-        missing_tools = [tool for tool in case.expected_tools if tool_registry.get(tool) is None]
+        missing_tools = [
+            tool for tool in case.expected_tools if tool_registry.get(tool) is None
+        ]
         recipe_ok = not case.expected_recipe or case.expected_recipe in recipe_names
         checks = {
             "missing_tools": missing_tools,
@@ -207,7 +211,9 @@ def write_eval_report(
         / f"agent-eval-{datetime.now(timezone.utc).strftime('%Y%m%d-%H%M%S')}.json"
     )
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(report, indent=2, sort_keys=True, default=str), encoding="utf-8")
+    path.write_text(
+        json.dumps(report, indent=2, sort_keys=True, default=str), encoding="utf-8"
+    )
     return path
 
 

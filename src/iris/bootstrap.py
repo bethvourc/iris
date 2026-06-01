@@ -7,7 +7,9 @@ import sys
 
 
 def main() -> int:
-    root = Path(os.environ.get("IRIS_PROJECT_ROOT", Path(__file__).resolve().parents[2]))
+    root = Path(
+        os.environ.get("IRIS_PROJECT_ROOT", Path(__file__).resolve().parents[2])
+    )
     src = root / "src"
     site_packages = glob.glob(str(root / ".venv" / "lib" / "python*" / "site-packages"))
 

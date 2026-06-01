@@ -7,7 +7,6 @@ import base64
 import struct
 import tempfile
 import threading
-import time
 
 from iris.system import run_command, run_osascript
 
@@ -47,7 +46,9 @@ class PerceptionService:
     def capture_screen(self) -> Screenshot:
         with tempfile.NamedTemporaryFile(suffix=".png", delete=True) as handle:
             path = Path(handle.name)
-            result = run_command(["screencapture", "-x", "-t", "png", str(path)], timeout=20)
+            result = run_command(
+                ["screencapture", "-x", "-t", "png", str(path)], timeout=20
+            )
             if not result.ok:
                 detail = result.stderr or "screencapture failed"
                 raise RuntimeError(
@@ -73,7 +74,7 @@ class PerceptionService:
     def active_app(self) -> str | None:
         script = (
             'tell application "System Events"\n'
-            '  get name of first application process whose frontmost is true\n'
+            "  get name of first application process whose frontmost is true\n"
             "end tell"
         )
         result = run_osascript(script, timeout=15)
@@ -82,7 +83,7 @@ class PerceptionService:
     def active_window_title(self) -> str | None:
         script = (
             'tell application "System Events"\n'
-            '  tell first application process whose frontmost is true\n'
+            "  tell first application process whose frontmost is true\n"
             "    if (count of windows) is greater than 0 then\n"
             "      get name of front window\n"
             "    end if\n"

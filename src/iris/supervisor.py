@@ -8,7 +8,13 @@ from typing import Any, Callable
 from iris.config import IrisConfig
 from iris.safety import CancellationToken
 from iris.state import open_state
-from iris.tasks import add_task_step, cancel_requested, claim_next_task, finish_task, heartbeat_task
+from iris.tasks import (
+    add_task_step,
+    cancel_requested,
+    claim_next_task,
+    finish_task,
+    heartbeat_task,
+)
 
 
 RouterFactory = Callable[[], Any]
@@ -34,7 +40,9 @@ class TaskSupervisor:
         if task is None:
             return SupervisorResult(True, "No queued tasks.")
         task_id = str(task["task_id"])
-        self._log_step(task_id, kind="claim", status="running", message="Task claimed by worker.")
+        self._log_step(
+            task_id, kind="claim", status="running", message="Task claimed by worker."
+        )
         if self._cancelled(task_id):
             with open_state(self.config) as db:
                 add_task_step(
@@ -44,8 +52,15 @@ class TaskSupervisor:
                     status="cancelled",
                     message="Task was cancelled before it started.",
                 )
-                finish_task(db, task_id, status="cancelled", error="cancel requested before start")
-            return SupervisorResult(False, "Task was cancelled before it started.", task_id, "cancelled")
+                finish_task(
+                    db,
+                    task_id,
+                    status="cancelled",
+                    error="cancel requested before start",
+                )
+            return SupervisorResult(
+                False, "Task was cancelled before it started.", task_id, "cancelled"
+            )
         message = self._task_message(task)
         if not message:
             with open_state(self.config) as db:
@@ -56,8 +71,15 @@ class TaskSupervisor:
                     status="failed",
                     message="Task has no executable message or goal.",
                 )
-                finish_task(db, task_id, status="failed", error="task has no executable message or goal")
-            return SupervisorResult(False, "Task has no executable message or goal.", task_id, "failed")
+                finish_task(
+                    db,
+                    task_id,
+                    status="failed",
+                    error="task has no executable message or goal",
+                )
+            return SupervisorResult(
+                False, "Task has no executable message or goal.", task_id, "failed"
+            )
         with open_state(self.config) as db:
             heartbeat_task(db, task_id)
             add_task_step(
@@ -102,7 +124,9 @@ class TaskSupervisor:
                     },
                     error=None if result.ok else result.message,
                 )
-            return SupervisorResult(result.ok, result.message, task_id, status, result.payload)
+            return SupervisorResult(
+                result.ok, result.message, task_id, status, result.payload
+            )
         except Exception as exc:
             with open_state(self.config) as db:
                 add_task_step(

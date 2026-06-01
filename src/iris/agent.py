@@ -7,7 +7,12 @@ import uuid
 from typing import Any, Literal
 
 from iris.actions import RiskLevel
-from iris.approvals import approval_details, create_approval, decide_approval, get_approval
+from iris.approvals import (
+    approval_details,
+    create_approval,
+    decide_approval,
+    get_approval,
+)
 from iris.audit import record_audit
 from iris.computer import ComputerBackend
 from iris.config import IrisConfig
@@ -82,7 +87,7 @@ class AgentPlanner:
                 connector_context=connector_context or [],
             )
             return _planner_result_from_json(raw)
-        except Exception as exc:
+        except Exception:
             return PlannerResult(
                 type="final_answer",
                 spoken_response="I lost the thread for a second. Say that again and I’ll handle it.",
@@ -123,7 +128,7 @@ class AgentPlanner:
                                         "state": session_state,
                                         "last_observation": observations[-1]
                                         if observations
-                                        else None
+                                        else None,
                                     },
                                     "observations": observations,
                                 },
@@ -184,7 +189,9 @@ class AgentExecutor:
         self._session_state: dict[str, Any] = {}
         self._current_cancellation_token: CancellationToken | None = None
 
-    def set_screen_awareness(self, screen_awareness: ScreenAwarenessService | None) -> None:
+    def set_screen_awareness(
+        self, screen_awareness: ScreenAwarenessService | None
+    ) -> None:
         self.screen_awareness = screen_awareness
         self.computer_backend.set_screen_awareness(screen_awareness)
 
@@ -202,7 +209,11 @@ class AgentExecutor:
             return AgentRunResult(False, "I don't have a pending action to approve.")
         approval_id = str(pending.get("approval_id") or "")
         tool_name = str(pending.get("tool_name") or "")
-        arguments = pending.get("arguments") if isinstance(pending.get("arguments"), dict) else {}
+        arguments = (
+            pending.get("arguments")
+            if isinstance(pending.get("arguments"), dict)
+            else {}
+        )
         run_id = str(pending.get("run_id") or uuid.uuid4().hex)
         if not tool_name:
             self._session_state.pop("pending_approval", None)
@@ -210,9 +221,13 @@ class AgentExecutor:
         if approval_id and self.config is not None:
             with open_state(self.config) as db:
                 row = get_approval(db, approval_id)
-                if row is None or not _approval_matches_pending(row, tool_name, arguments):
+                if row is None or not _approval_matches_pending(
+                    row, tool_name, arguments
+                ):
                     self._session_state.pop("pending_approval", None)
-                    return AgentRunResult(False, "That approval no longer matches the pending action.")
+                    return AgentRunResult(
+                        False, "That approval no longer matches the pending action."
+                    )
                 if not decide_approval(db, approval_id, "approved"):
                     self._session_state.pop("pending_approval", None)
                     return AgentRunResult(
@@ -283,7 +298,10 @@ class AgentExecutor:
                     self._audit_agent_event(
                         run_id=run_id,
                         result="ok",
-                        input_value={"request": user_request, "observations": observations},
+                        input_value={
+                            "request": user_request,
+                            "observations": observations,
+                        },
                         output_value={"message": message},
                     )
                     self._remember_turn(user_request, message)
@@ -304,7 +322,10 @@ class AgentExecutor:
                     self._remember_turn(user_request, message)
                     return AgentRunResult(False, message, run_id=run_id)
                 if plan.type != "tool_call" or not plan.tool_name:
-                    message = plan.spoken_response or "I could not decide the next agent action."
+                    message = (
+                        plan.spoken_response
+                        or "I could not decide the next agent action."
+                    )
                     self._remember_turn(user_request, message)
                     return AgentRunResult(False, message, run_id=run_id)
                 result = self._execute_tool(
@@ -343,19 +364,35 @@ class AgentExecutor:
                         "message": result.message,
                     }
                     continue
-                if not result.ok and _is_retryable_tool_error(result.message) and _step + 1 < self.max_steps:
+                if (
+                    not result.ok
+                    and _is_retryable_tool_error(result.message)
+                    and _step + 1 < self.max_steps
+                ):
                     continue
                 if not result.continue_planning:
                     self._remember_turn(user_request, result.message)
                     self._audit_agent_event(
                         run_id=run_id,
                         result="ok" if result.ok else "error",
-                        input_value={"request": user_request, "observations": observations},
-                        output_value={"message": result.message, "payload": result.payload},
+                        input_value={
+                            "request": user_request,
+                            "observations": observations,
+                        },
+                        output_value={
+                            "message": result.message,
+                            "payload": result.payload,
+                        },
                         error=None if result.ok else result.message,
                     )
-                    return AgentRunResult(result.ok, result.message, result.payload, run_id=run_id)
-            message = observations[-1]["message"] if observations else "I could not complete that."
+                    return AgentRunResult(
+                        result.ok, result.message, result.payload, run_id=run_id
+                    )
+            message = (
+                observations[-1]["message"]
+                if observations
+                else "I could not complete that."
+            )
             self._audit_agent_event(
                 run_id=run_id,
                 result="error",
@@ -497,7 +534,9 @@ class AgentExecutor:
                 "tool_name": action_name,
                 "arguments": arguments,
                 "reason": reason,
-                "user_request": str(self._session_state.get("current_user_request") or ""),
+                "user_request": str(
+                    self._session_state.get("current_user_request") or ""
+                ),
             }
             return f"That needs approval before I can do it: {preview}"
         with open_state(self.config) as db:
@@ -648,7 +687,9 @@ def _planner_result_from_json(text: str) -> PlannerResult:
             spoken_response="I lost the thread for a second. Say that again and I’ll handle it.",
             reason="planner_parse_error",
         )
-    result_type = str(data.get("type") or ("tool_call" if data.get("next_tool") else "final_answer"))
+    result_type = str(
+        data.get("type") or ("tool_call" if data.get("next_tool") else "final_answer")
+    )
     if result_type not in {"tool_call", "final_answer", "approval_request"}:
         result_type = "final_answer"
     arguments = data.get("arguments") or data.get("args") or {}
@@ -747,7 +788,10 @@ def _needs_verification(plan: PlannerResult) -> bool:
 
 
 def _human_tool_error(message: str) -> str:
-    if "javascript through applescript is turned off" in message.lower() or "allow javascript from apple events" in message.lower():
+    if (
+        "javascript through applescript is turned off" in message.lower()
+        or "allow javascript from apple events" in message.lower()
+    ):
         return "Chrome automation is off, so I’ll use screen clicks instead."
     if "OpenAI Responses API failed" in message:
         return "The model call failed before I could finish that step."

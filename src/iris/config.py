@@ -7,7 +7,9 @@ import shlex
 
 
 def default_project_root() -> Path:
-    return Path(os.environ.get("IRIS_PROJECT_ROOT") or Path.cwd()).expanduser().resolve()
+    return (
+        Path(os.environ.get("IRIS_PROJECT_ROOT") or Path.cwd()).expanduser().resolve()
+    )
 
 
 DEFAULT_PROJECT_ROOT = default_project_root()

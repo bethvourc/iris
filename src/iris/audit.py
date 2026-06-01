@@ -15,7 +15,11 @@ def now_iso() -> str:
 
 
 def stable_hash(value: Any) -> str:
-    text = value if isinstance(value, str) else json.dumps(value, sort_keys=True, default=str)
+    text = (
+        value
+        if isinstance(value, str)
+        else json.dumps(value, sort_keys=True, default=str)
+    )
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
