@@ -10,7 +10,7 @@ from iris.integrations.google_vision import GoogleVisionClient
 from iris.integrations.openai_client import OpenAIResponsesClient
 from iris.mac_controller import ActionResult, MacController
 from iris.perception import ScreenAwarenessService, PerceptionService
-from iris.safety import SafetyGate
+from iris.safety import CancellationToken, SafetyGate
 from iris.tools import ToolRegistry
 
 
@@ -58,17 +58,25 @@ class ActionRouter:
             computer_use_runner=self.run_computer_use,
         )
 
-    def set_screen_awareness(self, screen_awareness: ScreenAwarenessService | None) -> None:
+    def set_screen_awareness(
+        self, screen_awareness: ScreenAwarenessService | None
+    ) -> None:
         self.screen_awareness = screen_awareness
         self.agent_executor.set_screen_awareness(screen_awareness)
 
-    def handle_text(self, text: str) -> RouterResult:
+    def handle_text(
+        self,
+        text: str,
+        *,
+        cancellation_token: CancellationToken | None = None,
+    ) -> RouterResult:
         command = text.strip()
         if not command:
             return RouterResult(False, "No command provided.")
         lowered = command.lower()
         normalized_command = lowered.strip(" \t\r\n.,!?")
         if lowered in {"stop", "pause", "kill"}:
+            self.agent_executor.cancel_current("Operation cancelled by user.")
             self.safety_gate.kill()
             return RouterResult(True, "Automation paused.")
         if lowered in {"resume", "unpause"}:
@@ -77,13 +85,19 @@ class ActionRouter:
         if lowered in {"reset", "/reset", "reset conversation"}:
             self.reset_conversation()
             return RouterResult(True, "Conversation reset.")
-        if normalized_command in {"approve", "approved", "yes approve", "go ahead", "yes, go ahead"}:
+        if normalized_command in {
+            "approve",
+            "approved",
+            "yes approve",
+            "go ahead",
+            "yes, go ahead",
+        }:
             result = self.agent_executor.approve_pending()
             return RouterResult(result.ok, result.message, result.payload)
         if normalized_command in {"deny", "denied", "cancel that", "never mind", "no"}:
             result = self.agent_executor.deny_pending()
             return RouterResult(result.ok, result.message, result.payload)
-        result = self.agent_executor.run(command)
+        result = self.agent_executor.run(command, cancellation_token=cancellation_token)
         return RouterResult(result.ok, result.message, result.payload)
 
     def reset_conversation(self) -> None:
@@ -152,7 +166,9 @@ class ActionRouter:
             return RouterResult(False, "OPENAI_API_KEY is not configured.")
         screenshot = self.perception.capture_screen()
         try:
-            response = self.openai_client.create_computer_use_response(instruction, screenshot)
+            response = self.openai_client.create_computer_use_response(
+                instruction, screenshot
+            )
         except Exception as exc:
             return self._computer_use_unavailable(exc)
         last_text = self.openai_client.output_text(response)
@@ -161,7 +177,9 @@ class ActionRouter:
             if not calls:
                 return RouterResult(True, last_text or "Computer-use finished.")
             call = calls[0]
-            acknowledged = self._approve_pending_safety_checks(call.pending_safety_checks)
+            acknowledged = self._approve_pending_safety_checks(
+                call.pending_safety_checks
+            )
             action_result = self._execute_computer_action(call.action)
             if not action_result.ok:
                 return RouterResult(False, action_result.detail, action_result)
@@ -191,10 +209,14 @@ class ActionRouter:
                 str(action.get("button", "left")),
             )
         if action_type == "double_click":
-            first = self.controller.click(int(action.get("x", 0)), int(action.get("y", 0)))
+            first = self.controller.click(
+                int(action.get("x", 0)), int(action.get("y", 0))
+            )
             if not first.ok:
                 return first
-            return self.controller.click(int(action.get("x", 0)), int(action.get("y", 0)))
+            return self.controller.click(
+                int(action.get("x", 0)), int(action.get("y", 0))
+            )
         if action_type == "type":
             return self.controller.type_text(str(action.get("text", "")))
         if action_type in {"keypress", "key"}:
@@ -219,7 +241,15 @@ class ActionRouter:
         key = ""
         for raw in keys:
             normalized = raw.lower().replace("meta", "command")
-            if normalized in {"cmd", "command", "shift", "ctrl", "control", "alt", "option"}:
+            if normalized in {
+                "cmd",
+                "command",
+                "shift",
+                "ctrl",
+                "control",
+                "alt",
+                "option",
+            }:
                 modifiers.append(normalized)
             else:
                 key = normalized
@@ -244,7 +274,11 @@ class ActionRouter:
 
     def _computer_use_unavailable(self, exc: Exception) -> RouterResult:
         detail = str(exc)
-        if "computer-use-preview" in detail or "model_not_found" in detail or "403" in detail:
+        if (
+            "computer-use-preview" in detail
+            or "model_not_found" in detail
+            or "403" in detail
+        ):
             return RouterResult(
                 False,
                 (

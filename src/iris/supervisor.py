@@ -6,8 +6,15 @@ import time
 from typing import Any, Callable
 
 from iris.config import IrisConfig
+from iris.safety import CancellationToken
 from iris.state import open_state
-from iris.tasks import add_task_step, cancel_requested, claim_next_task, finish_task, heartbeat_task
+from iris.tasks import (
+    add_task_step,
+    cancel_requested,
+    claim_next_task,
+    finish_task,
+    heartbeat_task,
+)
 
 
 RouterFactory = Callable[[], Any]
@@ -33,7 +40,9 @@ class TaskSupervisor:
         if task is None:
             return SupervisorResult(True, "No queued tasks.")
         task_id = str(task["task_id"])
-        self._log_step(task_id, kind="claim", status="running", message="Task claimed by worker.")
+        self._log_step(
+            task_id, kind="claim", status="running", message="Task claimed by worker."
+        )
         if self._cancelled(task_id):
             with open_state(self.config) as db:
                 add_task_step(
@@ -43,8 +52,15 @@ class TaskSupervisor:
                     status="cancelled",
                     message="Task was cancelled before it started.",
                 )
-                finish_task(db, task_id, status="cancelled", error="cancel requested before start")
-            return SupervisorResult(False, "Task was cancelled before it started.", task_id, "cancelled")
+                finish_task(
+                    db,
+                    task_id,
+                    status="cancelled",
+                    error="cancel requested before start",
+                )
+            return SupervisorResult(
+                False, "Task was cancelled before it started.", task_id, "cancelled"
+            )
         message = self._task_message(task)
         if not message:
             with open_state(self.config) as db:
@@ -55,8 +71,15 @@ class TaskSupervisor:
                     status="failed",
                     message="Task has no executable message or goal.",
                 )
-                finish_task(db, task_id, status="failed", error="task has no executable message or goal")
-            return SupervisorResult(False, "Task has no executable message or goal.", task_id, "failed")
+                finish_task(
+                    db,
+                    task_id,
+                    status="failed",
+                    error="task has no executable message or goal",
+                )
+            return SupervisorResult(
+                False, "Task has no executable message or goal.", task_id, "failed"
+            )
         with open_state(self.config) as db:
             heartbeat_task(db, task_id)
             add_task_step(
@@ -68,15 +91,16 @@ class TaskSupervisor:
                 payload={"message": message},
             )
         router = self.router_factory()
+        cancellation_token = CancellationToken()
         heartbeat_stop = threading.Event()
         heartbeat_thread = threading.Thread(
             target=self._heartbeat_until_stopped,
-            args=(task_id, heartbeat_stop),
+            args=(task_id, heartbeat_stop, cancellation_token),
             daemon=True,
         )
         heartbeat_thread.start()
         try:
-            result = router.handle_text(message)
+            result = router.handle_text(message, cancellation_token=cancellation_token)
             status = "done" if result.ok else _task_status_for_message(result.message)
             if self._cancelled(task_id) and status == "done":
                 status = "cancelled"
@@ -100,7 +124,9 @@ class TaskSupervisor:
                     },
                     error=None if result.ok else result.message,
                 )
-            return SupervisorResult(result.ok, result.message, task_id, status, result.payload)
+            return SupervisorResult(
+                result.ok, result.message, task_id, status, result.payload
+            )
         except Exception as exc:
             with open_state(self.config) as db:
                 add_task_step(
@@ -127,7 +153,12 @@ class TaskSupervisor:
         with open_state(self.config) as db:
             return cancel_requested(db, task_id)
 
-    def _heartbeat_until_stopped(self, task_id: str, stop_event: threading.Event) -> None:
+    def _heartbeat_until_stopped(
+        self,
+        task_id: str,
+        stop_event: threading.Event,
+        cancellation_token: CancellationToken,
+    ) -> None:
         beat = 0
         while not stop_event.wait(3.0):
             beat += 1
@@ -143,6 +174,7 @@ class TaskSupervisor:
                         payload={"beat": beat},
                     )
             if self._cancelled(task_id):
+                cancellation_token.cancel("Task cancellation requested.")
                 with open_state(self.config) as db:
                     add_task_step(
                         db,

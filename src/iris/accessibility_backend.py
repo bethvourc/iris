@@ -36,7 +36,7 @@ class AccessibilityBackend:
     """Native macOS UI inspection/control through Accessibility/System Events."""
 
     def list_apps_windows(self) -> ActionResult:
-        script = r'''
+        script = r"""
 set oldDelims to AppleScript's text item delimiters
 set rows to {}
 tell application "System Events"
@@ -58,10 +58,14 @@ set AppleScript's text item delimiters to linefeed
 set outputText to rows as text
 set AppleScript's text item delimiters to oldDelims
 return outputText
-'''
+"""
         result = run_osascript(script, timeout=10)
         if not result.ok:
-            return ActionResult("accessibility_list_apps_windows", False, _friendly_ax_error(result.stderr))
+            return ActionResult(
+                "accessibility_list_apps_windows",
+                False,
+                _friendly_ax_error(result.stderr),
+            )
         apps = []
         for line in result.stdout.splitlines():
             app_name, _, windows_text = line.partition("\t")
@@ -70,7 +74,9 @@ return outputText
             apps.append(
                 {
                     "app": app_name,
-                    "windows": [item.strip() for item in windows_text.split("|") if item.strip()],
+                    "windows": [
+                        item.strip() for item in windows_text.split("|") if item.strip()
+                    ],
                 }
             )
         return ActionResult(
@@ -80,13 +86,17 @@ return outputText
             {"apps": apps},
         )
 
-    def inspect_focused_app(self, *, max_depth: int = 3, max_items: int = 120) -> ActionResult:
+    def inspect_focused_app(
+        self, *, max_depth: int = 3, max_items: int = 120
+    ) -> ActionResult:
         max_depth = max(1, min(int(max_depth), 6))
         max_items = max(10, min(int(max_items), 300))
-        pyobjc_result = _inspect_focused_app_pyobjc(max_depth=max_depth, max_items=max_items)
+        pyobjc_result = _inspect_focused_app_pyobjc(
+            max_depth=max_depth, max_items=max_items
+        )
         if pyobjc_result.ok:
             return pyobjc_result
-        script = f'''
+        script = f"""
 property rows : {{}}
 property itemCount : 0
 property maxDepthValue : {max_depth}
@@ -144,10 +154,14 @@ set AppleScript's text item delimiters to linefeed
 set outputText to rows as text
 set AppleScript's text item delimiters to oldDelims
 return outputText
-'''
+"""
         result = run_osascript(script, timeout=12)
         if not result.ok:
-            return ActionResult("accessibility_inspect_focused_app", False, _friendly_ax_error(result.stderr))
+            return ActionResult(
+                "accessibility_inspect_focused_app",
+                False,
+                _friendly_ax_error(result.stderr),
+            )
         elements = _parse_elements(result.stdout)
         app_name = elements[0].app if elements else ""
         return ActionResult(
@@ -162,10 +176,16 @@ return outputText
             },
         )
 
-    def find_element(self, query: str, *, max_depth: int = 5, max_items: int = 220) -> ActionResult:
+    def find_element(
+        self, query: str, *, max_depth: int = 5, max_items: int = 220
+    ) -> ActionResult:
         query = query.strip()
         if not query:
-            return ActionResult("accessibility_find_element", False, "I need an element name or description.")
+            return ActionResult(
+                "accessibility_find_element",
+                False,
+                "I need an element name or description.",
+            )
         inspected = self.inspect_focused_app(max_depth=max_depth, max_items=max_items)
         if not inspected.ok:
             return inspected
@@ -201,11 +221,15 @@ return outputText
     def click_element(self, query: str) -> ActionResult:
         query = query.strip()
         if not query:
-            return ActionResult("accessibility_click_element", False, "I need an element name or description.")
+            return ActionResult(
+                "accessibility_click_element",
+                False,
+                "I need an element name or description.",
+            )
         pyobjc_result = _click_element_pyobjc(query)
         if pyobjc_result.ok:
             return pyobjc_result
-        script = f'''
+        script = f"""
 property needle : {applescript_string(query.lower())}
 property clickedElement : false
 
@@ -250,10 +274,15 @@ tell application "System Events"
 end tell
 if clickedElement then return "clicked"
 return "not found"
-'''
+"""
         result = run_osascript(script, timeout=12)
         if result.ok and "clicked" in result.stdout.lower():
-            return ActionResult("accessibility_click_element", True, f"Clicked {query}.", {"query": query})
+            return ActionResult(
+                "accessibility_click_element",
+                True,
+                f"Clicked {query}.",
+                {"query": query},
+            )
         if result.ok:
             return ActionResult(
                 "accessibility_click_element",
@@ -261,17 +290,25 @@ return "not found"
                 f"I could not click a native UI element matching {query}.",
                 {"query": query},
             )
-        return ActionResult("accessibility_click_element", False, _friendly_ax_error(result.stderr))
+        return ActionResult(
+            "accessibility_click_element", False, _friendly_ax_error(result.stderr)
+        )
 
     def type_text(self, text: str) -> ActionResult:
         if not text:
-            return ActionResult("accessibility_type_text", False, "I need text to type.")
-        script = f'tell application "System Events" to keystroke {applescript_string(text)}'
+            return ActionResult(
+                "accessibility_type_text", False, "I need text to type."
+            )
+        script = (
+            f'tell application "System Events" to keystroke {applescript_string(text)}'
+        )
         result = run_osascript(script, timeout=10)
         return ActionResult(
             "accessibility_type_text",
             result.ok,
-            "Typed into the focused field." if result.ok else _friendly_ax_error(result.stderr),
+            "Typed into the focused field."
+            if result.ok
+            else _friendly_ax_error(result.stderr),
             {"chars": len(text)} if result.ok else None,
         )
 
@@ -279,7 +316,9 @@ return "not found"
         app_name = app_name.strip()
         parts = [part.strip() for part in menu_path if part.strip()]
         if not app_name:
-            return ActionResult("accessibility_menu_select", False, "I need an app name.")
+            return ActionResult(
+                "accessibility_menu_select", False, "I need an app name."
+            )
         if len(parts) < 2:
             return ActionResult(
                 "accessibility_menu_select",
@@ -299,7 +338,9 @@ return "not found"
         return ActionResult(
             "accessibility_menu_select",
             result.ok,
-            f"Selected {' > '.join(parts)} in {app_name}." if result.ok else _friendly_ax_error(result.stderr),
+            f"Selected {' > '.join(parts)} in {app_name}."
+            if result.ok
+            else _friendly_ax_error(result.stderr),
             {"app": app_name, "menu_path": parts} if result.ok else None,
         )
 
@@ -328,7 +369,11 @@ def _parse_elements(output: str) -> list[AccessibilityElement]:
 def _inspect_focused_app_pyobjc(*, max_depth: int, max_items: int) -> ActionResult:
     loaded = _load_pyobjc_ax()
     if loaded is None:
-        return ActionResult("accessibility_inspect_focused_app", False, "PyObjC Accessibility is unavailable.")
+        return ActionResult(
+            "accessibility_inspect_focused_app",
+            False,
+            "PyObjC Accessibility is unavailable.",
+        )
     appkit, quartz = loaded
     if hasattr(quartz, "AXIsProcessTrusted") and not quartz.AXIsProcessTrusted():
         return ActionResult(
@@ -338,7 +383,9 @@ def _inspect_focused_app_pyobjc(*, max_depth: int, max_items: int) -> ActionResu
         )
     frontmost = appkit.NSWorkspace.sharedWorkspace().frontmostApplication()
     if frontmost is None:
-        return ActionResult("accessibility_inspect_focused_app", False, "No focused app is available.")
+        return ActionResult(
+            "accessibility_inspect_focused_app", False, "No focused app is available."
+        )
     app_name = str(frontmost.localizedName() or "")
     pid = int(frontmost.processIdentifier())
     root = quartz.AXUIElementCreateApplication(pid)
@@ -366,7 +413,11 @@ def _inspect_focused_app_pyobjc(*, max_depth: int, max_items: int) -> ActionResu
     try:
         visit(root, 0)
     except Exception as exc:
-        return ActionResult("accessibility_inspect_focused_app", False, f"PyObjC Accessibility failed: {exc}")
+        return ActionResult(
+            "accessibility_inspect_focused_app",
+            False,
+            f"PyObjC Accessibility failed: {exc}",
+        )
     return ActionResult(
         "accessibility_inspect_focused_app",
         True,
@@ -384,7 +435,9 @@ def _inspect_focused_app_pyobjc(*, max_depth: int, max_items: int) -> ActionResu
 def _click_element_pyobjc(query: str) -> ActionResult:
     loaded = _load_pyobjc_ax()
     if loaded is None:
-        return ActionResult("accessibility_click_element", False, "PyObjC Accessibility is unavailable.")
+        return ActionResult(
+            "accessibility_click_element", False, "PyObjC Accessibility is unavailable."
+        )
     appkit, quartz = loaded
     if hasattr(quartz, "AXIsProcessTrusted") and not quartz.AXIsProcessTrusted():
         return ActionResult(
@@ -394,22 +447,34 @@ def _click_element_pyobjc(query: str) -> ActionResult:
         )
     frontmost = appkit.NSWorkspace.sharedWorkspace().frontmostApplication()
     if frontmost is None:
-        return ActionResult("accessibility_click_element", False, "No focused app is available.")
+        return ActionResult(
+            "accessibility_click_element", False, "No focused app is available."
+        )
     app_name = str(frontmost.localizedName() or "")
     root = quartz.AXUIElementCreateApplication(int(frontmost.processIdentifier()))
     match = _find_ax_match(quartz, root, app_name, query)
     if match is None:
-        return ActionResult("accessibility_click_element", False, f"I could not find a native UI element matching {query}.")
+        return ActionResult(
+            "accessibility_click_element",
+            False,
+            f"I could not find a native UI element matching {query}.",
+        )
     element, summary = match
     try:
-        outcome = quartz.AXUIElementPerformAction(element, getattr(quartz, "kAXPressAction", "AXPress"))
+        outcome = quartz.AXUIElementPerformAction(
+            element, getattr(quartz, "kAXPressAction", "AXPress")
+        )
     except Exception as exc:
-        return ActionResult("accessibility_click_element", False, f"Accessibility press failed: {exc}")
+        return ActionResult(
+            "accessibility_click_element", False, f"Accessibility press failed: {exc}"
+        )
     ok = outcome == 0 or outcome is None
     return ActionResult(
         "accessibility_click_element",
         ok,
-        f"Clicked {summary.name or summary.description or query}." if ok else "Accessibility press did not complete.",
+        f"Clicked {summary.name or summary.description or query}."
+        if ok
+        else "Accessibility press did not complete.",
         {"query": query, "element": summary.summary(), "backend": "pyobjc"},
     )
 
@@ -454,11 +519,17 @@ def _find_ax_match(
     return None
 
 
-def _element_from_ax(quartz: Any, element: Any, app_name: str, depth: int) -> AccessibilityElement:
+def _element_from_ax(
+    quartz: Any, element: Any, app_name: str, depth: int
+) -> AccessibilityElement:
     role = _ax_string(quartz, element, "AXRole")
-    name = _ax_string(quartz, element, "AXTitle") or _ax_string(quartz, element, "AXIdentifier")
+    name = _ax_string(quartz, element, "AXTitle") or _ax_string(
+        quartz, element, "AXIdentifier"
+    )
     value = _ax_string(quartz, element, "AXValue")
-    description = _ax_string(quartz, element, "AXDescription") or _ax_string(quartz, element, "AXHelp")
+    description = _ax_string(quartz, element, "AXDescription") or _ax_string(
+        quartz, element, "AXHelp"
+    )
     return AccessibilityElement(
         app=app_name,
         role=role,
@@ -516,11 +587,19 @@ def _ax_pair(quartz: Any, element: Any, attribute: str) -> tuple[int, int] | Non
     if value is None:
         return None
     try:
-        if hasattr(quartz, "AXValueGetValue") and hasattr(quartz, "kAXValueCGPointType") and attribute == "AXPosition":
+        if (
+            hasattr(quartz, "AXValueGetValue")
+            and hasattr(quartz, "kAXValueCGPointType")
+            and attribute == "AXPosition"
+        ):
             ok, point = quartz.AXValueGetValue(value, quartz.kAXValueCGPointType, None)
             if ok and point is not None:
                 return int(point.x), int(point.y)
-        if hasattr(quartz, "AXValueGetValue") and hasattr(quartz, "kAXValueCGSizeType") and attribute == "AXSize":
+        if (
+            hasattr(quartz, "AXValueGetValue")
+            and hasattr(quartz, "kAXValueCGSizeType")
+            and attribute == "AXSize"
+        ):
             ok, size = quartz.AXValueGetValue(value, quartz.kAXValueCGSizeType, None)
             if ok and size is not None:
                 return int(size.width), int(size.height)
@@ -529,7 +608,9 @@ def _ax_pair(quartz: Any, element: Any, attribute: str) -> tuple[int, int] | Non
     return None
 
 
-def _best_match(elements: list[AccessibilityElement], query: str) -> AccessibilityElement | None:
+def _best_match(
+    elements: list[AccessibilityElement], query: str
+) -> AccessibilityElement | None:
     needle = _normalize(query)
     if not needle:
         return None
@@ -557,7 +638,13 @@ def _best_match(elements: list[AccessibilityElement], query: str) -> Accessibili
                     score = max(score, 55)
         if element.position and element.size:
             score += 4
-        if element.role.lower() in {"button", "checkbox", "radio button", "menu item", "text field"}:
+        if element.role.lower() in {
+            "button",
+            "checkbox",
+            "radio button",
+            "menu item",
+            "text field",
+        }:
             score += 6
         if score and (best is None or score > best[0]):
             best = (score, element)
@@ -598,7 +685,9 @@ def _menu_target_expression(parts: list[str]) -> str:
     first = applescript_string(parts[0])
     last = applescript_string(parts[-1])
     if len(parts) == 2:
-        return f"menu item {last} of menu {first} of menu bar item {first} of menu bar 1"
+        return (
+            f"menu item {last} of menu {first} of menu bar item {first} of menu bar 1"
+        )
     target = f"menu item {last}"
     for label in reversed(parts[1:-1]):
         quoted = applescript_string(label)
@@ -608,7 +697,11 @@ def _menu_target_expression(parts: list[str]) -> str:
 
 def _friendly_ax_error(detail: str) -> str:
     lowered = (detail or "").lower()
-    if "not authorized" in lowered or "assistive access" in lowered or "not allowed" in lowered:
+    if (
+        "not authorized" in lowered
+        or "assistive access" in lowered
+        or "not allowed" in lowered
+    ):
         return "Accessibility permission is missing for the app running Iris."
     if "system events got an error" in lowered:
         return "macOS Accessibility could not read the focused app yet."

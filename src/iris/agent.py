@@ -7,7 +7,12 @@ import uuid
 from typing import Any, Literal
 
 from iris.actions import RiskLevel
-from iris.approvals import create_approval, decide_approval
+from iris.approvals import (
+    approval_details,
+    create_approval,
+    decide_approval,
+    get_approval,
+)
 from iris.audit import record_audit
 from iris.computer import ComputerBackend
 from iris.config import IrisConfig
@@ -17,7 +22,7 @@ from iris.integrations.openai_client import OpenAIResponsesClient
 from iris.mac_controller import MacController
 from iris.perception import PerceptionService, ScreenAwarenessService
 from iris.recipes import ActionRecipeRegistry
-from iris.safety import SafetyGate
+from iris.safety import AutomationPaused, CancellationToken, SafetyGate
 from iris.state import open_state
 from iris.tools import ApprovalRequired, ToolContext, ToolRegistry, ToolResult
 
@@ -82,7 +87,7 @@ class AgentPlanner:
                 connector_context=connector_context or [],
             )
             return _planner_result_from_json(raw)
-        except Exception as exc:
+        except Exception:
             return PlannerResult(
                 type="final_answer",
                 spoken_response="I lost the thread for a second. Say that again and I’ll handle it.",
@@ -123,7 +128,7 @@ class AgentPlanner:
                                         "state": session_state,
                                         "last_observation": observations[-1]
                                         if observations
-                                        else None
+                                        else None,
                                     },
                                     "observations": observations,
                                 },
@@ -182,8 +187,11 @@ class AgentExecutor:
         self.max_steps = max(1, max_steps)
         self._conversation_history: list[dict[str, str]] = []
         self._session_state: dict[str, Any] = {}
+        self._current_cancellation_token: CancellationToken | None = None
 
-    def set_screen_awareness(self, screen_awareness: ScreenAwarenessService | None) -> None:
+    def set_screen_awareness(
+        self, screen_awareness: ScreenAwarenessService | None
+    ) -> None:
         self.screen_awareness = screen_awareness
         self.computer_backend.set_screen_awareness(screen_awareness)
 
@@ -191,20 +199,41 @@ class AgentExecutor:
         self._conversation_history.clear()
         self._session_state.pop("pending_approval", None)
 
+    def cancel_current(self, reason: str = "Operation cancelled.") -> None:
+        if self._current_cancellation_token is not None:
+            self._current_cancellation_token.cancel(reason)
+
     def approve_pending(self) -> AgentRunResult:
         pending = self._session_state.get("pending_approval")
         if not isinstance(pending, dict):
             return AgentRunResult(False, "I don't have a pending action to approve.")
         approval_id = str(pending.get("approval_id") or "")
         tool_name = str(pending.get("tool_name") or "")
-        arguments = pending.get("arguments") if isinstance(pending.get("arguments"), dict) else {}
+        arguments = (
+            pending.get("arguments")
+            if isinstance(pending.get("arguments"), dict)
+            else {}
+        )
         run_id = str(pending.get("run_id") or uuid.uuid4().hex)
         if not tool_name:
             self._session_state.pop("pending_approval", None)
             return AgentRunResult(False, "That pending approval is missing its action.")
         if approval_id and self.config is not None:
             with open_state(self.config) as db:
-                decide_approval(db, approval_id, "approved")
+                row = get_approval(db, approval_id)
+                if row is None or not _approval_matches_pending(
+                    row, tool_name, arguments
+                ):
+                    self._session_state.pop("pending_approval", None)
+                    return AgentRunResult(
+                        False, "That approval no longer matches the pending action."
+                    )
+                if not decide_approval(db, approval_id, "approved"):
+                    self._session_state.pop("pending_approval", None)
+                    return AgentRunResult(
+                        False,
+                        "That approval is no longer pending or has expired. Please ask me to try again.",
+                    )
         original_pending = pending
         result = self._execute_tool(run_id, tool_name, arguments, approved=True)
         user_request = str(pending.get("user_request") or "")
@@ -239,101 +268,154 @@ class AgentExecutor:
                 decide_approval(db, approval_id, "denied")
         return AgentRunResult(True, "Okay, I won't do that.")
 
-    def run(self, user_request: str) -> AgentRunResult:
+    def run(
+        self,
+        user_request: str,
+        *,
+        cancellation_token: CancellationToken | None = None,
+    ) -> AgentRunResult:
         run_id = uuid.uuid4().hex
         observations: list[dict[str, Any]] = []
+        token = cancellation_token or CancellationToken()
+        self._current_cancellation_token = token
         self._session_state["current_user_request"] = user_request
-        for _step in range(self.max_steps):
-            plan = self.planner.plan(
-                user_request=user_request,
-                tool_schemas=self.registry.schemas(),
-                action_recipes=self.recipes.schemas(),
-                screen_context=self._screen_context_summary(),
-                conversation_history=self._conversation_history,
-                observations=observations,
-                session_state=self._session_state,
-                connector_context=self._connector_context(),
+        try:
+            for _step in range(self.max_steps):
+                token.throw_if_cancelled()
+                plan = self.planner.plan(
+                    user_request=user_request,
+                    tool_schemas=self.registry.schemas(),
+                    action_recipes=self.recipes.schemas(),
+                    screen_context=self._screen_context_summary(),
+                    conversation_history=self._conversation_history,
+                    observations=observations,
+                    session_state=self._session_state,
+                    connector_context=self._connector_context(),
+                )
+                token.throw_if_cancelled()
+                if plan.type == "final_answer":
+                    message = plan.spoken_response or plan.user_message or "I am here."
+                    self._audit_agent_event(
+                        run_id=run_id,
+                        result="ok",
+                        input_value={
+                            "request": user_request,
+                            "observations": observations,
+                        },
+                        output_value={"message": message},
+                    )
+                    self._remember_turn(user_request, message)
+                    return AgentRunResult(True, message, run_id=run_id)
+                if plan.type == "approval_request":
+                    message = self._create_approval(
+                        run_id=run_id,
+                        action_name=plan.tool_name or "agent_action",
+                        arguments=plan.arguments,
+                        reason=plan.reason or plan.spoken_response,
+                    )
+                    self._audit_agent_event(
+                        run_id=run_id,
+                        result="approval_required",
+                        input_value={"request": user_request, "plan": plan},
+                        output_value={"message": message},
+                    )
+                    self._remember_turn(user_request, message)
+                    return AgentRunResult(False, message, run_id=run_id)
+                if plan.type != "tool_call" or not plan.tool_name:
+                    message = (
+                        plan.spoken_response
+                        or "I could not decide the next agent action."
+                    )
+                    self._remember_turn(user_request, message)
+                    return AgentRunResult(False, message, run_id=run_id)
+                result = self._execute_tool(
+                    run_id,
+                    plan.tool_name,
+                    plan.arguments,
+                    cancellation_token=token,
+                )
+                token.throw_if_cancelled()
+                observations.append(
+                    {
+                        "tool_name": plan.tool_name,
+                        "arguments": plan.arguments,
+                        "ok": result.ok,
+                        "message": result.message,
+                        "payload": result.payload,
+                        "expected_observation": plan.expected_observation,
+                        "done_condition": plan.done_condition,
+                        "post_action_screen": self._screen_context_summary()
+                        if result.ok or result.continue_planning
+                        else None,
+                    }
+                )
+                token.throw_if_cancelled()
+                if result.continue_planning:
+                    continue
+                if (
+                    result.ok
+                    and _needs_verification(plan)
+                    and _step + 1 < self.max_steps
+                ):
+                    self._session_state["last_step_needs_verification"] = {
+                        "tool_name": plan.tool_name,
+                        "expected_observation": plan.expected_observation,
+                        "done_condition": plan.done_condition,
+                        "message": result.message,
+                    }
+                    continue
+                if (
+                    not result.ok
+                    and _is_retryable_tool_error(result.message)
+                    and _step + 1 < self.max_steps
+                ):
+                    continue
+                if not result.continue_planning:
+                    self._remember_turn(user_request, result.message)
+                    self._audit_agent_event(
+                        run_id=run_id,
+                        result="ok" if result.ok else "error",
+                        input_value={
+                            "request": user_request,
+                            "observations": observations,
+                        },
+                        output_value={
+                            "message": result.message,
+                            "payload": result.payload,
+                        },
+                        error=None if result.ok else result.message,
+                    )
+                    return AgentRunResult(
+                        result.ok, result.message, result.payload, run_id=run_id
+                    )
+            message = (
+                observations[-1]["message"]
+                if observations
+                else "I could not complete that."
             )
-            if plan.type == "final_answer":
-                message = plan.spoken_response or plan.user_message or "I am here."
-                self._audit_agent_event(
-                    run_id=run_id,
-                    result="ok",
-                    input_value={"request": user_request, "observations": observations},
-                    output_value={"message": message},
-                )
-                self._remember_turn(user_request, message)
-                return AgentRunResult(True, message, run_id=run_id)
-            if plan.type == "approval_request":
-                message = self._create_approval(
-                    run_id=run_id,
-                    action_name=plan.tool_name or "agent_action",
-                    arguments=plan.arguments,
-                    reason=plan.reason or plan.spoken_response,
-                )
-                self._audit_agent_event(
-                    run_id=run_id,
-                    result="approval_required",
-                    input_value={"request": user_request, "plan": plan},
-                    output_value={"message": message},
-                )
-                self._remember_turn(user_request, message)
-                return AgentRunResult(False, message, run_id=run_id)
-            if plan.type != "tool_call" or not plan.tool_name:
-                message = plan.spoken_response or "I could not decide the next agent action."
-                self._remember_turn(user_request, message)
-                return AgentRunResult(False, message, run_id=run_id)
-            result = self._execute_tool(run_id, plan.tool_name, plan.arguments)
-            observations.append(
-                {
-                    "tool_name": plan.tool_name,
-                    "arguments": plan.arguments,
-                    "ok": result.ok,
-                    "message": result.message,
-                    "payload": result.payload,
-                    "expected_observation": plan.expected_observation,
-                    "done_condition": plan.done_condition,
-                    "post_action_screen": self._screen_context_summary()
-                    if result.ok or result.continue_planning
-                    else None,
-                }
+            self._audit_agent_event(
+                run_id=run_id,
+                result="error",
+                input_value={"request": user_request, "observations": observations},
+                output_value={"message": message},
+                error=str(message),
             )
-            if result.continue_planning:
-                continue
-            if (
-                result.ok
-                and _needs_verification(plan)
-                and _step + 1 < self.max_steps
-            ):
-                self._session_state["last_step_needs_verification"] = {
-                    "tool_name": plan.tool_name,
-                    "expected_observation": plan.expected_observation,
-                    "done_condition": plan.done_condition,
-                    "message": result.message,
-                }
-                continue
-            if not result.ok and _is_retryable_tool_error(result.message) and _step + 1 < self.max_steps:
-                continue
-            if not result.continue_planning:
-                self._remember_turn(user_request, result.message)
-                self._audit_agent_event(
-                    run_id=run_id,
-                    result="ok" if result.ok else "error",
-                    input_value={"request": user_request, "observations": observations},
-                    output_value={"message": result.message, "payload": result.payload},
-                    error=None if result.ok else result.message,
-                )
-                return AgentRunResult(result.ok, result.message, result.payload, run_id=run_id)
-        message = observations[-1]["message"] if observations else "I could not complete that."
-        self._audit_agent_event(
-            run_id=run_id,
-            result="error",
-            input_value={"request": user_request, "observations": observations},
-            output_value={"message": message},
-            error=str(message),
-        )
-        self._remember_turn(user_request, str(message))
-        return AgentRunResult(False, str(message), run_id=run_id)
+            self._remember_turn(user_request, str(message))
+            return AgentRunResult(False, str(message), run_id=run_id)
+        except AutomationPaused as exc:
+            message = str(exc) or "Operation cancelled."
+            self._audit_agent_event(
+                run_id=run_id,
+                result="cancelled",
+                input_value={"request": user_request, "observations": observations},
+                output_value={"message": message},
+                error=message,
+            )
+            self._remember_turn(user_request, message)
+            return AgentRunResult(False, message, run_id=run_id)
+        finally:
+            if self._current_cancellation_token is token:
+                self._current_cancellation_token = None
 
     def _execute_tool(
         self,
@@ -342,6 +424,7 @@ class AgentExecutor:
         arguments: dict[str, Any],
         *,
         approved: bool = False,
+        cancellation_token: CancellationToken | None = None,
     ) -> ToolResult:
         tool = self.registry.get(tool_name)
         risk = tool.risk if tool else RiskLevel.BLOCKED
@@ -358,6 +441,7 @@ class AgentExecutor:
             recipes=self.recipes,
             config=self.config,
             approved_tool_call=approved,
+            cancellation_token=cancellation_token,
         )
         try:
             result = (
@@ -450,7 +534,9 @@ class AgentExecutor:
                 "tool_name": action_name,
                 "arguments": arguments,
                 "reason": reason,
-                "user_request": str(self._session_state.get("current_user_request") or ""),
+                "user_request": str(
+                    self._session_state.get("current_user_request") or ""
+                ),
             }
             return f"That needs approval before I can do it: {preview}"
         with open_state(self.config) as db:
@@ -601,7 +687,9 @@ def _planner_result_from_json(text: str) -> PlannerResult:
             spoken_response="I lost the thread for a second. Say that again and I’ll handle it.",
             reason="planner_parse_error",
         )
-    result_type = str(data.get("type") or ("tool_call" if data.get("next_tool") else "final_answer"))
+    result_type = str(
+        data.get("type") or ("tool_call" if data.get("next_tool") else "final_answer")
+    )
     if result_type not in {"tool_call", "final_answer", "approval_request"}:
         result_type = "final_answer"
     arguments = data.get("arguments") or data.get("args") or {}
@@ -618,6 +706,18 @@ def _planner_result_from_json(text: str) -> PlannerResult:
         done_condition=str(data.get("done_condition") or ""),
         user_message=str(data.get("user_message") or ""),
     )
+
+
+def _approval_matches_pending(
+    approval_row: dict[str, Any],
+    tool_name: str,
+    arguments: dict[str, Any],
+) -> bool:
+    if str(approval_row.get("action_name") or "") != tool_name:
+        return False
+    details = approval_details(approval_row)
+    stored_arguments = details.get("arguments")
+    return not isinstance(stored_arguments, dict) or stored_arguments == arguments
 
 
 def _extract_json_object(text: str) -> dict[str, Any]:
@@ -688,7 +788,10 @@ def _needs_verification(plan: PlannerResult) -> bool:
 
 
 def _human_tool_error(message: str) -> str:
-    if "javascript through applescript is turned off" in message.lower() or "allow javascript from apple events" in message.lower():
+    if (
+        "javascript through applescript is turned off" in message.lower()
+        or "allow javascript from apple events" in message.lower()
+    ):
         return "Chrome automation is off, so I’ll use screen clicks instead."
     if "OpenAI Responses API failed" in message:
         return "The model call failed before I could finish that step."

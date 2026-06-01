@@ -239,7 +239,9 @@ def search_pages(
             row["snippet"] = _snippet(str(row.get("content") or ""), terms)
             row["score"] = score
             scored.append((score, row))
-    scored.sort(key=lambda item: (item[0], str(item[1].get("updated_at") or "")), reverse=True)
+    scored.sort(
+        key=lambda item: (item[0], str(item[1].get("updated_at") or "")), reverse=True
+    )
     return [row for _, row in scored[: max(1, min(limit, 50))]]
 
 

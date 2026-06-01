@@ -7,7 +7,12 @@ from typing import Any
 from iris.config import IrisConfig
 from iris.control_backends import control_backend_status
 from iris.mac_controller import ActionResult, MacController
-from iris.perception import LiveScreenFrame, PerceptionService, ScreenAwarenessService, Screenshot
+from iris.perception import (
+    LiveScreenFrame,
+    PerceptionService,
+    ScreenAwarenessService,
+    Screenshot,
+)
 
 
 @dataclass(frozen=True)
@@ -54,10 +59,14 @@ class ComputerBackend:
         self.screen_awareness = screen_awareness
         self.browser = browser
 
-    def set_screen_awareness(self, screen_awareness: ScreenAwarenessService | None) -> None:
+    def set_screen_awareness(
+        self, screen_awareness: ScreenAwarenessService | None
+    ) -> None:
         self.screen_awareness = screen_awareness
 
-    def observe(self, *, include_browser: bool = True, capture_if_needed: bool = False) -> ComputerObservation:
+    def observe(
+        self, *, include_browser: bool = True, capture_if_needed: bool = False
+    ) -> ComputerObservation:
         frame: LiveScreenFrame | None = None
         error: str | None = None
         if self.screen_awareness is not None:
@@ -109,7 +118,9 @@ class ComputerBackend:
     def activate_app(self, app_name: str) -> ActionResult:
         return self.controller.activate_app(app_name)
 
-    def open_url(self, url: str, browser: str = "Google Chrome", *, new_tab: bool = False) -> ActionResult:
+    def open_url(
+        self, url: str, browser: str = "Google Chrome", *, new_tab: bool = False
+    ) -> ActionResult:
         if new_tab:
             return self.controller.open_url_in_browser(url, browser)
         return self.controller.browser_navigate_current(url, browser)
@@ -120,13 +131,17 @@ class ComputerBackend:
     def browser_extract_text(self, browser: str = "Google Chrome") -> ActionResult:
         return self.controller.browser_extract_text(browser)
 
-    def browser_click_text(self, text: str, browser: str = "Google Chrome") -> ActionResult:
+    def browser_click_text(
+        self, text: str, browser: str = "Google Chrome"
+    ) -> ActionResult:
         return self.controller.browser_click_text(text, browser)
 
     def type_text(self, text: str) -> ActionResult:
         return self.controller.type_text(text)
 
-    def press_hotkey(self, key: str, modifiers: list[str] | None = None) -> ActionResult:
+    def press_hotkey(
+        self, key: str, modifiers: list[str] | None = None
+    ) -> ActionResult:
         return self.controller.press_hotkey(key, modifiers or [])
 
     def click(self, x: int, y: int, button: str = "left") -> ActionResult:

@@ -31,7 +31,9 @@ class PermissionChecker:
             import sounddevice  # type: ignore
 
             devices = sounddevice.query_devices()
-            has_input = any(device.get("max_input_channels", 0) > 0 for device in devices)
+            has_input = any(
+                device.get("max_input_channels", 0) > 0 for device in devices
+            )
             if has_input:
                 status = "available"
                 detail = "Input audio devices are visible to Python."
@@ -60,7 +62,9 @@ class PermissionChecker:
             )
         with tempfile.NamedTemporaryFile(suffix=".png", delete=True) as handle:
             path = Path(handle.name)
-            result = run_command(["screencapture", "-x", "-t", "png", str(path)], timeout=8)
+            result = run_command(
+                ["screencapture", "-x", "-t", "png", str(path)], timeout=8
+            )
             size = path.stat().st_size if path.exists() else 0
         if result.ok and size > 0:
             status = "available"
@@ -88,7 +92,9 @@ class PermissionChecker:
             )
         else:
             status = "missing"
-            detail = result.stderr or "System Events did not allow accessibility access."
+            detail = (
+                result.stderr or "System Events did not allow accessibility access."
+            )
         return PermissionStatus(
             name="Accessibility",
             status=status,
@@ -100,7 +106,7 @@ class PermissionChecker:
     def check_automation(self) -> PermissionStatus:
         script = (
             'tell application "System Events"\n'
-            '  set frontApp to name of first application process whose frontmost is true\n'
+            "  set frontApp to name of first application process whose frontmost is true\n"
             "end tell\n"
             "return frontApp"
         )

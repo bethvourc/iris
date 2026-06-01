@@ -79,7 +79,9 @@ class NotificationService:
             method="POST",
         )
         try:
-            with urlopen(request, timeout=self.config.notify_timeout_seconds) as response:
+            with urlopen(
+                request, timeout=self.config.notify_timeout_seconds
+            ) as response:
                 status_code = getattr(response, "status", None)
                 ok = status_code is None or 200 <= int(status_code) < 300
                 detail = "phone notification sent" if ok else "ntfy rejected message"
@@ -119,13 +121,19 @@ class NotificationService:
             method="POST",
         )
         try:
-            with urlopen(request, timeout=self.config.notify_timeout_seconds) as response:
+            with urlopen(
+                request, timeout=self.config.notify_timeout_seconds
+            ) as response:
                 status_code = getattr(response, "status", None)
                 ok = status_code is None or 200 <= int(status_code) < 300
-                detail = "phone notification sent" if ok else "Pushover rejected message"
+                detail = (
+                    "phone notification sent" if ok else "Pushover rejected message"
+                )
                 return NotificationResult(ok, detail, status_code)
         except HTTPError as exc:
-            return NotificationResult(False, f"Pushover HTTP error: {exc.code}", exc.code)
+            return NotificationResult(
+                False, f"Pushover HTTP error: {exc.code}", exc.code
+            )
         except URLError as exc:
             return NotificationResult(False, f"Pushover network error: {exc.reason}")
         except TimeoutError:

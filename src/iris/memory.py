@@ -44,7 +44,9 @@ def add_memory(
     return memory_id
 
 
-def list_memories(db: sqlite3.Connection, category: str | None = None) -> list[dict[str, object]]:
+def list_memories(
+    db: sqlite3.Connection, category: str | None = None
+) -> list[dict[str, object]]:
     if category:
         rows = db.execute(
             "SELECT * FROM memories WHERE category = ? ORDER BY updated_at DESC",

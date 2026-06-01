@@ -25,7 +25,13 @@ class ConnectorDescriptor:
     metadata: dict[str, Any] | None = None
 
 
-LOCAL_READY_AUTH_TYPES = {"none", "local", "mac_permission", "browser_session", "local_app"}
+LOCAL_READY_AUTH_TYPES = {
+    "none",
+    "local",
+    "mac_permission",
+    "browser_session",
+    "local_app",
+}
 
 
 def default_manifest_dirs(project_root: Path | None = None) -> list[Path]:
@@ -127,7 +133,11 @@ def set_connector_enabled(
 ) -> bool:
     descriptors = load_connectors(manifest_dirs)
     descriptor = next(
-        (item for item in descriptors if _normalize(item.connector_id) == _normalize(connector_id)),
+        (
+            item
+            for item in descriptors
+            if _normalize(item.connector_id) == _normalize(connector_id)
+        ),
         None,
     )
     if descriptor is None:
@@ -186,7 +196,9 @@ def _load_manifest_file(path: Path) -> list[ConnectorDescriptor]:
                 risk=str(item.get("risk") or "low"),
                 enabled_by_default=bool(item.get("enabled_by_default", True)),
                 built_in=bool(item.get("built_in", path.parent.name == "connectors")),
-                metadata=item.get("metadata") if isinstance(item.get("metadata"), dict) else None,
+                metadata=item.get("metadata")
+                if isinstance(item.get("metadata"), dict)
+                else None,
             )
         )
     return descriptors
@@ -200,7 +212,9 @@ def _connector_item(
     item["tools"] = list(descriptor.tools)
     item["env_keys"] = list(descriptor.env_keys)
     item["scopes"] = list(descriptor.scopes)
-    item["enabled"] = bool(setting["enabled"]) if setting else descriptor.enabled_by_default
+    item["enabled"] = (
+        bool(setting["enabled"]) if setting else descriptor.enabled_by_default
+    )
     item["configured"] = _is_configured(descriptor)
     item["missing_env"] = _missing_env(descriptor)
     item["updated_at"] = setting["updated_at"] if setting else None

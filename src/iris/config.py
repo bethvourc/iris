@@ -6,7 +6,13 @@ import os
 import shlex
 
 
-DEFAULT_PROJECT_ROOT = Path("/Users/clintonimaro/Documents/Projects/iris")
+def default_project_root() -> Path:
+    return (
+        Path(os.environ.get("IRIS_PROJECT_ROOT") or Path.cwd()).expanduser().resolve()
+    )
+
+
+DEFAULT_PROJECT_ROOT = default_project_root()
 
 
 def _parse_env_file(path: Path) -> dict[str, str]:
@@ -29,10 +35,11 @@ def _parse_env_file(path: Path) -> dict[str, str]:
     return values
 
 
-def load_env(project_root: Path = DEFAULT_PROJECT_ROOT) -> None:
+def load_env(project_root: Path | None = None) -> None:
     """Load .env values without overriding real environment variables."""
 
-    env_values = _parse_env_file(project_root / ".env")
+    root = project_root or default_project_root()
+    env_values = _parse_env_file(root / ".env")
     for key, value in env_values.items():
         os.environ.setdefault(key, value)
 
@@ -66,6 +73,7 @@ class IrisConfig:
     stt_model: str
     realtime_transcription_model: str
     screenshot_interval_seconds: float
+    gateway_token: str | None
     notify_provider: str
     ntfy_server: str
     ntfy_topic: str | None
@@ -84,10 +92,11 @@ class IrisConfig:
     max_response_chars: int
 
     @classmethod
-    def from_env(cls, project_root: Path = DEFAULT_PROJECT_ROOT) -> "IrisConfig":
-        load_env(project_root)
+    def from_env(cls, project_root: Path | None = None) -> "IrisConfig":
+        root = project_root or default_project_root()
+        load_env(root)
         return cls(
-            project_root=project_root,
+            project_root=root,
             openai_api_key=os.getenv("OPENAI_API_KEY") or None,
             google_application_credentials=os.getenv("GOOGLE_APPLICATION_CREDENTIALS")
             or None,
@@ -111,8 +120,9 @@ class IrisConfig:
                 "IRIS_REALTIME_TRANSCRIPTION_MODEL", "gpt-4o-mini-transcribe"
             ),
             screenshot_interval_seconds=_float_env(
-                "IRIS_SCREENSHOT_INTERVAL_SECONDS", 0.5
+                "IRIS_SCREENSHOT_INTERVAL_SECONDS", 1.5
             ),
+            gateway_token=os.getenv("IRIS_GATEWAY_TOKEN") or None,
             notify_provider=os.getenv("IRIS_NOTIFY_PROVIDER", "pushover"),
             ntfy_server=os.getenv("IRIS_NTFY_SERVER", "https://ntfy.sh"),
             ntfy_topic=os.getenv("IRIS_NTFY_TOPIC") or None,
@@ -125,7 +135,7 @@ class IrisConfig:
             or None,
             notify_timeout_seconds=_float_env("IRIS_NOTIFY_TIMEOUT_SECONDS", 30.0),
             state_db_path=Path(
-                os.getenv("IRIS_STATE_DB", str(project_root / "build" / "iris.sqlite3"))
+                os.getenv("IRIS_STATE_DB", str(root / "build" / "iris.sqlite3"))
             ),
             autonomy_level=os.getenv("IRIS_AUTONOMY_LEVEL", "L1"),
             meeting_consent_required=_bool_env("IRIS_MEETING_CONSENT_REQUIRED", True),
