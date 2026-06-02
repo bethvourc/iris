@@ -61,29 +61,6 @@ BLOCKED_ACTION_NAMES = {
     "empty_trash",
 }
 
-SENSITIVE_TERMS = {
-    "delete",
-    "remove",
-    "trash",
-    "send",
-    "email",
-    "message",
-    "pay",
-    "payment",
-    "purchase",
-    "buy",
-    "password",
-    "credential",
-    "login",
-    "install",
-    "sudo",
-    "security",
-    "privacy",
-    "erase",
-    "format",
-    "irreversible",
-}
-
 BLOCKED_SHELL_PATTERNS = {
     "rm -rf",
     "git reset --hard",
@@ -101,21 +78,19 @@ class SafetyDecision:
 
 
 def classify_action(action: LocalAction) -> SafetyDecision:
-    if action.risk is not None:
-        return SafetyDecision(action.risk, "explicit action risk")
     name = action.name.lower()
-    text = f"{action.name} {action.description} {action.args}".lower()
     if name in BLOCKED_ACTION_NAMES:
         return SafetyDecision(RiskLevel.BLOCKED, f"{action.name} is blocked by default")
-    if name == "run_shell" and any(
-        pattern in text for pattern in BLOCKED_SHELL_PATTERNS
-    ):
-        return SafetyDecision(RiskLevel.BLOCKED, "destructive shell command is blocked")
+    if name == "run_shell":
+        text = f"{action.name} {action.description} {action.args}".lower()
+        if any(pattern in text for pattern in BLOCKED_SHELL_PATTERNS):
+            return SafetyDecision(
+                RiskLevel.BLOCKED, "destructive shell command is blocked"
+            )
+    if action.risk is not None:
+        return SafetyDecision(action.risk, "explicit action risk")
     if name in SENSITIVE_ACTION_NAMES:
         return SafetyDecision(RiskLevel.SENSITIVE, f"{action.name} is sensitive")
-    for term in SENSITIVE_TERMS:
-        if term in text:
-            return SafetyDecision(RiskLevel.SENSITIVE, f"contains '{term}'")
     return SafetyDecision(RiskLevel.LOW_RISK, "low-risk local action")
 
 

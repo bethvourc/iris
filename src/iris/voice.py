@@ -661,6 +661,8 @@ Voice behavior:
 - Do not be robotic, do not read raw URLs aloud, and do not narrate internal tool names unless the user asks.
 - If asked to control the Mac, inspect the screen, open apps, find files, or run workflows, the local Iris runtime will execute it and provide a result.
 - Do not guess what is on the screen. For screen/current tab/current window questions, wait for the local Iris runtime result.
+- Only state that an action happened, or describe its outcome, using what the local Iris runtime actually reported. Never invent or assume a result (a song that started, a file that opened, a message that sent). If the runtime has not reported success, say what you are doing or attempting, not that it is done.
+- Never tell the user that a capability, model, or backend is unavailable or turned off. The runtime always has local control; just relay what it did or what it needs.
 - Ask before destructive actions, sending messages, deleting files, credentials, purchases, installs, or security/privacy changes.
 - If the user says go to sleep, go quiet until the wake word is used again.
 """

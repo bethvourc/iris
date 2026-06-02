@@ -19,6 +19,7 @@ from iris.config import IrisConfig
 from iris.connectors import connector_health, default_manifest_dirs
 from iris.integrations.google_vision import GoogleVisionClient
 from iris.integrations.openai_client import OpenAIResponsesClient
+from iris.memory import list_memories
 from iris.mac_controller import MacController
 from iris.perception import PerceptionService, ScreenAwarenessService
 from iris.recipes import ActionRecipeRegistry
@@ -66,6 +67,7 @@ class AgentPlanner:
         action_recipes: list[dict[str, Any]] | None = None,
         session_state: dict[str, Any] | None = None,
         connector_context: list[dict[str, Any]] | None = None,
+        known_memories: list[dict[str, Any]] | None = None,
     ) -> PlannerResult:
         if not self.openai_client.available:
             return PlannerResult(
@@ -85,6 +87,7 @@ class AgentPlanner:
                 observations=observations,
                 session_state=session_state or {},
                 connector_context=connector_context or [],
+                known_memories=known_memories or [],
             )
             return _planner_result_from_json(raw)
         except Exception:
@@ -105,6 +108,7 @@ class AgentPlanner:
         observations: list[dict[str, Any]],
         session_state: dict[str, Any],
         connector_context: list[dict[str, Any]],
+        known_memories: list[dict[str, Any]] | None = None,
     ) -> str:
         client = self.openai_client._get_client()
         response = client.responses.create(
@@ -119,6 +123,7 @@ class AgentPlanner:
                             "text": json.dumps(
                                 {
                                     "user_profile": self.openai_client.user_profile.prompt_context(),
+                                    "known_memories": known_memories or [],
                                     "available_tools": tool_schemas,
                                     "available_connectors": connector_context,
                                     "action_recipes": action_recipes,
@@ -143,7 +148,7 @@ class AgentPlanner:
                     "content": [{"type": "input_text", "text": user_request}],
                 },
             ],
-            max_output_tokens=450,
+            max_output_tokens=1200,
         )
         return self.openai_client.output_text(response)
 
@@ -164,7 +169,7 @@ class AgentExecutor:
         computer_use_runner: Any | None = None,
         computer_backend: ComputerBackend | None = None,
         recipes: ActionRecipeRegistry | None = None,
-        max_steps: int = 6,
+        max_steps: int = 12,
     ) -> None:
         self.planner = planner
         self.registry = registry
@@ -276,6 +281,9 @@ class AgentExecutor:
     ) -> AgentRunResult:
         run_id = uuid.uuid4().hex
         observations: list[dict[str, Any]] = []
+        seeded = self._session_state.get("last_approved_tool_observation")
+        if isinstance(seeded, dict):
+            observations.append(dict(seeded))
         token = cancellation_token or CancellationToken()
         self._current_cancellation_token = token
         self._session_state["current_user_request"] = user_request
@@ -292,6 +300,7 @@ class AgentExecutor:
                     observations=observations,
                     session_state=self._session_state,
                     connector_context=self._connector_context(),
+                    known_memories=self._known_memories(),
                 )
                 token.throw_if_cancelled()
                 if plan.type == "final_answer":
@@ -493,6 +502,26 @@ class AgentExecutor:
         summary["control_backends"] = self.computer_backend.backend_health(self.config)
         return summary
 
+    def _known_memories(self, limit: int = 40) -> list[dict[str, Any]]:
+        if self.config is None:
+            return []
+        try:
+            with open_state(self.config) as db:
+                rows = list_memories(db)
+        except Exception:
+            return []
+        memories: list[dict[str, Any]] = []
+        for row in rows:
+            category = str(row.get("category") or "")
+            if category == "profile" or category.startswith("machine_"):
+                continue
+            content = str(row.get("content") or "").strip()
+            if content:
+                memories.append({"category": category, "content": content})
+            if len(memories) >= limit:
+                break
+        return memories
+
     def _connector_context(self) -> list[dict[str, Any]]:
         if self.config is None:
             return []
@@ -668,9 +697,17 @@ Rules:
 - If the user gives lyric fragments as text and asks for identification, use identify_song instead of search_web.
 - For private app/site content such as messages, inboxes, calendars, or account pages, ask approval before extraction or summarization.
 - For clicking or visual UI work, prefer browser_click_element/browser_click and app_find_element/app_click_element, then screen_find_element/screen_click_element; use computer_use only when safer layers cannot act.
+- You always control this Mac through the local tools (app/browser/screen primitives). These never require any external model and are always available. Never tell the user that a capability, model, or backend is unavailable, off, or not enabled. If one approach is blocked, silently pick another local tool and keep going. Never mention which backend or model you used.
+- You accomplish novel requests by chaining these general primitives (open/navigate, read the screen, find an element, click, type, verify). Do not refuse a reasonable request just because there is no single dedicated tool for it.
+- For system tasks with no dedicated tool (installing an app, running a script, file system work), use run_shell, e.g. "brew install --cask spotify". It asks for approval once; pick the simplest correct command.
+- available_tools may include external tools named mcp__<server>__<tool> (with a [server] prefix in the description). These come from connected MCP services and are real, usable tools — prefer them when one matches the request.
+- If app_open reports an app is not installed, do not stop: open the web version with browser_open, look for an installer with file_find, or ask the owner — choose the most useful next step.
 - If a tool fails with a retryable observation, choose a fallback tool instead of giving up.
+- Memory: when the user states a durable preference, fact about themselves, or a standing instruction ("always...", "from now on...", "I prefer...", "remember that...", "my X is..."), silently call remember with a concise content string and a category (preferences, facts, contacts, etc.) as one step of the turn. Do not ask permission and do not announce that you saved it unless asked.
+- Apply remembered context: known_memories in the input holds what you have learned about the user. Honor stored preferences (e.g. "use the Spotify app, not the browser") when choosing tools.
+- For "what do you know about me" or recall questions, use recall (and knowledge_search for ingested notes); answer from known_memories and the user_profile, not from guesses.
 - Verify actions when possible before claiming completion.
-- Do not claim an action was done unless you call a tool.
+- Honesty: only state that an action happened or describe a result if it is supported by an observation in this turn. Never invent outcomes (e.g. a song that started, a message that sent). If you have not verified, say what you attempted, not what you assume happened.
 - Do not request destructive, payment, credential, security, or sending actions without approval.
 - Keep final spoken_response conversational and human. It should feel spoken, specific, and alive, not like a generic support bot."""
 
