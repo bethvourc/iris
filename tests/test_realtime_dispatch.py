@@ -45,9 +45,15 @@ def test_parse_tool_arguments() -> None:
 
 def test_record_function_call_dedupes_by_call_id() -> None:
     session, _sent = _bare_session()
-    session._record_function_call({"name": "app_open", "call_id": "c1", "arguments": "{}"})
-    session._record_function_call({"name": "app_open", "call_id": "c1", "arguments": "{}"})
-    session._record_function_call({"name": "media_play", "call_id": "c2", "arguments": "{}"})
+    session._record_function_call(
+        {"name": "app_open", "call_id": "c1", "arguments": "{}"}
+    )
+    session._record_function_call(
+        {"name": "app_open", "call_id": "c1", "arguments": "{}"}
+    )
+    session._record_function_call(
+        {"name": "media_play", "call_id": "c2", "arguments": "{}"}
+    )
     names = [c["name"] for c in session._pending_calls]
     assert names == ["app_open", "media_play"]
 
@@ -91,7 +97,9 @@ def test_run_calls_executes_and_returns_output() -> None:
         [{"call_id": "c1", "name": "app_open", "arguments": '{"app_name": "Spotify"}'}]
     )
 
-    assert session.router.agent_executor.calls == [("app_open", {"app_name": "Spotify"})]
+    assert session.router.agent_executor.calls == [
+        ("app_open", {"app_name": "Spotify"})
+    ]
 
     outputs = [p for p in sent if p.get("type") == "conversation.item.create"]
     assert len(outputs) == 1

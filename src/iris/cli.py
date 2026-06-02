@@ -34,6 +34,7 @@ from iris.safety import AutomationPaused, SafetyGate
 from iris.sessions import get_session, list_sessions
 from iris.state import ensure_state, open_state
 from iris.tasks import get_task, list_tasks, request_cancel, resume_task
+from iris.tracing import latest_run_id, summarize_run_trace
 from iris.watchers import add_watch, list_watches, run_watch_once
 from iris.workflows import list_workflows, run_workflow
 
@@ -272,6 +273,27 @@ def build_parser() -> argparse.ArgumentParser:
     tasks_worker.add_argument("--poll-interval", type=float, default=2.0)
     tasks_worker.set_defaults(func=cmd_tasks_worker)
 
+    runs = subparsers.add_parser("runs", help="Inspect orchestrated Iris runs")
+    runs_sub = runs.add_subparsers(dest="runs_command", required=True)
+    runs_list = runs_sub.add_parser("list", help="List runs")
+    runs_list.add_argument("--status", default=None)
+    runs_list.add_argument("--limit", type=int, default=25)
+    runs_list.set_defaults(func=cmd_runs_list)
+    runs_show = runs_sub.add_parser("show", help="Show a run snapshot")
+    runs_show.add_argument("run_id")
+    runs_show.set_defaults(func=cmd_runs_show)
+    runs_events = runs_sub.add_parser("events", help="Show run lifecycle events")
+    runs_events.add_argument("run_id")
+    runs_events.add_argument("--limit", type=int, default=200)
+    runs_events.set_defaults(func=cmd_runs_events)
+    runs_cancel = runs_sub.add_parser("cancel", help="Cancel a run")
+    runs_cancel.add_argument("run_id")
+    runs_cancel.add_argument("--reason", default="Operation cancelled.")
+    runs_cancel.set_defaults(func=cmd_runs_cancel)
+    runs_approvals = runs_sub.add_parser("approvals", help="List approvals for a run")
+    runs_approvals.add_argument("run_id")
+    runs_approvals.set_defaults(func=cmd_runs_approvals)
+
     evals = subparsers.add_parser("evals", help="Run Iris agent capability evaluations")
     evals_sub = evals.add_subparsers(dest="evals_command", required=True)
     evals_list = evals_sub.add_parser("list", help="List eval cases")
@@ -467,6 +489,19 @@ def build_parser() -> argparse.ArgumentParser:
     audit = subparsers.add_parser("audit", help="Show audit trail")
     audit.add_argument("--limit", type=int, default=25)
     audit.set_defaults(func=cmd_audit)
+    diagnostics = subparsers.add_parser(
+        "diagnostics", help="Inspect run timing and response-loop diagnostics"
+    )
+    diagnostics_sub = diagnostics.add_subparsers(
+        dest="diagnostics_command", required=True
+    )
+    diagnostics_last = diagnostics_sub.add_parser(
+        "last-run", help="Show timing details for the latest traced run"
+    )
+    diagnostics_last.add_argument(
+        "--run-id", default=None, help="Inspect a specific run instead of the latest"
+    )
+    diagnostics_last.set_defaults(func=cmd_diagnostics_last_run)
     rollback = subparsers.add_parser("rollback", help="Show rollback records for a run")
     rollback.add_argument("run_id")
     rollback.set_defaults(func=cmd_rollback)
@@ -1049,9 +1084,15 @@ def cmd_controls_click(args: argparse.Namespace) -> int:
 
 
 def cmd_start(args: argparse.Namespace) -> int:
+    from iris.runtime import RunOrchestrator
     from iris.voice import VoiceSession
 
     config, safety_gate, _, _, _, _, router = _runtime(args)
+
+    def router_factory():
+        return router
+
+    orchestrator = RunOrchestrator(config=config, router_factory=router_factory)
     with open_state(config) as db:
         user_profile = load_user_profile(config, db)
     VoiceSession(
@@ -1059,6 +1100,7 @@ def cmd_start(args: argparse.Namespace) -> int:
         router=router,
         safety_gate=safety_gate,
         user_profile=user_profile,
+        orchestrator=orchestrator,
     ).run_terminal_loop(wake_mode=args.wake or args.live)
     return 0
 
@@ -1152,6 +1194,58 @@ def cmd_tasks_worker(args: argparse.Namespace) -> int:
     TaskSupervisor(config=config, router_factory=router_factory).run_forever(
         poll_interval=args.poll_interval
     )
+    return 0
+
+
+def _run_orchestrator(args: argparse.Namespace):
+    from iris.runtime import RunOrchestrator
+
+    config = _config(args)
+    return RunOrchestrator(config=config, router_factory=lambda: _runtime(args)[-1])
+
+
+def cmd_runs_list(args: argparse.Namespace) -> int:
+    orchestrator = _run_orchestrator(args)
+    _print_json(
+        {
+            "runs": [
+                run.to_dict()
+                for run in orchestrator.list_runs(
+                    status=args.status,
+                    limit=args.limit,
+                )
+            ]
+        }
+    )
+    return 0
+
+
+def cmd_runs_show(args: argparse.Namespace) -> int:
+    orchestrator = _run_orchestrator(args)
+    snapshot = orchestrator.get_run(args.run_id)
+    if snapshot is None:
+        print("Run not found.", file=sys.stderr)
+        return 1
+    _print_json(snapshot.to_dict())
+    return 0
+
+
+def cmd_runs_events(args: argparse.Namespace) -> int:
+    orchestrator = _run_orchestrator(args)
+    _print_json({"events": orchestrator.list_events(args.run_id, limit=args.limit)})
+    return 0
+
+
+def cmd_runs_cancel(args: argparse.Namespace) -> int:
+    orchestrator = _run_orchestrator(args)
+    ok = orchestrator.cancel_run(args.run_id, reason=args.reason)
+    _print_json({"ok": ok})
+    return 0 if ok else 1
+
+
+def cmd_runs_approvals(args: argparse.Namespace) -> int:
+    orchestrator = _run_orchestrator(args)
+    _print_json({"approvals": orchestrator.approvals_for_run(args.run_id)})
     return 0
 
 
@@ -1723,6 +1817,17 @@ def cmd_audit(args: argparse.Namespace) -> int:
     config = _config(args)
     with open_state(config) as db:
         _print_json(list_audit(db, args.limit))
+    return 0
+
+
+def cmd_diagnostics_last_run(args: argparse.Namespace) -> int:
+    config = _config(args)
+    with open_state(config) as db:
+        run_id = args.run_id or latest_run_id(db)
+        if run_id is None:
+            _print_json({"ok": False, "message": "No traced runs found."})
+            return 1
+        _print_json(summarize_run_trace(db, run_id))
     return 0
 
 

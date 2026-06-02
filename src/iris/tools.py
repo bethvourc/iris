@@ -8,6 +8,7 @@ import os
 from pathlib import Path
 import re
 import subprocess
+import time
 from typing import Any, Callable
 from urllib import request
 from urllib.parse import parse_qs, quote_plus, unquote_plus, urlparse
@@ -147,9 +148,62 @@ class ToolSpec:
         }
 
 
+@dataclass(frozen=True)
+class ToolExecutionPolicy:
+    timeout_seconds: float = 60.0
+    retry_attempts: int = 0
+    retry_delay_seconds: float = 0.1
+
+
+class ToolExecutionController:
+    def __init__(self, policy: ToolExecutionPolicy | None = None) -> None:
+        self.policy = policy or ToolExecutionPolicy()
+
+    def run(
+        self,
+        *,
+        tool: ToolSpec,
+        arguments: dict[str, Any],
+        context: ToolContext,
+    ) -> ToolResult:
+        attempts = 0
+        while True:
+            attempts += 1
+            started_at = time.monotonic()
+            context.assert_not_cancelled()
+            try:
+                result = tool.execute(arguments, context)
+            except Exception:
+                if attempts <= self.policy.retry_attempts:
+                    context.assert_not_cancelled()
+                    time.sleep(self.policy.retry_delay_seconds)
+                    continue
+                raise
+            context.assert_not_cancelled()
+            elapsed = time.monotonic() - started_at
+            if elapsed > self.policy.timeout_seconds:
+                return ToolResult(
+                    False,
+                    f"{tool.name} exceeded the {self.policy.timeout_seconds:.0f}s tool timeout.",
+                    {
+                        "tool_name": tool.name,
+                        "duration_seconds": round(elapsed, 3),
+                        "timeout_seconds": self.policy.timeout_seconds,
+                        "attempts": attempts,
+                    },
+                )
+            return result
+
+
 class ToolRegistry:
-    def __init__(self, tools: list[ToolSpec] | None = None) -> None:
+    def __init__(
+        self,
+        tools: list[ToolSpec] | None = None,
+        *,
+        execution_controller: ToolExecutionController | None = None,
+    ) -> None:
         self._tools: dict[str, ToolSpec] = {}
+        self.execution_controller = execution_controller or ToolExecutionController()
         for tool in tools or []:
             self.register(tool)
 
@@ -198,7 +252,11 @@ class ToolRegistry:
             raise ApprovalRequired(tool.name, arguments, decision.reason)
         context.safety_gate.allow(action)
         context.assert_not_cancelled()
-        result = tool.execute(arguments, context)
+        result = self.execution_controller.run(
+            tool=tool,
+            arguments=arguments,
+            context=context,
+        )
         context.assert_not_cancelled()
         return result
 
@@ -218,7 +276,11 @@ class ToolRegistry:
             raise PermissionError(f"Blocked action: {tool.name} ({decision.reason})")
         context.safety_gate.assert_not_killed()
         context.assert_not_cancelled()
-        result = tool.execute(arguments, context)
+        result = self.execution_controller.run(
+            tool=tool,
+            arguments=arguments,
+            context=context,
+        )
         context.assert_not_cancelled()
         return result
 
@@ -258,8 +320,7 @@ def mcp_tool_specs(manager: Any) -> list[ToolSpec]:
         if not isinstance(risk, RiskLevel):
             risk = RiskLevel.LOW_RISK
         description = (
-            descriptor.get("description")
-            or f"{tool} via the {server} MCP server."
+            descriptor.get("description") or f"{tool} via the {server} MCP server."
         )
 
         def _execute(
@@ -1797,6 +1858,7 @@ def _gmail_search_and_summarize(
         _visible_text_ready,
         timeout_seconds=3.0,
         interval_seconds=0.3,
+        cancellation_token=context.cancellation_token,
     )
     if not visible.ok:
         return _from_action_result(visible)
@@ -2110,7 +2172,9 @@ def _deterministic_click(description: str, context: ToolContext) -> ToolResult:
         ).lower()
     except Exception:
         active_app = ""
-    is_browser = any(name in active_app for name in ("chrome", "safari", "edge", "brave"))
+    is_browser = any(
+        name in active_app for name in ("chrome", "safari", "edge", "brave")
+    )
     attempts: list[Callable[[], ActionResult]] = []
     if is_browser:
         attempts.append(lambda: context.controller.browser_click_text(description))
@@ -2660,7 +2724,12 @@ def _media_search_or_play(
         if recipe and context.session_state is not None:
             context.session_state["current_recipe"] = recipe.name
     if action == "play" and surface == "auto":
-        web_result = _spotify_web_cdp(query, action=action, browser=browser)
+        web_result = _spotify_web_cdp(
+            query,
+            action=action,
+            browser=browser,
+            cancellation_token=context.cancellation_token,
+        )
         if web_result is not None:
             if web_result.ok:
                 _remember_media(
@@ -2690,7 +2759,12 @@ def _media_search_or_play(
             ):
                 return _from_action_result(web_result)
     if surface == "browser":
-        cdp_result = _spotify_web_cdp(query, action=action, browser=browser)
+        cdp_result = _spotify_web_cdp(
+            query,
+            action=action,
+            browser=browser,
+            cancellation_token=context.cancellation_token,
+        )
         if cdp_result is not None:
             if cdp_result.ok:
                 _remember_media(
@@ -2755,7 +2829,12 @@ def _media_search_or_play(
                     message = f"I tried to start {query} in Spotify."
             return ToolResult(True, message, app_result.payload)
         return _from_action_result(app_result)
-    web_result = _spotify_web_cdp(query, action=action, browser=browser)
+    web_result = _spotify_web_cdp(
+        query,
+        action=action,
+        browser=browser,
+        cancellation_token=context.cancellation_token,
+    )
     if web_result is None or (
         not web_result.ok
         and "Chrome CDP is running without the Iris origin allowlist"
@@ -2779,12 +2858,18 @@ def _media_search_or_play(
     return _from_action_result(web_result)
 
 
-def _spotify_web_cdp(query: str, *, action: str, browser: str) -> ActionResult | None:
+def _spotify_web_cdp(
+    query: str,
+    *,
+    action: str,
+    browser: str,
+    cancellation_token: CancellationToken | None = None,
+) -> ActionResult | None:
     if not _prefer_cdp(browser):
         return None
     cdp = _chrome_cdp()
     if action == "play":
-        return cdp.spotify_play_search(query)
+        return cdp.spotify_play_search(query, cancellation_token=cancellation_token)
     url = f"https://open.spotify.com/search/{quote_plus(query)}"
     return cdp.navigate(url, new_tab=False)
 
@@ -2815,7 +2900,10 @@ def _youtube_media_play(arguments: dict[str, Any], context: ToolContext) -> Tool
                 browser=browser,
             )
         return opened
-    result = _chrome_cdp().youtube_play(query or None)
+    result = _chrome_cdp().youtube_play(
+        query or None,
+        cancellation_token=context.cancellation_token,
+    )
     if result.ok:
         payload = result.payload if isinstance(result.payload, dict) else {}
         verified = bool(payload.get("verified_playback"))
@@ -3449,9 +3537,7 @@ def _computer_use(arguments: dict[str, Any], context: ToolContext) -> ToolResult
     message = str(result.message)
     if not bool(result.ok) and "can't use the computer-control model" in message:
         return _computer_use_degraded()
-    return ToolResult(
-        bool(result.ok), message, getattr(result, "payload", None)
-    )
+    return ToolResult(bool(result.ok), message, getattr(result, "payload", None))
 
 
 def _run_deep_task(arguments: dict[str, Any], context: ToolContext) -> ToolResult:
@@ -3459,7 +3545,9 @@ def _run_deep_task(arguments: dict[str, Any], context: ToolContext) -> ToolResul
     if not goal:
         return ToolResult(False, "I need a goal for the deep task.")
     if context.deep_task_runner is None:
-        return ToolResult(False, "The deep task runner is not available in this runtime.")
+        return ToolResult(
+            False, "The deep task runner is not available in this runtime."
+        )
     result = context.deep_task_runner(goal)
     ok = bool(getattr(result, "ok", False))
     message = str(getattr(result, "message", "") or "Done.")

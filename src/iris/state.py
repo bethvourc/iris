@@ -24,6 +24,19 @@ CREATE TABLE IF NOT EXISTS audit_events (
   details_json TEXT NOT NULL DEFAULT '{}'
 );
 
+CREATE TABLE IF NOT EXISTS run_trace_events (
+  trace_id TEXT PRIMARY KEY,
+  run_id TEXT NOT NULL,
+  event_name TEXT NOT NULL,
+  component TEXT NOT NULL,
+  status TEXT NOT NULL,
+  started_at TEXT NOT NULL,
+  finished_at TEXT,
+  duration_ms REAL,
+  error TEXT,
+  details_json TEXT NOT NULL DEFAULT '{}'
+);
+
 CREATE TABLE IF NOT EXISTS approvals (
   approval_id TEXT PRIMARY KEY,
   run_id TEXT,
@@ -125,6 +138,27 @@ CREATE TABLE IF NOT EXISTS agent_messages (
   created_at TEXT NOT NULL,
   metadata_json TEXT NOT NULL DEFAULT '{}',
   FOREIGN KEY (session_id) REFERENCES agent_sessions(session_id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS agent_runs (
+  run_id TEXT PRIMARY KEY,
+  task_id TEXT,
+  session_id TEXT,
+  channel TEXT NOT NULL,
+  status TEXT NOT NULL,
+  current_step TEXT NOT NULL DEFAULT '',
+  active_tool TEXT NOT NULL DEFAULT '',
+  message TEXT NOT NULL DEFAULT '',
+  cancel_requested INTEGER NOT NULL DEFAULT 0,
+  approval_id TEXT,
+  created_at TEXT NOT NULL,
+  started_at TEXT,
+  updated_at TEXT NOT NULL,
+  finished_at TEXT,
+  result_json TEXT NOT NULL DEFAULT '{}',
+  metadata_json TEXT NOT NULL DEFAULT '{}',
+  FOREIGN KEY (session_id) REFERENCES agent_sessions(session_id) ON DELETE SET NULL,
+  FOREIGN KEY (task_id) REFERENCES agent_tasks(task_id) ON DELETE SET NULL
 );
 
 CREATE TABLE IF NOT EXISTS agent_tasks (

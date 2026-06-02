@@ -21,7 +21,7 @@ def _service(**kw):
         signature=lambda: state["sig"],
         read_text=lambda: state["text"],
         advise=lambda _t: state["advice"],
-        announce=lambda text: (state["spoken"].append(text) or True),
+        announce=lambda text: state["spoken"].append(text) or True,
         min_interval_seconds=kw.get("min_interval", 0.0),
     )
     return service, state

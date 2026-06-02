@@ -9,6 +9,7 @@ from urllib import parse, request
 from iris.mac_controller import ActionResult
 from iris.managed_browser import ManagedChrome
 from iris.polling import poll_until
+from iris.safety import CancellationToken
 
 
 @dataclass(frozen=True)
@@ -446,7 +447,12 @@ class ChromeCDPBackend:
             result_message="Checked browser media state.",
         )
 
-    def spotify_play_search(self, query: str | None = None) -> ActionResult:
+    def spotify_play_search(
+        self,
+        query: str | None = None,
+        *,
+        cancellation_token: CancellationToken | None = None,
+    ) -> ActionResult:
         ensured = self.ensure_available() if self.auto_start else None
         if ensured is not None and not ensured.ok:
             return ensured
@@ -503,6 +509,7 @@ class ChromeCDPBackend:
             _action_payload_ok,
             timeout_seconds=2.5 if query else 0.1,
             interval_seconds=0.25,
+            cancellation_token=cancellation_token,
         )
         if not result.ok:
             return result
@@ -516,6 +523,7 @@ class ChromeCDPBackend:
                 _action_payload_ok,
                 timeout_seconds=1.5,
                 interval_seconds=0.25,
+                cancellation_token=cancellation_token,
             )
             if not result.ok:
                 return result
@@ -527,6 +535,7 @@ class ChromeCDPBackend:
                 _action_media_playing,
                 timeout_seconds=1.0,
                 interval_seconds=0.2,
+                cancellation_token=cancellation_token,
             )
             state_payload = (
                 state.payload if state.ok and isinstance(state.payload, dict) else {}
@@ -554,7 +563,12 @@ class ChromeCDPBackend:
             {"query": query, "backend": "cdp", **payload},
         )
 
-    def youtube_play(self, query: str | None = None) -> ActionResult:
+    def youtube_play(
+        self,
+        query: str | None = None,
+        *,
+        cancellation_token: CancellationToken | None = None,
+    ) -> ActionResult:
         ensured = self.ensure_available() if self.auto_start else None
         if ensured is not None and not ensured.ok:
             return ensured
@@ -624,6 +638,7 @@ class ChromeCDPBackend:
             _action_payload_ok,
             timeout_seconds=2.0 if query else 0.1,
             interval_seconds=0.25,
+            cancellation_token=cancellation_token,
         )
         if not result.ok:
             return result
@@ -635,6 +650,7 @@ class ChromeCDPBackend:
                 _action_payload_ok,
                 timeout_seconds=2.5,
                 interval_seconds=0.25,
+                cancellation_token=cancellation_token,
             )
             if not result.ok:
                 return result
@@ -646,6 +662,7 @@ class ChromeCDPBackend:
                 _action_media_playing,
                 timeout_seconds=0.8,
                 interval_seconds=0.2,
+                cancellation_token=cancellation_token,
             )
             state_payload = (
                 state.payload if state.ok and isinstance(state.payload, dict) else {}

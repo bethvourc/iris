@@ -21,6 +21,7 @@ from iris.meetings import (
     deliver_meeting_recap,
     start_silent_meeting,
 )
+from iris.runtime import RunOrchestrator
 from iris.safety import SafetyGate
 from iris.scheduler import SchedulerService
 from iris.state import open_state
@@ -209,10 +210,12 @@ class RealtimeSpeechSession:
         config: IrisConfig,
         router: ActionRouter,
         user_profile: UserProfile,
+        orchestrator: RunOrchestrator | None = None,
         wake_gated: bool = True,
     ) -> None:
         self.config = config
         self.router = router
+        self.orchestrator = orchestrator
         self.user_profile = user_profile
         self.wake_gated = wake_gated
         self.awake = not wake_gated
@@ -419,10 +422,18 @@ class RealtimeSpeechSession:
                 if isinstance(summary, dict):
                     recap = str(summary.get("summary") or "")
                 reminders = int(delivered.get("reminders") or 0)
-                emailed = "drafted your recap email" if delivered.get("email") else "saved the recap"
+                emailed = (
+                    "drafted your recap email"
+                    if delivered.get("email")
+                    else "saved the recap"
+                )
                 spoken = (
                     f"Done. I {emailed}"
-                    + (f" and set {reminders} reminder{'s' if reminders != 1 else ''}." if reminders else ".")
+                    + (
+                        f" and set {reminders} reminder{'s' if reminders != 1 else ''}."
+                        if reminders
+                        else "."
+                    )
                     + (f" In short: {recap}" if recap else "")
                 )
                 self._respond_with_text(spoken)
@@ -481,7 +492,10 @@ class RealtimeSpeechSession:
                     "worth interrupting for, reply with exactly NONE."
                 ),
                 input=[
-                    {"role": "user", "content": [{"type": "input_text", "text": screen_text[:4000]}]}
+                    {
+                        "role": "user",
+                        "content": [{"type": "input_text", "text": screen_text[:4000]}],
+                    }
                 ],
                 max_output_tokens=120,
             )
@@ -671,13 +685,23 @@ class RealtimeSpeechSession:
         word = lowered.strip(" \t\r\n.,!?")
         if any(
             phrase in lowered
-            for phrase in ("co-pilot on", "copilot on", "watch my screen", "keep an eye on my screen")
+            for phrase in (
+                "co-pilot on",
+                "copilot on",
+                "watch my screen",
+                "keep an eye on my screen",
+            )
         ):
             self._toggle_copilot(True)
             return True
         if any(
             phrase in lowered
-            for phrase in ("co-pilot off", "copilot off", "stop watching my screen", "stop watching")
+            for phrase in (
+                "co-pilot off",
+                "copilot off",
+                "stop watching my screen",
+                "stop watching",
+            )
         ):
             self._toggle_copilot(False)
             return True
@@ -774,7 +798,9 @@ class RealtimeSpeechSession:
                 continue
             try:
                 result = self.router.agent_executor.run_tool(name, arguments)
-                output = result.message or ("Done." if result.ok else "That didn't work.")
+                output = result.message or (
+                    "Done." if result.ok else "That didn't work."
+                )
                 if not result.ok:
                     print(f"iris error> {output}")
             except Exception as exc:
@@ -859,17 +885,22 @@ class RealtimeSpeechSession:
         if not self._agent_lock.acquire(blocking=False):
             lowered = transcript.lower().strip(" \t\r\n.,!?")
             if _is_interrupt_command(lowered):
-                self.router.agent_executor.cancel_current(
-                    "Operation cancelled by user."
-                )
+                if self.orchestrator is not None:
+                    self.orchestrator.cancel_active_run(
+                        channel="voice",
+                        reason="Operation cancelled by user.",
+                    )
+                else:
+                    self.router.agent_executor.cancel_current(
+                        "Operation cancelled by user."
+                    )
                 self.router.safety_gate.kill()
                 self._clear_pending_agent_texts()
                 print("iris> stopping current automation after the active step")
                 self._respond_with_text("Stopping that after the current step.")
                 return
             if _is_status_question(lowered):
-                active = self._active_agent_request or "the last request"
-                self._respond_with_text(f"I'm still working on {active}.")
+                self._respond_with_text(self._active_agent_status_message())
                 return
             self._pending_agent_texts.put(transcript)
             now = time.monotonic()
@@ -882,7 +913,11 @@ class RealtimeSpeechSession:
             self._active_agent_request = transcript
             try:
                 print("iris> working...")
-                result = self.router.handle_text(transcript)
+                result = (
+                    self.orchestrator.start_run(transcript, channel="voice")
+                    if self.orchestrator is not None
+                    else self.router.handle_text(transcript)
+                )
                 if not result.ok:
                     print(f"iris error> {result.message}")
                 self._respond_with_text(result.message)
@@ -917,6 +952,27 @@ class RealtimeSpeechSession:
                 self._pending_agent_texts.get_nowait()
             except queue.Empty:
                 return
+
+    def _active_agent_status_message(self) -> str:
+        snapshot = (
+            self.orchestrator.get_active_run(channel="voice")
+            if self.orchestrator is not None
+            else None
+        )
+        status = self.router.agent_executor.current_status()
+        active = self._active_agent_request or str(
+            status.get("request") or "the request"
+        )
+        agent_stage = str(status.get("stage") or "")
+        stage = (agent_stage or (snapshot.current_step if snapshot else "")).replace(
+            "_", " "
+        )
+        tool_name = str(status.get("tool_name") or "").replace("_", " ")
+        if stage == "executing tool" and tool_name:
+            return f"I'm still working on {active}. Current step: {tool_name}."
+        if stage:
+            return f"I'm still working on {active}. Current step: {stage}."
+        return f"I'm still working on {active}."
 
     def _respond_with_text(self, text: str) -> None:
         if not text:
@@ -1122,9 +1178,11 @@ class VoiceSession:
         router: ActionRouter,
         safety_gate: SafetyGate,
         user_profile: UserProfile | None = None,
+        orchestrator: RunOrchestrator | None = None,
     ) -> None:
         self.config = config
         self.router = router
+        self.orchestrator = orchestrator
         self.safety_gate = safety_gate
         self.user_profile = user_profile or infer_system_profile()
         self.hotkeys = HotkeyService(config, safety_gate)
@@ -1192,7 +1250,11 @@ class VoiceSession:
                 if user_text.lower() == "/live-now":
                     self._run_realtime_speech_loop(wake_gated=False)
                     continue
-                result = self.router.handle_text(user_text)
+                result = (
+                    self.orchestrator.start_run(user_text, channel="terminal")
+                    if self.orchestrator is not None
+                    else self.router.handle_text(user_text)
+                )
                 prefix = "iris" if result.ok else "iris error"
                 print(f"{prefix}> {result.message}")
                 if result.ok and self.config.speak_responses:
@@ -1210,9 +1272,14 @@ class VoiceSession:
             if event == "toggle":
                 self._handle_voice_once(self.config.listen_seconds)
             elif event == "kill":
-                self.router.agent_executor.cancel_current(
-                    "Operation cancelled by hotkey."
-                )
+                if self.orchestrator is not None:
+                    self.orchestrator.cancel_active_run(
+                        reason="Operation cancelled by hotkey."
+                    )
+                else:
+                    self.router.agent_executor.cancel_current(
+                        "Operation cancelled by hotkey."
+                    )
                 print("[kill switch engaged]")
 
     def _handle_voice_once(self, seconds: float | None = None) -> None:
@@ -1234,7 +1301,11 @@ class VoiceSession:
             if not user_text:
                 print("iris error> no speech detected")
                 return
-            result = self.router.handle_text(user_text)
+            result = (
+                self.orchestrator.start_run(user_text, channel="voice")
+                if self.orchestrator is not None
+                else self.router.handle_text(user_text)
+            )
             prefix = "iris" if result.ok else "iris error"
             print(f"{prefix}> {result.message}")
             if result.ok and self.config.speak_responses:
@@ -1276,6 +1347,7 @@ class VoiceSession:
                 config=self.config,
                 router=self.router,
                 user_profile=self.user_profile,
+                orchestrator=self.orchestrator,
                 wake_gated=wake_gated,
             ).run()
         except KeyboardInterrupt:

@@ -31,7 +31,9 @@ def test_send_posts_to_resend(monkeypatch) -> None:
 
     monkeypatch.setattr(email_sender, "urlopen", _fake_urlopen)
     service = EmailService(
-        _config(resend_api_key="re_test", email_from="iris@me.dev", email_to="me@me.dev")
+        _config(
+            resend_api_key="re_test", email_from="iris@me.dev", email_to="me@me.dev"
+        )
     )
     result = service.send(subject="Recap", body="Notes")
     assert result.ok is True

@@ -77,13 +77,12 @@ def load_mcp_config(config: IrisConfig | None) -> list[MCPServerConfig]:
         if not command:
             continue
         args = [str(item) for item in entry.get("args", []) if str(item)]
-        env = {
-            str(key): str(value)
-            for key, value in (entry.get("env") or {}).items()
-        }
+        env = {str(key): str(value) for key, value in (entry.get("env") or {}).items()}
         risk = _parse_risk(entry.get("risk"))
         allow = tuple(
-            str(item) for item in (entry.get("tools") or entry.get("allow") or []) if str(item)
+            str(item)
+            for item in (entry.get("tools") or entry.get("allow") or [])
+            if str(item)
         )
         servers.append(
             MCPServerConfig(
@@ -162,9 +161,11 @@ class MCPClient:
             self._notify("notifications/initialized", {})
             result = self._request("tools/list", {}, timeout=self.init_timeout)
             tools = result.get("tools")
-            self.tools = [t for t in tools if isinstance(t, dict)] if isinstance(
-                tools, list
-            ) else []
+            self.tools = (
+                [t for t in tools if isinstance(t, dict)]
+                if isinstance(tools, list)
+                else []
+            )
             return True
         except Exception as exc:
             self.error = f"{exc}{self._stderr_hint()}"

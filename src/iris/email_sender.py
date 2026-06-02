@@ -42,11 +42,19 @@ class EmailService:
     ) -> EmailResult:
         recipient = to or self.config.email_to
         if not self.available:
-            return EmailResult(False, "Email is not configured (set RESEND_API_KEY and IRIS_EMAIL_FROM).")
+            return EmailResult(
+                False,
+                "Email is not configured (set RESEND_API_KEY and IRIS_EMAIL_FROM).",
+            )
         if not recipient:
-            return EmailResult(False, "No recipient (pass a 'to' or set IRIS_EMAIL_TO).")
+            return EmailResult(
+                False, "No recipient (pass a 'to' or set IRIS_EMAIL_TO)."
+            )
         if self.config.email_provider != "resend":
-            return EmailResult(False, f"Email provider '{self.config.email_provider}' is not supported.")
+            return EmailResult(
+                False,
+                f"Email provider '{self.config.email_provider}' is not supported.",
+            )
         payload = {
             "from": self.config.email_from,
             "to": [recipient],
@@ -68,7 +76,9 @@ class EmailService:
                 ok = status_code is None or 200 <= int(status_code) < 300
                 return EmailResult(
                     ok,
-                    f"email sent to {recipient}" if ok else "Resend rejected the message",
+                    f"email sent to {recipient}"
+                    if ok
+                    else "Resend rejected the message",
                     status_code,
                 )
         except HTTPError as exc:

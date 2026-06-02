@@ -50,9 +50,7 @@ def test_remember_and_recall_round_trip(tmp_path: Path) -> None:
         migrate(db)
     context = _memory_context(config)
 
-    saved = _remember(
-        {"content": "Use the Spotify app, not the browser"}, context
-    )
+    saved = _remember({"content": "Use the Spotify app, not the browser"}, context)
     assert saved.ok
     assert saved.payload["category"] == "preferences"
 

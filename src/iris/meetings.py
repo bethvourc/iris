@@ -88,7 +88,9 @@ def transcribe_audio(config: IrisConfig, audio_path: Path) -> str:
     return ""
 
 
-def summarize_meeting(config: IrisConfig, openai_client, transcript: str) -> dict[str, object]:
+def summarize_meeting(
+    config: IrisConfig, openai_client, transcript: str
+) -> dict[str, object]:
     """Summarize a transcript into decisions/action items/recap email via the model."""
     if not transcript.strip() or openai_client is None:
         return _empty_summary()
@@ -206,9 +208,7 @@ def complete_meeting(
     meeting_dir = config.project_root / "build" / "meetings"
     meeting_dir.mkdir(parents=True, exist_ok=True)
     transcript_path = Path(row["transcript_path"] or meeting_dir / f"{meeting_id}.txt")
-    transcript_path.write_text(
-        transcript or "(no speech captured)", encoding="utf-8"
-    )
+    transcript_path.write_text(transcript or "(no speech captured)", encoding="utf-8")
     summary = summarize_meeting(config, openai_client, transcript)
     db.execute(
         """
