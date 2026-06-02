@@ -572,6 +572,13 @@ class AgentExecutor:
                 if approved
                 else self.registry.execute(tool_name, arguments, context)
             )
+            invalidate_cache = getattr(
+                self.computer_backend,
+                "invalidate_observation_cache",
+                None,
+            )
+            if callable(invalidate_cache):
+                invalidate_cache()
             self._trace_event(
                 run_id,
                 "tool_finished",

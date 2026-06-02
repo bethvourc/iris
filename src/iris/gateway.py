@@ -3,11 +3,12 @@ from __future__ import annotations
 import hmac
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
+import queue
 import re
 from typing import Any, Callable
 from urllib.parse import parse_qs, urlparse
 
-from iris.approvals import decide_approval, list_approvals
+from iris.approvals import list_approvals
 from iris.audit import record_audit
 from iris.config import IrisConfig
 from iris.actions import RiskLevel
@@ -87,6 +88,16 @@ class GatewayService:
                         limit=_int_query(query, "limit", 25),
                     )
                 }
+            if path == "/runs":
+                return 200, {
+                    "runs": [
+                        run.to_dict()
+                        for run in self.orchestrator.list_runs(
+                            status=_str_query(query, "status"),
+                            limit=_int_query(query, "limit", 25),
+                        )
+                    ]
+                }
             task_match = re.fullmatch(r"/tasks/([a-fA-F0-9]+)", path)
             if task_match:
                 task = get_task(db, task_match.group(1))
@@ -107,9 +118,48 @@ class GatewayService:
                         limit=_int_query(query, "limit", 200),
                     )
                 }
+            run_approvals = re.fullmatch(r"/runs/([a-fA-F0-9]+)/approvals", path)
+            if run_approvals:
+                return 200, {
+                    "approvals": self.orchestrator.approvals_for_run(
+                        run_approvals.group(1)
+                    )
+                }
             if path == "/approvals":
                 return 200, {"approvals": list_approvals(db)}
         return 404, {"error": "not found"}
+
+    def stream_run_events(
+        self, run_id: str, write: Callable[[dict[str, Any]], None]
+    ) -> None:
+        for event in self.orchestrator.list_events(run_id):
+            write(event)
+        snapshot = self.orchestrator.get_run(run_id)
+        if snapshot is None or snapshot.status in {
+            "blocked",
+            "cancelled",
+            "failed",
+            "done",
+        }:
+            return
+        events: queue.Queue[dict[str, Any]] = queue.Queue()
+
+        def on_event(event: Any) -> None:
+            if event.run_id == run_id:
+                events.put(event.to_dict())
+
+        unsubscribe = self.orchestrator.subscribe(on_event)
+        try:
+            while True:
+                try:
+                    event = events.get(timeout=30.0)
+                except queue.Empty:
+                    return
+                write(event)
+                if event.get("status") in {"blocked", "cancelled", "failed", "done"}:
+                    return
+        finally:
+            unsubscribe()
 
     def handle_post(
         self, path: str, body: dict[str, Any]
@@ -140,15 +190,15 @@ class GatewayService:
         if approval:
             status = "approved" if approval.group(2) == "approve" else "denied"
             with open_state(self.config) as db:
-                ok = decide_approval(db, approval.group(1), status)
                 record_audit(
                     db,
                     actor="gateway",
                     tool=f"approval.{status}",
                     risk=RiskLevel.SENSITIVE,
-                    result="ok" if ok else "error",
                     input_value={"approval_id": approval.group(1)},
+                    result="requested",
                 )
+            ok = self.orchestrator.decide_approval(approval.group(1), status)
             return (200 if ok else 404), {"ok": ok, "status": status}
         return 404, {"error": "not found"}
 
@@ -188,6 +238,10 @@ class _GatewayHandler(BaseHTTPRequestHandler):
     def do_GET(self) -> None:  # noqa: N802
         parsed = urlparse(self.path)
         if not self._authorize(parsed.path):
+            return
+        stream_match = re.fullmatch(r"/runs/([a-fA-F0-9]+)/stream", parsed.path)
+        if stream_match:
+            self._write_sse(stream_match.group(1))
             return
         status, payload = self.gateway.handle_get(parsed.path, parse_qs(parsed.query))
         self._write_json(status, payload)
@@ -235,6 +289,19 @@ class _GatewayHandler(BaseHTTPRequestHandler):
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         self.wfile.write(body)
+
+    def _write_sse(self, run_id: str) -> None:
+        self.send_response(200)
+        self.send_header("Content-Type", "text/event-stream; charset=utf-8")
+        self.send_header("Cache-Control", "no-cache")
+        self.end_headers()
+
+        def write(event: dict[str, Any]) -> None:
+            body = json.dumps(event, sort_keys=True, default=str)
+            self.wfile.write(f"data: {body}\n\n".encode("utf-8"))
+            self.wfile.flush()
+
+        self.gateway.stream_run_events(run_id, write)
 
 
 def _task_status_for_message(message: str) -> str:

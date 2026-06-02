@@ -10,6 +10,7 @@ import uuid
 from typing import Any, Callable, Literal
 
 from iris.config import IrisConfig
+from iris.approvals import decide_approval, get_approval, list_approvals
 from iris.safety import CancellationToken
 from iris.sessions import add_message, ensure_session
 from iris.state import open_state
@@ -51,6 +52,55 @@ ACTIVE_STATUSES = {
     "cancelling",
 }
 TERMINAL_STATUSES = {"blocked", "cancelled", "failed", "done"}
+ALLOWED_TRANSITIONS: dict[str, set[str]] = {
+    "queued": {"running", "cancelling", "cancelled", "failed"},
+    "running": {
+        "planning",
+        "executing_tool",
+        "waiting_approval",
+        "responding",
+        "cancelling",
+        "cancelled",
+        "blocked",
+        "failed",
+        "done",
+    },
+    "planning": {
+        "executing_tool",
+        "waiting_approval",
+        "responding",
+        "cancelling",
+        "cancelled",
+        "blocked",
+        "failed",
+        "done",
+    },
+    "executing_tool": {
+        "planning",
+        "waiting_approval",
+        "responding",
+        "cancelling",
+        "cancelled",
+        "blocked",
+        "failed",
+        "done",
+    },
+    "waiting_approval": {
+        "running",
+        "planning",
+        "cancelling",
+        "cancelled",
+        "blocked",
+        "failed",
+        "done",
+    },
+    "responding": {"cancelling", "cancelled", "failed", "done"},
+    "cancelling": {"cancelled", "failed", "done"},
+    "blocked": set(),
+    "cancelled": set(),
+    "failed": set(),
+    "done": set(),
+}
 
 
 @dataclass(frozen=True)
@@ -427,9 +477,118 @@ class RunOrchestrator:
             cancel_requested=_trace_status(last.get("status")) == "cancelled",
         )
 
+    def list_runs(
+        self, *, status: str | None = None, limit: int = 25
+    ) -> list[RunSnapshot]:
+        with open_state(self.config) as db:
+            if status:
+                rows = db.execute(
+                    """
+                    SELECT *
+                    FROM agent_runs
+                    WHERE status = ?
+                    ORDER BY updated_at DESC
+                    LIMIT ?
+                    """,
+                    (status, limit),
+                ).fetchall()
+            else:
+                rows = db.execute(
+                    """
+                    SELECT *
+                    FROM agent_runs
+                    ORDER BY updated_at DESC
+                    LIMIT ?
+                    """,
+                    (limit,),
+                ).fetchall()
+        return [_snapshot_from_run(row) for row in rows]
+
     def list_events(self, run_id: str, *, limit: int = 200) -> list[dict[str, Any]]:
         with open_state(self.config) as db:
             return list_trace_events(db, run_id=run_id, limit=limit)
+
+    def approvals_for_run(self, run_id: str) -> list[dict[str, Any]]:
+        with open_state(self.config) as db:
+            rows = db.execute(
+                """
+                SELECT approval_id, run_id, action_name, risk, status, preview,
+                       created_at, expires_at, decided_at, details_json
+                FROM approvals
+                WHERE run_id = ?
+                ORDER BY created_at DESC
+                """,
+                (run_id,),
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def decide_approval(self, approval_id: str, decision: str) -> bool:
+        with open_state(self.config) as db:
+            approval = get_approval(db, approval_id)
+            ok = decide_approval(db, approval_id, decision)
+        if not ok or not approval:
+            return ok
+        run_id = str(approval.get("run_id") or "")
+        if not run_id:
+            return ok
+        status: RunStatus = "running" if ok and decision == "approved" else "blocked"
+        event_name = f"approval.{decision}"
+        self._transition_run(
+            run_id,
+            status,
+            event_name,
+            message=f"Approval {decision}.",
+            approval_id=approval_id,
+        )
+        self._emit(
+            RunEvent(
+                run_id=run_id,
+                event_name=event_name,
+                status=status,
+                message=f"Approval {decision}.",
+                details={"approval_id": approval_id, "ok": ok},
+            )
+        )
+        return ok
+
+    def expire_pending_approvals(self) -> int:
+        now = _now()
+        expired: list[dict[str, Any]] = []
+        with open_state(self.config) as db:
+            for approval in list_approvals(db, status="pending"):
+                if str(approval.get("expires_at") or "") <= now:
+                    expired.append(approval)
+            for approval in expired:
+                db.execute(
+                    """
+                    UPDATE approvals
+                    SET status = 'expired', decided_at = ?
+                    WHERE approval_id = ? AND status = 'pending'
+                    """,
+                    (now, approval["approval_id"]),
+                )
+            db.commit()
+        for approval in expired:
+            run_id = str(approval.get("run_id") or "")
+            if not run_id:
+                continue
+            self._transition_run(
+                run_id,
+                "blocked",
+                "approval.expired",
+                message="Approval expired.",
+                approval_id=str(approval["approval_id"]),
+            )
+            self._emit(
+                RunEvent(
+                    run_id=run_id,
+                    event_name="approval.expired",
+                    status="blocked",
+                    message="Approval expired.",
+                    details={"approval_id": approval["approval_id"]},
+                )
+            )
+        return len(expired)
 
     def _execute_run(
         self,
@@ -499,6 +658,11 @@ class RunOrchestrator:
                 session_id=session_id,
                 status=status,
             )
+            approval_id = (
+                self._latest_pending_approval_id(run_id)
+                if status == "waiting_approval"
+                else None
+            )
             if persist_task and task_id is not None:
                 self._finish_task(task_id, final)
             self._upsert_run(
@@ -509,9 +673,23 @@ class RunOrchestrator:
                     message=result.message[:220],
                     finished_at=_now(),
                     cancel_requested=token.cancelled,
+                    approval_id=approval_id,
                 ),
                 result=final,
             )
+            if approval_id:
+                self._emit(
+                    RunEvent(
+                        run_id=run_id,
+                        task_id=task_id,
+                        session_id=session_id,
+                        channel=channel,
+                        event_name="approval.requested",
+                        status="waiting_approval",
+                        message="Approval requested.",
+                        details={"approval_id": approval_id},
+                    )
+                )
             self._emit(
                 RunEvent(
                     run_id=run_id,
@@ -691,6 +869,8 @@ class RunOrchestrator:
                     message=event.message or active.snapshot.message,
                     updated_at=_now(),
                     cancel_requested=event.status in {"cancelling", "cancelled"},
+                    approval_id=(event.details or {}).get("approval_id")
+                    or active.snapshot.approval_id,
                 )
                 self._upsert_run(active.snapshot)
         for subscriber in subscribers:
@@ -705,6 +885,12 @@ class RunOrchestrator:
         now = _now()
         created_at = snapshot.started_at or now
         with open_state(self.config) as db:
+            existing = db.execute(
+                "SELECT status FROM agent_runs WHERE run_id = ?",
+                (snapshot.run_id,),
+            ).fetchone()
+            if existing is not None:
+                _assert_transition(str(existing["status"]), snapshot.status)
             db.execute(
                 """
                 INSERT INTO agent_runs (
@@ -721,7 +907,7 @@ class RunOrchestrator:
                   active_tool = excluded.active_tool,
                   message = excluded.message,
                   cancel_requested = excluded.cancel_requested,
-                  approval_id = excluded.approval_id,
+                  approval_id = COALESCE(excluded.approval_id, agent_runs.approval_id),
                   started_at = COALESCE(agent_runs.started_at, excluded.started_at),
                   updated_at = excluded.updated_at,
                   finished_at = excluded.finished_at,
@@ -753,6 +939,50 @@ class RunOrchestrator:
                 ),
             )
             db.commit()
+
+    def _transition_run(
+        self,
+        run_id: str,
+        status: RunStatus,
+        current_step: str,
+        *,
+        message: str = "",
+        active_tool: str = "",
+        cancel_requested: bool | None = None,
+        approval_id: str | None = None,
+        result: RunResult | None = None,
+    ) -> RunSnapshot:
+        snapshot = self.get_run(run_id)
+        if snapshot is None:
+            raise ValueError(f"Run not found: {run_id}")
+        updated = _replace_snapshot(
+            snapshot,
+            status=status,
+            current_step=current_step,
+            active_tool=active_tool,
+            message=message or snapshot.message,
+            cancel_requested=snapshot.cancel_requested
+            if cancel_requested is None
+            else cancel_requested,
+            approval_id=approval_id or snapshot.approval_id,
+            finished_at=_now() if status in TERMINAL_STATUSES else snapshot.finished_at,
+        )
+        self._upsert_run(updated, result=result)
+        return updated
+
+    def _latest_pending_approval_id(self, run_id: str) -> str | None:
+        with open_state(self.config) as db:
+            row = db.execute(
+                """
+                SELECT approval_id
+                FROM approvals
+                WHERE run_id = ? AND status = 'pending'
+                ORDER BY created_at DESC
+                LIMIT 1
+                """,
+                (run_id,),
+            ).fetchone()
+        return str(row["approval_id"]) if row else None
 
 
 def _snapshot_from_task(task: dict[str, Any]) -> RunSnapshot:
@@ -816,6 +1046,18 @@ def _run_status(value: Any) -> RunStatus:
     if text in ACTIVE_STATUSES or text in TERMINAL_STATUSES:
         return text  # type: ignore[return-value]
     return "failed"
+
+
+def _assert_transition(current: str, target: str) -> None:
+    if current == target:
+        return
+    if current in TERMINAL_STATUSES:
+        raise ValueError(
+            f"Run is terminal and cannot transition: {current} -> {target}"
+        )
+    allowed = ALLOWED_TRANSITIONS.get(current, set())
+    if target not in allowed:
+        raise ValueError(f"Invalid run transition: {current} -> {target}")
 
 
 def _trace_status(value: Any) -> RunStatus:

@@ -6,6 +6,7 @@ from html import unescape
 from html.parser import HTMLParser
 from pathlib import Path
 import re
+import time
 from typing import Any, Callable
 from urllib import request
 from urllib.parse import parse_qs, quote_plus, unquote_plus, urlparse
@@ -103,9 +104,62 @@ class ToolSpec:
         }
 
 
+@dataclass(frozen=True)
+class ToolExecutionPolicy:
+    timeout_seconds: float = 60.0
+    retry_attempts: int = 0
+    retry_delay_seconds: float = 0.1
+
+
+class ToolExecutionController:
+    def __init__(self, policy: ToolExecutionPolicy | None = None) -> None:
+        self.policy = policy or ToolExecutionPolicy()
+
+    def run(
+        self,
+        *,
+        tool: ToolSpec,
+        arguments: dict[str, Any],
+        context: ToolContext,
+    ) -> ToolResult:
+        attempts = 0
+        while True:
+            attempts += 1
+            started_at = time.monotonic()
+            context.assert_not_cancelled()
+            try:
+                result = tool.execute(arguments, context)
+            except Exception:
+                if attempts <= self.policy.retry_attempts:
+                    context.assert_not_cancelled()
+                    time.sleep(self.policy.retry_delay_seconds)
+                    continue
+                raise
+            context.assert_not_cancelled()
+            elapsed = time.monotonic() - started_at
+            if elapsed > self.policy.timeout_seconds:
+                return ToolResult(
+                    False,
+                    f"{tool.name} exceeded the {self.policy.timeout_seconds:.0f}s tool timeout.",
+                    {
+                        "tool_name": tool.name,
+                        "duration_seconds": round(elapsed, 3),
+                        "timeout_seconds": self.policy.timeout_seconds,
+                        "attempts": attempts,
+                    },
+                )
+            return result
+
+
 class ToolRegistry:
-    def __init__(self, tools: list[ToolSpec] | None = None) -> None:
+    def __init__(
+        self,
+        tools: list[ToolSpec] | None = None,
+        *,
+        execution_controller: ToolExecutionController | None = None,
+    ) -> None:
         self._tools: dict[str, ToolSpec] = {}
+        self.execution_controller = execution_controller or ToolExecutionController()
         for tool in tools or []:
             self.register(tool)
 
@@ -144,7 +198,11 @@ class ToolRegistry:
             raise ApprovalRequired(tool.name, arguments, decision.reason)
         context.safety_gate.allow(action)
         context.assert_not_cancelled()
-        result = tool.execute(arguments, context)
+        result = self.execution_controller.run(
+            tool=tool,
+            arguments=arguments,
+            context=context,
+        )
         context.assert_not_cancelled()
         return result
 
@@ -164,7 +222,11 @@ class ToolRegistry:
             raise PermissionError(f"Blocked action: {tool.name} ({decision.reason})")
         context.safety_gate.assert_not_killed()
         context.assert_not_cancelled()
-        result = tool.execute(arguments, context)
+        result = self.execution_controller.run(
+            tool=tool,
+            arguments=arguments,
+            context=context,
+        )
         context.assert_not_cancelled()
         return result
 

@@ -9,6 +9,7 @@ from typing import Any
 
 from iris.config import IrisConfig
 from iris.gateway import GatewayService
+from iris.approvals import create_approval
 from iris.router import RouterResult
 from iris.runtime import RunOrchestrator
 from iris.safety import CancellationToken
@@ -123,6 +124,76 @@ def test_orchestrator_recovers_stale_running_runs(tmp_path: Path) -> None:
     assert snapshot is not None
     assert snapshot.status == "failed"
     assert snapshot.current_step == "recovered"
+
+
+def test_orchestrator_rejects_terminal_transition(tmp_path: Path) -> None:
+    config = _config(tmp_path)
+    orchestrator = RunOrchestrator(config=config, router_factory=lambda: _Router())
+    result = orchestrator.start_run("hello", channel="terminal")
+
+    try:
+        orchestrator._transition_run(result.run_id, "running", "invalid")  # noqa: SLF001
+    except ValueError as exc:
+        assert "terminal" in str(exc)
+    else:
+        raise AssertionError("terminal run transition should fail")
+
+
+def test_orchestrator_records_approval_decision_events(tmp_path: Path) -> None:
+    config = _config(tmp_path)
+    approval_holder: list[str] = []
+    orchestrator = RunOrchestrator(
+        config=config,
+        router_factory=lambda: _ApprovalRouter(config, approval_holder),
+    )
+    result = orchestrator.start_run("approval needed", channel="gateway")
+    approval_id = approval_holder[0]
+
+    assert result.status == "waiting_approval"
+    assert orchestrator.get_run(result.run_id).approval_id == approval_id  # type: ignore[union-attr]
+    assert orchestrator.decide_approval(approval_id, "denied") is True
+
+    snapshot = orchestrator.get_run(result.run_id)
+    assert snapshot is not None
+    assert snapshot.status == "blocked"
+    events = [event["event_name"] for event in orchestrator.list_events(result.run_id)]
+    assert "approval.denied" in events
+
+
+class _ApprovalRouter:
+    def __init__(self, config: IrisConfig, approval_holder: list[str]) -> None:
+        self.config = config
+        self.approval_holder = approval_holder
+
+    def handle_text(
+        self,
+        _text: str,
+        *,
+        cancellation_token: CancellationToken | None = None,
+        run_id: str | None = None,
+    ) -> RouterResult:
+        assert run_id is not None
+        with open_state(self.config) as db:
+            approval_id = create_approval(
+                db,
+                action_name="message_send",
+                preview="message_send({})",
+                run_id=run_id,
+            )
+        self.approval_holder.append(approval_id)
+        return RouterResult(False, "That needs approval.", run_id=run_id)
+
+
+def test_gateway_lists_runs(tmp_path: Path) -> None:
+    config = _config(tmp_path)
+    service = GatewayService(config=config, router_factory=lambda: _Router())
+    service.handle_post("/messages", {"message": "do a thing", "channel": "gateway"})
+
+    status, payload = service.handle_get("/runs", {"limit": ["10"]})
+
+    assert status == 200
+    assert len(payload["runs"]) == 1
+    assert payload["runs"][0]["status"] == "done"
 
 
 class _Router:
