@@ -60,6 +60,18 @@ def test_mcp_tools_register_into_registry() -> None:
         manager.stop_all()
 
 
+def test_tool_allowlist_filters_descriptors() -> None:
+    server = MCPServerConfig(
+        name="fake", command=sys.executable, args=[FAKE_SERVER], tool_allow=("other",)
+    )
+    manager = MCPManager([server])
+    manager.start_all()
+    try:
+        assert manager.tool_descriptors() == []
+    finally:
+        manager.stop_all()
+
+
 def test_load_mcp_config_reads_enabled_servers(tmp_path: Path) -> None:
     config_path = tmp_path / "mcp.json"
     config_path.write_text(

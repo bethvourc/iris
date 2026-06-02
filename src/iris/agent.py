@@ -19,7 +19,7 @@ from iris.config import IrisConfig
 from iris.connectors import connector_health, default_manifest_dirs
 from iris.integrations.google_vision import GoogleVisionClient
 from iris.integrations.openai_client import OpenAIResponsesClient
-from iris.memory import list_memories
+from iris.memory import add_memory, list_memories
 from iris.mac_controller import MacController
 from iris.perception import PerceptionService, ScreenAwarenessService
 from iris.recipes import ActionRecipeRegistry
@@ -427,6 +427,104 @@ class AgentExecutor:
             if self._current_cancellation_token is token:
                 self._current_cancellation_token = None
 
+    def run_tool(
+        self,
+        tool_name: str,
+        arguments: dict[str, Any],
+        *,
+        cancellation_token: CancellationToken | None = None,
+    ) -> AgentRunResult:
+        """Execute one tool the Realtime model chose, reusing safety/approval/audit.
+
+        This is the execution shim for the unified voice brain: the Realtime model
+        decides which tool to call, this runs it through the same gate as the deep
+        planner (classification, approval creation, cancellation, session state).
+        """
+        run_id = uuid.uuid4().hex
+        token = cancellation_token or CancellationToken()
+        self._current_cancellation_token = token
+        try:
+            token.throw_if_cancelled()
+            result = self._execute_tool(
+                run_id, tool_name, arguments, cancellation_token=token
+            )
+            observation = {
+                "tool_name": tool_name,
+                "arguments": arguments,
+                "ok": result.ok,
+                "message": result.message,
+                "payload": result.payload,
+            }
+            _update_session_from_observation(self._session_state, observation)
+            return AgentRunResult(
+                result.ok, result.message, result.payload, run_id=run_id
+            )
+        except AutomationPaused as exc:
+            return AgentRunResult(
+                False, str(exc) or "Operation cancelled.", run_id=run_id
+            )
+        finally:
+            if self._current_cancellation_token is token:
+                self._current_cancellation_token = None
+
+    def summarize_session_to_memory(self) -> int:
+        """Distill the conversation into durable memories at session end.
+
+        This is how Iris gets to know the user over time: stable facts and
+        preferences are extracted and stored, then surfaced again next session.
+        """
+        if self.config is None or not self._conversation_history:
+            return 0
+        if not getattr(self.openai_client, "available", False):
+            return 0
+        transcript = "\n".join(
+            f"{turn['role']}: {turn['text']}"
+            for turn in self._conversation_history[-20:]
+        )
+        try:
+            client = self.openai_client._get_client()
+            response = client.responses.create(
+                model=self.openai_client.config.chat_model,
+                instructions=(
+                    "Extract durable facts or preferences about the user worth "
+                    "remembering long-term from this conversation. Return a JSON array "
+                    "of short strings (max 8). Only stable facts, preferences, or "
+                    "standing instructions — no one-off task details or chit-chat. "
+                    "Return [] if nothing is worth keeping."
+                ),
+                input=[
+                    {"role": "user", "content": [{"type": "input_text", "text": transcript}]}
+                ],
+                max_output_tokens=300,
+            )
+            facts = _parse_json_list(self.openai_client.output_text(response))
+        except Exception:
+            return 0
+        if not facts:
+            return 0
+        saved = 0
+        with open_state(self.config) as db:
+            existing = {
+                str(row.get("content") or "").strip().lower()
+                for row in list_memories(db)
+            }
+            for fact in facts:
+                text = str(fact).strip()
+                if not text or text.lower() in existing:
+                    continue
+                add_memory(
+                    db,
+                    category="session_summary",
+                    content=text,
+                    provenance="session_summary",
+                    confidence=0.6,
+                    user_confirmed=False,
+                    sensitive=False,
+                )
+                existing.add(text.lower())
+                saved += 1
+        return saved
+
     def _execute_tool(
         self,
         run_id: str,
@@ -447,6 +545,7 @@ class AgentExecutor:
             computer=self.computer_backend,
             screen_awareness=self.screen_awareness,
             computer_use_runner=self.computer_use_runner,
+            deep_task_runner=self.run,
             session_state=self._session_state,
             recipes=self.recipes,
             config=self.config,
@@ -652,6 +751,24 @@ class AgentExecutor:
         self._conversation_history.append({"role": "assistant", "text": response})
         if len(self._conversation_history) > 12:
             del self._conversation_history[:-12]
+
+
+def _parse_json_list(raw: str) -> list[Any]:
+    text = (raw or "").strip()
+    if not text:
+        return []
+    try:
+        parsed = json.loads(text)
+    except Exception:
+        start = text.find("[")
+        end = text.rfind("]")
+        if start == -1 or end == -1 or end <= start:
+            return []
+        try:
+            parsed = json.loads(text[start : end + 1])
+        except Exception:
+            return []
+    return parsed if isinstance(parsed, list) else []
 
 
 def _planner_instructions() -> str:

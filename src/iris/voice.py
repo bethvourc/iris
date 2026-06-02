@@ -12,10 +12,18 @@ from dataclasses import dataclass
 from typing import Any
 
 from iris.config import IrisConfig
+from iris.copilot import CoPilotService
 from iris.perception import ScreenAwarenessService
 from iris.profile import UserProfile, infer_system_profile
 from iris.router import ActionRouter
+from iris.meetings import (
+    complete_meeting,
+    deliver_meeting_recap,
+    start_silent_meeting,
+)
 from iris.safety import SafetyGate
+from iris.scheduler import SchedulerService
+from iris.state import open_state
 from iris.system import run_command
 
 
@@ -223,9 +231,26 @@ class RealtimeSpeechSession:
         self._last_printed_response_text = ""
         self._last_response_started_at = 0.0
         self._suppress_input_until = 0.0
+        self._pending_calls: list[dict[str, Any]] = []
+        self._tool_lock = threading.Lock()
+        self._meeting_active = False
+        self._meeting_id = ""
+        self._meeting_transcript: list[str] = []
+        self._meeting_lock = threading.Lock()
         self._screen_awareness = ScreenAwarenessService(
             router.perception,
             interval_seconds=config.screenshot_interval_seconds,
+        )
+        self._scheduler = SchedulerService(
+            config,
+            perception=router.perception,
+            announce=self.announce,
+        )
+        self._copilot = CoPilotService(
+            signature=self._copilot_signature,
+            read_text=self._copilot_read_text,
+            advise=self._copilot_advise,
+            announce=self.announce,
         )
 
     def run(self) -> None:
@@ -254,6 +279,8 @@ class RealtimeSpeechSession:
                     "model": self.config.realtime_model,
                     "output_modalities": ["audio"],
                     "instructions": self._instructions(),
+                    "tools": self._realtime_tools(),
+                    "tool_choice": "auto",
                     "audio": {
                         "input": {
                             "format": {
@@ -296,6 +323,7 @@ class RealtimeSpeechSession:
             "iris> live screen awareness enabled "
             f"({self.config.screenshot_interval_seconds:.1f}s sampling)"
         )
+        self._scheduler.start()
 
         input_device = _select_input_device(sounddevice)
         print(f"iris> microphone device: {input_device.index} ({input_device.name})")
@@ -329,7 +357,145 @@ class RealtimeSpeechSession:
             signal.signal(signal.SIGINT, previous_handler)
             self.router.set_screen_awareness(None)
             self._screen_awareness.stop()
+            self._scheduler.stop()
+            self._copilot.stop()
+            self._summarize_session_to_memory()
             self.stop()
+
+    def announce(self, text: str) -> bool:
+        if self._stop.is_set() or self._ws is None or not self.awake:
+            return False
+        if self._meeting_active:
+            return False
+        self._respond_with_text(text)
+        return True
+
+    def _start_meeting(self, transcript: str) -> None:
+        try:
+            with open_state(self.config) as db:
+                self._meeting_id = start_silent_meeting(
+                    db, self.config, disclosure_spoken=True
+                )
+        except Exception as exc:
+            self._respond_with_text(f"I couldn't start meeting mode: {exc}")
+            return
+        with self._meeting_lock:
+            self._meeting_transcript = []
+        self._meeting_active = True
+        print("iris> meeting mode on (silent; say 'stop the meeting' when done)")
+        disclosure = (
+            "Starting meeting mode. I'll listen quietly and won't respond. "
+            "Just say 'stop the meeting' when you're done and I'll send you a recap."
+        )
+        self._respond_with_text(disclosure)
+
+    def _stop_meeting(self) -> None:
+        self._meeting_active = False
+        meeting_id = self._meeting_id
+        self._meeting_id = ""
+        with self._meeting_lock:
+            transcript = "\n".join(self._meeting_transcript).strip()
+            self._meeting_transcript = []
+        self._respond_with_text("Meeting ended. Putting your recap together now.")
+
+        def worker() -> None:
+            try:
+                with open_state(self.config) as db:
+                    result = complete_meeting(
+                        db,
+                        self.config,
+                        meeting_id=meeting_id,
+                        transcript=transcript,
+                        openai_client=self.router.openai_client,
+                    )
+                delivered = deliver_meeting_recap(
+                    self.config,
+                    result,
+                    draft_email=self._meeting_draft_email,
+                    create_reminder=self._meeting_create_reminder,
+                )
+                summary = result.get("summary") if isinstance(result, dict) else {}
+                recap = ""
+                if isinstance(summary, dict):
+                    recap = str(summary.get("summary") or "")
+                reminders = int(delivered.get("reminders") or 0)
+                emailed = "drafted your recap email" if delivered.get("email") else "saved the recap"
+                spoken = (
+                    f"Done. I {emailed}"
+                    + (f" and set {reminders} reminder{'s' if reminders != 1 else ''}." if reminders else ".")
+                    + (f" In short: {recap}" if recap else "")
+                )
+                self._respond_with_text(spoken)
+            except Exception as exc:
+                print(f"iris error> meeting recap failed: {exc}")
+                self._respond_with_text(
+                    "I saved the meeting but hit a snag building the recap."
+                )
+
+        threading.Thread(target=worker, name="iris-meeting-recap", daemon=True).start()
+
+    def _meeting_draft_email(self, subject: str, body: str) -> None:
+        self.router.agent_executor.run_tool(
+            "draft_email", {"subject": subject, "body": body}
+        )
+
+    def _meeting_create_reminder(self, task: str) -> None:
+        self.router.agent_executor.run_tool("reminder_create", {"title": task})
+
+    def _copilot_signature(self) -> str:
+        if self._meeting_active or not self.awake:
+            return ""
+        frame = self._screen_awareness.latest()
+        if frame is None:
+            return ""
+        ctx = frame.context
+        captured = getattr(frame.screenshot, "captured_at", None)
+        bucket = int(captured.timestamp() // 8) if captured else 0
+        return f"{ctx.active_app}|{ctx.active_window}|{bucket}"
+
+    def _copilot_read_text(self) -> str:
+        result = self.router.agent_executor.run_tool("screen_describe", {})
+        return result.message if result.ok else ""
+
+    def _copilot_advise(self, screen_text: str) -> str:
+        client = self.router.openai_client
+        if not getattr(client, "available", False):
+            return ""
+        try:
+            sdk = client._get_client()
+            response = sdk.responses.create(
+                model=self.config.chat_model,
+                instructions=(
+                    "You are a proactive co-pilot watching the user's screen. If there "
+                    "is a clear problem they would want help with (an error, a failed "
+                    "command, a stuck or blocked state), reply with ONE short spoken "
+                    "suggestion, max two sentences, no preamble. If there is nothing "
+                    "worth interrupting for, reply with exactly NONE."
+                ),
+                input=[
+                    {"role": "user", "content": [{"type": "input_text", "text": screen_text[:4000]}]}
+                ],
+                max_output_tokens=120,
+            )
+            return client.output_text(response)
+        except Exception:
+            return ""
+
+    def _toggle_copilot(self, on: bool) -> None:
+        if on:
+            self._copilot.start()
+            self._respond_with_text(
+                "Co-pilot on. I'll keep an eye on your screen and speak up if I spot something."
+            )
+        else:
+            self._copilot.stop()
+            self._respond_with_text("Co-pilot off.")
+
+    def _summarize_session_to_memory(self) -> None:
+        try:
+            self.router.agent_executor.summarize_session_to_memory()
+        except Exception:
+            pass
 
     def stop(self) -> None:
         self._stop.set()
@@ -420,7 +586,23 @@ class RealtimeSpeechSession:
             return
         if event_type in {"response.output_audio.done", "response.audio.done"}:
             return
+        if event_type == "response.output_item.done":
+            item = event.get("item")
+            if isinstance(item, dict) and item.get("type") == "function_call":
+                self._record_function_call(item)
+            return
+        if event_type == "response.function_call_arguments.done":
+            self._record_function_call(
+                {
+                    "name": event.get("name"),
+                    "call_id": event.get("call_id"),
+                    "arguments": event.get("arguments"),
+                }
+            )
+            return
         if event_type in {"response.done", "response.cancelled"}:
+            if event_type == "response.done" and self._dispatch_pending_calls():
+                return
             self._mark_response_done()
             return
         if event_type == "error":
@@ -440,6 +622,16 @@ class RealtimeSpeechSession:
             return
         print(f"you> {transcript}")
         lowered = transcript.lower().strip()
+        if self._meeting_active:
+            if _is_meeting_stop(lowered):
+                self._stop_meeting()
+            else:
+                with self._meeting_lock:
+                    self._meeting_transcript.append(transcript)
+            return
+        if _is_meeting_start(lowered):
+            self._start_meeting(transcript)
+            return
         if _is_sleep_command(lowered):
             self.awake = False
             self._respond_with_text("Going quiet. Say Iris when you need me.")
@@ -462,7 +654,198 @@ class RealtimeSpeechSession:
         if self.wake_gated and not self.awake:
             return
 
-        self._run_agent_async(transcript)
+        if self._handle_control_word(lowered):
+            return
+
+        self._begin_model_response()
+
+    def _handle_control_word(self, lowered: str) -> bool:
+        word = lowered.strip(" \t\r\n.,!?")
+        if any(
+            phrase in lowered
+            for phrase in ("co-pilot on", "copilot on", "watch my screen", "keep an eye on my screen")
+        ):
+            self._toggle_copilot(True)
+            return True
+        if any(
+            phrase in lowered
+            for phrase in ("co-pilot off", "copilot off", "stop watching my screen", "stop watching")
+        ):
+            self._toggle_copilot(False)
+            return True
+        if _is_interrupt_command(word):
+            self.router.agent_executor.cancel_current("Operation cancelled by user.")
+            self.router.safety_gate.kill()
+            with self._tool_lock:
+                self._pending_calls.clear()
+            print("iris> stopping current automation after the active step")
+            self._respond_with_text("Stopping that.")
+            return True
+        if word in {"resume", "unpause", "continue", "carry on"}:
+            self.router.safety_gate.resume()
+            self._respond_with_text("Okay, back on it.")
+            return True
+        if word in {
+            "approve",
+            "approved",
+            "yes approve",
+            "go ahead",
+            "yes go ahead",
+            "confirm",
+            "do it",
+        }:
+            result = self.router.agent_executor.approve_pending()
+            self._respond_with_text(result.message)
+            return True
+        if word in {"deny", "denied", "cancel that", "never mind", "no thanks"}:
+            result = self.router.agent_executor.deny_pending()
+            self._respond_with_text(result.message)
+            return True
+        if _is_status_question(word):
+            self._respond_with_text("I'm right here and ready.")
+            return True
+        return False
+
+    def _begin_model_response(self) -> None:
+        with self._response_state_lock:
+            if (
+                self._assistant_response_active
+                and self._last_response_started_at
+                and time.monotonic() - self._last_response_started_at > 30.0
+            ):
+                self._assistant_response_active = False
+            if self._assistant_response_active:
+                return
+            self._assistant_response_active = True
+            self._last_response_started_at = time.monotonic()
+            self._suppress_input_until = time.monotonic() + 3.0
+        self._send_json(
+            {"type": "response.create", "response": {"output_modalities": ["audio"]}}
+        )
+
+    def _record_function_call(self, item: dict[str, Any]) -> None:
+        name = str(item.get("name") or "")
+        if not name:
+            return
+        call_id = str(item.get("call_id") or item.get("id") or "")
+        with self._tool_lock:
+            if call_id and any(c["call_id"] == call_id for c in self._pending_calls):
+                return
+            self._pending_calls.append(
+                {
+                    "call_id": call_id,
+                    "name": name,
+                    "arguments": item.get("arguments"),
+                }
+            )
+
+    def _dispatch_pending_calls(self) -> bool:
+        with self._tool_lock:
+            if not self._pending_calls:
+                return False
+            calls = self._pending_calls
+            self._pending_calls = []
+        with self._response_state_lock:
+            self._assistant_response_active = False
+        threading.Thread(
+            target=self._run_calls,
+            args=(calls,),
+            name="iris-tool-worker",
+            daemon=True,
+        ).start()
+        return True
+
+    def _run_calls(self, calls: list[dict[str, Any]]) -> None:
+        for call in calls:
+            name = call["name"]
+            call_id = call["call_id"]
+            arguments = self._parse_tool_arguments(call.get("arguments"))
+            print(f"iris> · {name}")
+            if name == "look_at_screen":
+                self._inject_screen_image(call_id, arguments)
+                continue
+            try:
+                result = self.router.agent_executor.run_tool(name, arguments)
+                output = result.message or ("Done." if result.ok else "That didn't work.")
+                if not result.ok:
+                    print(f"iris error> {output}")
+            except Exception as exc:
+                output = f"The {name} tool failed: {exc}"
+                print(f"iris error> {exc}")
+            self._send_json(
+                {
+                    "type": "conversation.item.create",
+                    "item": {
+                        "type": "function_call_output",
+                        "call_id": call_id,
+                        "output": output,
+                    },
+                }
+            )
+        with self._response_state_lock:
+            self._assistant_response_active = True
+            self._last_response_started_at = time.monotonic()
+            self._suppress_input_until = time.monotonic() + 3.0
+        self._send_json(
+            {"type": "response.create", "response": {"output_modalities": ["audio"]}}
+        )
+
+    def _inject_screen_image(self, call_id: str, arguments: dict[str, Any]) -> None:
+        question = (
+            arguments.get("question")
+            or arguments.get("prompt")
+            or "Describe what is relevant on the screen."
+        )
+        try:
+            frame = self._screen_awareness.capture_now()
+            data_url = frame.screenshot.data_url()
+        except Exception as exc:
+            self._send_json(
+                {
+                    "type": "conversation.item.create",
+                    "item": {
+                        "type": "function_call_output",
+                        "call_id": call_id,
+                        "output": f"I couldn't capture the screen: {exc}",
+                    },
+                }
+            )
+            return
+        self._send_json(
+            {
+                "type": "conversation.item.create",
+                "item": {
+                    "type": "function_call_output",
+                    "call_id": call_id,
+                    "output": "Captured the current screen; answering from the image.",
+                },
+            }
+        )
+        self._send_json(
+            {
+                "type": "conversation.item.create",
+                "item": {
+                    "type": "message",
+                    "role": "user",
+                    "content": [
+                        {"type": "input_image", "image_url": data_url},
+                        {"type": "input_text", "text": str(question)},
+                    ],
+                },
+            }
+        )
+
+    @staticmethod
+    def _parse_tool_arguments(raw: Any) -> dict[str, Any]:
+        if isinstance(raw, dict):
+            return raw
+        if isinstance(raw, str) and raw.strip():
+            try:
+                parsed = json.loads(raw)
+                return parsed if isinstance(parsed, dict) else {}
+            except Exception:
+                return {}
+        return {}
 
     def _run_agent_async(self, transcript: str) -> None:
         if not self._agent_lock.acquire(blocking=False):
@@ -644,26 +1027,47 @@ class RealtimeSpeechSession:
             except Exception:
                 self._stop.set()
 
+    def _realtime_tools(self) -> list[dict[str, Any]]:
+        schemas = self.router.agent_executor.registry.realtime_schemas()
+        return [
+            {
+                "type": "function",
+                "name": schema["name"],
+                "description": schema["description"],
+                "parameters": schema["parameters"],
+            }
+            for schema in schemas
+        ]
+
+    def _memory_context(self) -> str:
+        try:
+            memories = self.router.agent_executor._known_memories(limit=20)
+        except Exception:
+            memories = []
+        if not memories:
+            return ""
+        lines = "\n".join(f"- {item['content']}" for item in memories)
+        return f"\n\nWhat you've learned about {self.user_profile.preferred_name}:\n{lines}"
+
     def _instructions(self) -> str:
-        return f"""You are {self.config.agent_name}, a warm, conversational Mac voice agent.
+        return f"""You are {self.config.agent_name}, a warm, capable Mac voice agent who can act on the computer.
 
 User profile:
-{self.user_profile.prompt_context()}
+{self.user_profile.prompt_context()}{self._memory_context()}
+
+How you work:
+- You have tools to control this Mac: open and drive apps, browse the web, read the screen, find and open files, play media, manage calendar/reminders, draft email, run shell commands, remember things, and delegate big multi-step jobs with run_deep_task. Call them to actually do what {self.user_profile.preferred_name} asks.
+- When a request needs action, call the right tool rather than describing what you would do. Chain tools when needed. For anything more than a couple of steps (research, multi-app workflows), call run_deep_task with a clear goal.
+- To know what is on screen, prefer fast structured reads first: browser_get_dom for web pages, screen_describe for a quick summary. Only call look_at_screen when you genuinely need to see the pixels (images, layout, a non-text app); you will then be shown the actual screenshot to answer from.
+- When {self.user_profile.preferred_name} states a durable preference or fact ("always...", "from now on...", "I prefer...", "my X is..."), call remember silently. For "what do you know about me", call recall.
+- After a tool runs, speak only what actually happened from its result. Never invent an outcome (a song that started, a message that sent). If something failed, say so plainly and what you'll try next. Never say a capability is unavailable — just use another tool.
+- Ask before destructive actions, sending messages, deleting files, credentials, purchases, installs, or security/privacy changes; the runtime will also gate these and tell you when approval is needed.
 
 Voice behavior:
 - This is live speech-to-speech, not dictation. Sound present, relaxed, and conversational.
 - Talk like a capable person sitting next to {self.user_profile.preferred_name}: calm, warm, lightly playful when the user is casual, never corporate.
-- Use {self.user_profile.preferred_name}'s first name occasionally, especially greetings and reassuring confirmations, but do not overuse it.
-- Do not give the same generic line every time. Avoid defaulting to “How can I help you today?” after every greeting.
-- For casual check-ins, answer like a person: acknowledge the mood, maybe add a small natural follow-up.
-- For action results, be brief but specific: say what happened, what you see, or what you need next.
-- One or two sentences is usually right. Use three if the user is explaining something or the task needs context.
-- Do not be robotic, do not read raw URLs aloud, and do not narrate internal tool names unless the user asks.
-- If asked to control the Mac, inspect the screen, open apps, find files, or run workflows, the local Iris runtime will execute it and provide a result.
-- Do not guess what is on the screen. For screen/current tab/current window questions, wait for the local Iris runtime result.
-- Only state that an action happened, or describe its outcome, using what the local Iris runtime actually reported. Never invent or assume a result (a song that started, a file that opened, a message that sent). If the runtime has not reported success, say what you are doing or attempting, not that it is done.
-- Never tell the user that a capability, model, or backend is unavailable or turned off. The runtime always has local control; just relay what it did or what it needs.
-- Ask before destructive actions, sending messages, deleting files, credentials, purchases, installs, or security/privacy changes.
+- Use {self.user_profile.preferred_name}'s first name occasionally, not every turn. Vary your wording; avoid canned lines like "How can I help you today?".
+- One or two sentences is usually right; three if the task needs context. Don't read raw URLs, paths, JSON, or tool names aloud.
 - If the user says go to sleep, go quiet until the wake word is used again.
 """
 
@@ -1038,6 +1442,38 @@ def _is_sleep_command(text: str) -> bool:
             "go silent",
             "be quiet",
             "mute yourself",
+        )
+    )
+
+
+def _is_meeting_start(text: str) -> bool:
+    return any(
+        phrase in text
+        for phrase in (
+            "start a meeting",
+            "start the meeting",
+            "start meeting",
+            "meeting mode",
+            "begin the meeting",
+            "take notes on this meeting",
+            "listen to this meeting",
+        )
+    )
+
+
+def _is_meeting_stop(text: str) -> bool:
+    return any(
+        phrase in text
+        for phrase in (
+            "stop the meeting",
+            "end the meeting",
+            "stop meeting",
+            "end meeting",
+            "that's a wrap",
+            "thats a wrap",
+            "meeting is over",
+            "meeting's over",
+            "wrap up the meeting",
         )
     )
 

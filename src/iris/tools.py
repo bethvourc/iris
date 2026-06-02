@@ -50,6 +50,7 @@ class ToolContext:
     computer: ComputerBackend | None = None
     screen_awareness: ScreenAwarenessService | None = None
     computer_use_runner: Callable[[str], Any] | None = None
+    deep_task_runner: Callable[[str], Any] | None = None
     session_state: dict[str, Any] | None = None
     recipes: ActionRecipeRegistry | None = None
     config: IrisConfig | None = None
@@ -86,6 +87,45 @@ PLANNER_HIDDEN_TOOLS = {
     "media_play_current",
     "find_file",
     "summarize_pdf",
+}
+
+
+CANONICAL_REALTIME_TOOLS = {
+    "app_open",
+    "app_activate",
+    "app_click_text",
+    "app_type_text",
+    "browser_open",
+    "browser_current_page",
+    "browser_get_dom",
+    "browser_click_element",
+    "browser_type_into",
+    "browser_submit",
+    "browser_tabs",
+    "screen_describe",
+    "look_at_screen",
+    "screen_click_element",
+    "file_find",
+    "file_open",
+    "file_list_folder",
+    "file_rename",
+    "media_play",
+    "media_pause",
+    "media_search",
+    "audio_current_media",
+    "set_volume",
+    "app_volume_set",
+    "calendar_find_event",
+    "reminder_create",
+    "gmail_create_draft",
+    "message_send",
+    "remember",
+    "recall",
+    "knowledge_search",
+    "run_shell",
+    "web_research",
+    "run_deep_task",
+    "task_status",
 }
 
 
@@ -126,6 +166,16 @@ class ToolRegistry:
             for name, tool in self._tools.items()
             if name not in PLANNER_HIDDEN_TOOLS
         ]
+
+    def realtime_schemas(self, *, mcp_limit: int = 16) -> list[dict[str, Any]]:
+        canonical: list[dict[str, Any]] = []
+        mcp: list[dict[str, Any]] = []
+        for name, tool in self._tools.items():
+            if name in CANONICAL_REALTIME_TOOLS:
+                canonical.append(tool.schema())
+            elif name.startswith("mcp__"):
+                mcp.append(tool.schema())
+        return canonical + mcp[:mcp_limit]
 
     def execute(
         self, name: str, arguments: dict[str, Any], context: ToolContext
@@ -487,6 +537,18 @@ def _default_tools() -> list[ToolSpec]:
             parameters=_object_schema({"prompt": {"type": "string"}}, required=[]),
             risk=RiskLevel.LOW_RISK,
             execute=_describe_screen,
+        ),
+        ToolSpec(
+            name="look_at_screen",
+            description=(
+                "Look at the screen directly to answer a visual question (layout, "
+                "images, a non-text app, or anything you cannot read from the page DOM "
+                "or accessibility tree). Prefer browser_get_dom or screen_describe for "
+                "plain text/UI; use this when you genuinely need to see the pixels."
+            ),
+            parameters=_object_schema({"question": {"type": "string"}}, required=[]),
+            risk=RiskLevel.LOW_RISK,
+            execute=_look_at_screen,
         ),
         ToolSpec(
             name="screen_ocr",
@@ -1110,6 +1172,20 @@ def _default_tools() -> list[ToolSpec]:
             parameters=_object_schema({"instruction": {"type": "string"}}),
             risk=RiskLevel.LOW_RISK,
             execute=_computer_use,
+        ),
+        ToolSpec(
+            name="run_deep_task",
+            description=(
+                "Delegate a complex, multi-step goal to the deep planner (it will chain "
+                "several tools and verify). Use for research, multi-app workflows, or "
+                "anything needing more than a couple of steps. Returns the final result."
+            ),
+            parameters=_object_schema(
+                {"goal": {"type": "string"}},
+                required=["goal"],
+            ),
+            risk=RiskLevel.LOW_RISK,
+            execute=_run_deep_task,
         ),
         ToolSpec(
             name="run_shell",
@@ -1791,6 +1867,11 @@ def _frame_age_seconds(frame: LiveScreenFrame) -> float:
     return max(
         0.0, (datetime.now(timezone.utc) - frame.screenshot.captured_at).total_seconds()
     )
+
+
+def _look_at_screen(arguments: dict[str, Any], context: ToolContext) -> ToolResult:
+    prompt = _string_arg(arguments, "question") or _string_arg(arguments, "prompt")
+    return _describe_screen({"prompt": prompt} if prompt else {}, context)
 
 
 def _describe_screen(arguments: dict[str, Any], context: ToolContext) -> ToolResult:
@@ -3333,6 +3414,18 @@ def _computer_use(arguments: dict[str, Any], context: ToolContext) -> ToolResult
     return ToolResult(
         bool(result.ok), message, getattr(result, "payload", None)
     )
+
+
+def _run_deep_task(arguments: dict[str, Any], context: ToolContext) -> ToolResult:
+    goal = _string_arg(arguments, "goal") or _string_arg(arguments, "task")
+    if not goal:
+        return ToolResult(False, "I need a goal for the deep task.")
+    if context.deep_task_runner is None:
+        return ToolResult(False, "The deep task runner is not available in this runtime.")
+    result = context.deep_task_runner(goal)
+    ok = bool(getattr(result, "ok", False))
+    message = str(getattr(result, "message", "") or "Done.")
+    return ToolResult(ok, message, getattr(result, "payload", None))
 
 
 def _run_shell(arguments: dict[str, Any], context: ToolContext) -> ToolResult:

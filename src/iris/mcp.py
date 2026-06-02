@@ -52,6 +52,7 @@ class MCPServerConfig:
     env: dict[str, str] = field(default_factory=dict)
     cwd: str | None = None
     risk: RiskLevel = RiskLevel.LOW_RISK
+    tool_allow: tuple[str, ...] = ()
 
 
 def load_mcp_config(config: IrisConfig | None) -> list[MCPServerConfig]:
@@ -81,6 +82,9 @@ def load_mcp_config(config: IrisConfig | None) -> list[MCPServerConfig]:
             for key, value in (entry.get("env") or {}).items()
         }
         risk = _parse_risk(entry.get("risk"))
+        allow = tuple(
+            str(item) for item in (entry.get("tools") or entry.get("allow") or []) if str(item)
+        )
         servers.append(
             MCPServerConfig(
                 name=str(name),
@@ -89,6 +93,7 @@ def load_mcp_config(config: IrisConfig | None) -> list[MCPServerConfig]:
                 env=env,
                 cwd=str(entry["cwd"]) if entry.get("cwd") else None,
                 risk=risk,
+                tool_allow=allow,
             )
         )
     return servers
@@ -278,9 +283,12 @@ class MCPManager:
     def tool_descriptors(self) -> list[dict[str, Any]]:
         descriptors: list[dict[str, Any]] = []
         for name, client in self._clients.items():
+            allow = client.server.tool_allow
             for tool in client.tools:
                 tool_name = str(tool.get("name") or "").strip()
                 if not tool_name:
+                    continue
+                if allow and tool_name not in allow:
                     continue
                 descriptors.append(
                     {
