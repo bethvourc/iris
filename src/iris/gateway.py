@@ -11,18 +11,14 @@ from iris.approvals import decide_approval, list_approvals
 from iris.audit import record_audit
 from iris.config import IrisConfig
 from iris.actions import RiskLevel
-from iris.sessions import add_message, ensure_session, get_session, list_sessions
+from iris.runtime import RunOrchestrator
+from iris.sessions import get_session, list_sessions
 from iris.state import open_state
 from iris.supervisor import TaskSupervisor
 from iris.tasks import (
-    create_task,
-    finish_task,
     get_task,
-    heartbeat_task,
     list_tasks,
-    request_cancel,
     resume_task,
-    start_task,
 )
 
 
@@ -35,6 +31,16 @@ class GatewayService:
     def __init__(self, *, config: IrisConfig, router_factory: RouterFactory) -> None:
         self.config = config
         self.router_factory = router_factory
+        self._orchestrator: RunOrchestrator | None = None
+
+    @property
+    def orchestrator(self) -> RunOrchestrator:
+        if self._orchestrator is None:
+            self._orchestrator = RunOrchestrator(
+                config=self.config,
+                router_factory=self.router_factory,
+            )
+        return self._orchestrator
 
     def serve(self, *, host: str = "127.0.0.1", port: int = 8765) -> None:
         service = self
@@ -85,6 +91,22 @@ class GatewayService:
             if task_match:
                 task = get_task(db, task_match.group(1))
                 return (200, task) if task else (404, {"error": "task not found"})
+            run_match = re.fullmatch(r"/runs/([a-fA-F0-9]+)", path)
+            if run_match:
+                run = self.orchestrator.get_run(run_match.group(1))
+                return (
+                    (200, {"run": run.to_dict()})
+                    if run
+                    else (404, {"error": "run not found"})
+                )
+            run_events = re.fullmatch(r"/runs/([a-fA-F0-9]+)/events", path)
+            if run_events:
+                return 200, {
+                    "events": self.orchestrator.list_events(
+                        run_events.group(1),
+                        limit=_int_query(query, "limit", 200),
+                    )
+                }
             if path == "/approvals":
                 return 200, {"approvals": list_approvals(db)}
         return 404, {"error": "not found"}
@@ -96,8 +118,12 @@ class GatewayService:
             return self._handle_message(body)
         task_cancel = re.fullmatch(r"/tasks/([a-fA-F0-9]+)/cancel", path)
         if task_cancel:
-            with open_state(self.config) as db:
-                ok = request_cancel(db, task_cancel.group(1))
+            ok = self.orchestrator.cancel_run(task_cancel.group(1))
+            return (200 if ok else 404), {"ok": ok}
+        run_cancel = re.fullmatch(r"/runs/([a-fA-F0-9]+)/cancel", path)
+        if run_cancel:
+            reason = str(body.get("reason") or "Operation cancelled.")
+            ok = self.orchestrator.cancel_run(run_cancel.group(1), reason=reason)
             return (200 if ok else 404), {"ok": ok}
         task_resume = re.fullmatch(r"/tasks/([a-fA-F0-9]+)/resume", path)
         if task_resume:
@@ -132,68 +158,26 @@ class GatewayService:
             return 400, {"error": "message is required"}
         channel = str(body.get("channel") or "gateway")
         session_id = str(body.get("session_id") or "") or None
-        with open_state(self.config) as db:
-            session_id = ensure_session(
-                db,
-                session_id=session_id,
-                channel=channel,
-                title=_title_from_message(text),
-            )
-            add_message(
-                db,
-                session_id=session_id,
-                role="user",
-                content=text,
-                metadata={"channel": channel},
-            )
-            task_id = create_task(
-                db,
-                session_id=session_id,
-                kind="message",
-                title=_title_from_message(text),
-                input_value={"message": text, "channel": channel},
-                status="queued",
-            )
-            start_task(db, task_id)
-            heartbeat_task(db, task_id)
-        router = self.router_factory()
         try:
-            result = router.handle_text(text)
-            status = "done" if result.ok else _task_status_for_message(result.message)
-            with open_state(self.config) as db:
-                add_message(
-                    db,
-                    session_id=session_id,
-                    role="assistant",
-                    content=result.message,
-                    metadata={"task_id": task_id, "ok": result.ok},
-                )
-                finish_task(
-                    db,
-                    task_id,
-                    status=status,
-                    result_value={
-                        "message": result.message,
-                        "payload": result.payload,
-                        "ok": result.ok,
-                    },
-                    error=None if result.ok else result.message,
-                )
+            result = self.orchestrator.start_run(
+                text,
+                channel=channel,
+                session_id=session_id,
+                persist_task=True,
+            )
             return 200, {
                 "ok": result.ok,
-                "session_id": session_id,
-                "task_id": task_id,
+                "session_id": result.session_id,
+                "task_id": result.task_id,
+                "run_id": result.run_id,
                 "message": result.message,
                 "payload": result.payload,
-                "task_status": status,
+                "task_status": result.status,
             }
         except Exception as exc:
-            with open_state(self.config) as db:
-                finish_task(db, task_id, status="failed", error=str(exc))
             return 500, {
                 "ok": False,
                 "session_id": session_id,
-                "task_id": task_id,
                 "error": str(exc),
             }
 

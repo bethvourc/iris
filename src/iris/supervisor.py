@@ -6,6 +6,7 @@ import time
 from typing import Any, Callable
 
 from iris.config import IrisConfig
+from iris.runtime import RunOrchestrator
 from iris.safety import CancellationToken
 from iris.state import open_state
 from iris.tasks import (
@@ -33,6 +34,10 @@ class TaskSupervisor:
     def __init__(self, *, config: IrisConfig, router_factory: RouterFactory) -> None:
         self.config = config
         self.router_factory = router_factory
+        self.orchestrator = RunOrchestrator(
+            config=config,
+            router_factory=router_factory,
+        )
 
     def run_next(self) -> SupervisorResult:
         with open_state(self.config) as db:
@@ -61,36 +66,6 @@ class TaskSupervisor:
             return SupervisorResult(
                 False, "Task was cancelled before it started.", task_id, "cancelled"
             )
-        message = self._task_message(task)
-        if not message:
-            with open_state(self.config) as db:
-                add_task_step(
-                    db,
-                    task_id,
-                    kind="validate",
-                    status="failed",
-                    message="Task has no executable message or goal.",
-                )
-                finish_task(
-                    db,
-                    task_id,
-                    status="failed",
-                    error="task has no executable message or goal",
-                )
-            return SupervisorResult(
-                False, "Task has no executable message or goal.", task_id, "failed"
-            )
-        with open_state(self.config) as db:
-            heartbeat_task(db, task_id)
-            add_task_step(
-                db,
-                task_id,
-                kind="start",
-                status="running",
-                message=f"Running task goal: {message[:220]}",
-                payload={"message": message},
-            )
-        router = self.router_factory()
         cancellation_token = CancellationToken()
         heartbeat_stop = threading.Event()
         heartbeat_thread = threading.Thread(
@@ -100,30 +75,13 @@ class TaskSupervisor:
         )
         heartbeat_thread.start()
         try:
-            result = router.handle_text(message, cancellation_token=cancellation_token)
-            status = "done" if result.ok else _task_status_for_message(result.message)
+            result = self.orchestrator.run_existing_task(
+                task,
+                cancellation_token=cancellation_token,
+            )
+            status = result.status
             if self._cancelled(task_id) and status == "done":
                 status = "cancelled"
-            with open_state(self.config) as db:
-                add_task_step(
-                    db,
-                    task_id,
-                    kind="finish",
-                    status=status,
-                    message=result.message,
-                    payload={"ok": result.ok, "payload": result.payload},
-                )
-                finish_task(
-                    db,
-                    task_id,
-                    status=status,  # type: ignore[arg-type]
-                    result_value={
-                        "message": result.message,
-                        "payload": result.payload,
-                        "ok": result.ok,
-                    },
-                    error=None if result.ok else result.message,
-                )
             return SupervisorResult(
                 result.ok, result.message, task_id, status, result.payload
             )

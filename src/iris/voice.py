@@ -15,6 +15,7 @@ from iris.config import IrisConfig
 from iris.perception import ScreenAwarenessService
 from iris.profile import UserProfile, infer_system_profile
 from iris.router import ActionRouter
+from iris.runtime import RunOrchestrator
 from iris.safety import SafetyGate
 from iris.system import run_command
 
@@ -201,10 +202,12 @@ class RealtimeSpeechSession:
         config: IrisConfig,
         router: ActionRouter,
         user_profile: UserProfile,
+        orchestrator: RunOrchestrator | None = None,
         wake_gated: bool = True,
     ) -> None:
         self.config = config
         self.router = router
+        self.orchestrator = orchestrator
         self.user_profile = user_profile
         self.wake_gated = wake_gated
         self.awake = not wake_gated
@@ -468,9 +471,15 @@ class RealtimeSpeechSession:
         if not self._agent_lock.acquire(blocking=False):
             lowered = transcript.lower().strip(" \t\r\n.,!?")
             if _is_interrupt_command(lowered):
-                self.router.agent_executor.cancel_current(
-                    "Operation cancelled by user."
-                )
+                if self.orchestrator is not None:
+                    self.orchestrator.cancel_active_run(
+                        channel="voice",
+                        reason="Operation cancelled by user.",
+                    )
+                else:
+                    self.router.agent_executor.cancel_current(
+                        "Operation cancelled by user."
+                    )
                 self.router.safety_gate.kill()
                 self._clear_pending_agent_texts()
                 print("iris> stopping current automation after the active step")
@@ -490,7 +499,11 @@ class RealtimeSpeechSession:
             self._active_agent_request = transcript
             try:
                 print("iris> working...")
-                result = self.router.handle_text(transcript)
+                result = (
+                    self.orchestrator.start_run(transcript, channel="voice")
+                    if self.orchestrator is not None
+                    else self.router.handle_text(transcript)
+                )
                 if not result.ok:
                     print(f"iris error> {result.message}")
                 self._respond_with_text(result.message)
@@ -527,11 +540,19 @@ class RealtimeSpeechSession:
                 return
 
     def _active_agent_status_message(self) -> str:
+        snapshot = (
+            self.orchestrator.get_active_run(channel="voice")
+            if self.orchestrator is not None
+            else None
+        )
         status = self.router.agent_executor.current_status()
         active = self._active_agent_request or str(
             status.get("request") or "the request"
         )
-        stage = str(status.get("stage") or "").replace("_", " ")
+        agent_stage = str(status.get("stage") or "")
+        stage = (agent_stage or (snapshot.current_step if snapshot else "")).replace(
+            "_", " "
+        )
         tool_name = str(status.get("tool_name") or "").replace("_", " ")
         if stage == "executing tool" and tool_name:
             return f"I'm still working on {active}. Current step: {tool_name}."
@@ -720,9 +741,11 @@ class VoiceSession:
         router: ActionRouter,
         safety_gate: SafetyGate,
         user_profile: UserProfile | None = None,
+        orchestrator: RunOrchestrator | None = None,
     ) -> None:
         self.config = config
         self.router = router
+        self.orchestrator = orchestrator
         self.safety_gate = safety_gate
         self.user_profile = user_profile or infer_system_profile()
         self.hotkeys = HotkeyService(config, safety_gate)
@@ -790,7 +813,11 @@ class VoiceSession:
                 if user_text.lower() == "/live-now":
                     self._run_realtime_speech_loop(wake_gated=False)
                     continue
-                result = self.router.handle_text(user_text)
+                result = (
+                    self.orchestrator.start_run(user_text, channel="terminal")
+                    if self.orchestrator is not None
+                    else self.router.handle_text(user_text)
+                )
                 prefix = "iris" if result.ok else "iris error"
                 print(f"{prefix}> {result.message}")
                 if result.ok and self.config.speak_responses:
@@ -808,9 +835,14 @@ class VoiceSession:
             if event == "toggle":
                 self._handle_voice_once(self.config.listen_seconds)
             elif event == "kill":
-                self.router.agent_executor.cancel_current(
-                    "Operation cancelled by hotkey."
-                )
+                if self.orchestrator is not None:
+                    self.orchestrator.cancel_active_run(
+                        reason="Operation cancelled by hotkey."
+                    )
+                else:
+                    self.router.agent_executor.cancel_current(
+                        "Operation cancelled by hotkey."
+                    )
                 print("[kill switch engaged]")
 
     def _handle_voice_once(self, seconds: float | None = None) -> None:
@@ -832,7 +864,11 @@ class VoiceSession:
             if not user_text:
                 print("iris error> no speech detected")
                 return
-            result = self.router.handle_text(user_text)
+            result = (
+                self.orchestrator.start_run(user_text, channel="voice")
+                if self.orchestrator is not None
+                else self.router.handle_text(user_text)
+            )
             prefix = "iris" if result.ok else "iris error"
             print(f"{prefix}> {result.message}")
             if result.ok and self.config.speak_responses:
@@ -874,6 +910,7 @@ class VoiceSession:
                 config=self.config,
                 router=self.router,
                 user_profile=self.user_profile,
+                orchestrator=self.orchestrator,
                 wake_gated=wake_gated,
             ).run()
         except KeyboardInterrupt:

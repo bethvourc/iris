@@ -140,6 +140,27 @@ CREATE TABLE IF NOT EXISTS agent_messages (
   FOREIGN KEY (session_id) REFERENCES agent_sessions(session_id) ON DELETE CASCADE
 );
 
+CREATE TABLE IF NOT EXISTS agent_runs (
+  run_id TEXT PRIMARY KEY,
+  task_id TEXT,
+  session_id TEXT,
+  channel TEXT NOT NULL,
+  status TEXT NOT NULL,
+  current_step TEXT NOT NULL DEFAULT '',
+  active_tool TEXT NOT NULL DEFAULT '',
+  message TEXT NOT NULL DEFAULT '',
+  cancel_requested INTEGER NOT NULL DEFAULT 0,
+  approval_id TEXT,
+  created_at TEXT NOT NULL,
+  started_at TEXT,
+  updated_at TEXT NOT NULL,
+  finished_at TEXT,
+  result_json TEXT NOT NULL DEFAULT '{}',
+  metadata_json TEXT NOT NULL DEFAULT '{}',
+  FOREIGN KEY (session_id) REFERENCES agent_sessions(session_id) ON DELETE SET NULL,
+  FOREIGN KEY (task_id) REFERENCES agent_tasks(task_id) ON DELETE SET NULL
+);
+
 CREATE TABLE IF NOT EXISTS agent_tasks (
   task_id TEXT PRIMARY KEY,
   session_id TEXT,
