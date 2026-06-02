@@ -252,6 +252,10 @@ def build_parser() -> argparse.ArgumentParser:
 
     runs = subparsers.add_parser("runs", help="Inspect orchestrated Iris runs")
     runs_sub = runs.add_subparsers(dest="runs_command", required=True)
+    runs_list = runs_sub.add_parser("list", help="List runs")
+    runs_list.add_argument("--status", default=None)
+    runs_list.add_argument("--limit", type=int, default=25)
+    runs_list.set_defaults(func=cmd_runs_list)
     runs_show = runs_sub.add_parser("show", help="Show a run snapshot")
     runs_show.add_argument("run_id")
     runs_show.set_defaults(func=cmd_runs_show)
@@ -259,6 +263,13 @@ def build_parser() -> argparse.ArgumentParser:
     runs_events.add_argument("run_id")
     runs_events.add_argument("--limit", type=int, default=200)
     runs_events.set_defaults(func=cmd_runs_events)
+    runs_cancel = runs_sub.add_parser("cancel", help="Cancel a run")
+    runs_cancel.add_argument("run_id")
+    runs_cancel.add_argument("--reason", default="Operation cancelled.")
+    runs_cancel.set_defaults(func=cmd_runs_cancel)
+    runs_approvals = runs_sub.add_parser("approvals", help="List approvals for a run")
+    runs_approvals.add_argument("run_id")
+    runs_approvals.set_defaults(func=cmd_runs_approvals)
 
     evals = subparsers.add_parser("evals", help="Run Iris agent capability evaluations")
     evals_sub = evals.add_subparsers(dest="evals_command", required=True)
@@ -1102,13 +1113,31 @@ def cmd_tasks_worker(args: argparse.Namespace) -> int:
     return 0
 
 
-def cmd_runs_show(args: argparse.Namespace) -> int:
+def _run_orchestrator(args: argparse.Namespace):
     from iris.runtime import RunOrchestrator
 
     config = _config(args)
-    orchestrator = RunOrchestrator(
-        config=config, router_factory=lambda: _runtime(args)[-1]
+    return RunOrchestrator(config=config, router_factory=lambda: _runtime(args)[-1])
+
+
+def cmd_runs_list(args: argparse.Namespace) -> int:
+    orchestrator = _run_orchestrator(args)
+    _print_json(
+        {
+            "runs": [
+                run.to_dict()
+                for run in orchestrator.list_runs(
+                    status=args.status,
+                    limit=args.limit,
+                )
+            ]
+        }
     )
+    return 0
+
+
+def cmd_runs_show(args: argparse.Namespace) -> int:
+    orchestrator = _run_orchestrator(args)
     snapshot = orchestrator.get_run(args.run_id)
     if snapshot is None:
         print("Run not found.", file=sys.stderr)
@@ -1118,13 +1147,21 @@ def cmd_runs_show(args: argparse.Namespace) -> int:
 
 
 def cmd_runs_events(args: argparse.Namespace) -> int:
-    from iris.runtime import RunOrchestrator
-
-    config = _config(args)
-    orchestrator = RunOrchestrator(
-        config=config, router_factory=lambda: _runtime(args)[-1]
-    )
+    orchestrator = _run_orchestrator(args)
     _print_json({"events": orchestrator.list_events(args.run_id, limit=args.limit)})
+    return 0
+
+
+def cmd_runs_cancel(args: argparse.Namespace) -> int:
+    orchestrator = _run_orchestrator(args)
+    ok = orchestrator.cancel_run(args.run_id, reason=args.reason)
+    _print_json({"ok": ok})
+    return 0 if ok else 1
+
+
+def cmd_runs_approvals(args: argparse.Namespace) -> int:
+    orchestrator = _run_orchestrator(args)
+    _print_json({"approvals": orchestrator.approvals_for_run(args.run_id)})
     return 0
 
 

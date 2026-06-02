@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timezone
+import time
 from typing import Any
 
 from iris.config import IrisConfig
@@ -53,11 +54,14 @@ class ComputerBackend:
         perception: PerceptionService,
         screen_awareness: ScreenAwarenessService | None = None,
         browser: str = "Google Chrome",
+        observe_cache_ttl_seconds: float = 0.5,
     ) -> None:
         self.controller = controller
         self.perception = perception
         self.screen_awareness = screen_awareness
         self.browser = browser
+        self.observe_cache_ttl_seconds = max(0.0, observe_cache_ttl_seconds)
+        self._observe_cache: tuple[float, bool, ComputerObservation] | None = None
 
     def set_screen_awareness(
         self, screen_awareness: ScreenAwarenessService | None
@@ -65,8 +69,24 @@ class ComputerBackend:
         self.screen_awareness = screen_awareness
 
     def observe(
-        self, *, include_browser: bool = True, capture_if_needed: bool = False
+        self,
+        *,
+        include_browser: bool = True,
+        capture_if_needed: bool = False,
+        force_refresh: bool = False,
     ) -> ComputerObservation:
+        now = time.monotonic()
+        if (
+            not force_refresh
+            and not capture_if_needed
+            and self._observe_cache is not None
+        ):
+            captured_at, cached_include_browser, cached = self._observe_cache
+            if (
+                cached_include_browser == include_browser
+                and now - captured_at <= self.observe_cache_ttl_seconds
+            ):
+                return cached
         frame: LiveScreenFrame | None = None
         error: str | None = None
         if self.screen_awareness is not None:
@@ -93,7 +113,7 @@ class ComputerBackend:
                 if page.ok and isinstance(page.payload, dict):
                     browser_title = str(page.payload.get("title") or "") or None
                     browser_url = str(page.payload.get("url") or "") or None
-        return ComputerObservation(
+        observation = ComputerObservation(
             active_app=active_app,
             active_window=active_window,
             screenshot_width=screenshot.width if screenshot else None,
@@ -103,6 +123,12 @@ class ComputerBackend:
             browser_url=browser_url,
             error=error,
         )
+        if not capture_if_needed:
+            self._observe_cache = (now, include_browser, observation)
+        return observation
+
+    def invalidate_observation_cache(self) -> None:
+        self._observe_cache = None
 
     def screenshot(self) -> Screenshot:
         if self.screen_awareness is not None:

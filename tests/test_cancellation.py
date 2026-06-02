@@ -1,12 +1,20 @@
 from __future__ import annotations
 
+import time
 from typing import Any
 
 import pytest
 
 from iris.actions import LocalAction, RiskLevel
 from iris.safety import AutomationPaused, CancellationToken, SafetyGate, classify_action
-from iris.tools import ToolContext, ToolRegistry, ToolResult, ToolSpec
+from iris.tools import (
+    ToolContext,
+    ToolExecutionController,
+    ToolExecutionPolicy,
+    ToolRegistry,
+    ToolResult,
+    ToolSpec,
+)
 
 
 def test_cancelled_token_prevents_tool_execution() -> None:
@@ -56,3 +64,35 @@ def test_delete_action_is_blocked() -> None:
     decision = classify_action(LocalAction("delete_file", {"path": "/tmp/example"}))
 
     assert decision.risk == RiskLevel.BLOCKED
+
+
+def test_tool_execution_controller_reports_timeout() -> None:
+    def execute(_arguments: dict[str, Any], _context: ToolContext) -> ToolResult:
+        time.sleep(0.02)
+        return ToolResult(True, "slow")
+
+    controller = ToolExecutionController(
+        ToolExecutionPolicy(timeout_seconds=0.01, retry_attempts=0)
+    )
+    context = ToolContext(
+        controller=object(),  # type: ignore[arg-type]
+        perception=object(),  # type: ignore[arg-type]
+        safety_gate=SafetyGate(confirm=lambda _question: True),
+        openai_client=object(),  # type: ignore[arg-type]
+        google_vision=object(),  # type: ignore[arg-type]
+    )
+
+    result = controller.run(
+        tool=ToolSpec(
+            name="slow_tool",
+            description="Slow test tool.",
+            parameters={"type": "object", "properties": {}},
+            risk=RiskLevel.LOW_RISK,
+            execute=execute,
+        ),
+        arguments={},
+        context=context,
+    )
+
+    assert result.ok is False
+    assert "timeout" in result.message
