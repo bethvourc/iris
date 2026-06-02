@@ -25,7 +25,7 @@ dependencies = [
 iris = "iris.cli:main"
 
 [dependency-groups]
-dev = ["pytest>=8.0"]
+dev = ["anyio>=4.0", "pytest>=8.0", "ruff>=0.8.0"]
 
 [tool.setuptools.packages.find]
 where = ["src"]

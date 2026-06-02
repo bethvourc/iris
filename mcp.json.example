@@ -1,0 +1,49 @@
+{
+  "mcpServers": {
+    "filesystem": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-filesystem", "/Users/clintonimaro/Documents"],
+      "env": {},
+      "disabled": false,
+      "risk": "low_risk"
+    },
+    "fetch": {
+      "command": "uvx",
+      "args": ["mcp-server-fetch"],
+      "env": {},
+      "disabled": false,
+      "risk": "low_risk"
+    },
+    "gmail": {
+      "command": "npx",
+      "args": ["-y", "@gongrzhe/server-gmail-autoauth-mcp"],
+      "env": {},
+      "disabled": true,
+      "risk": "sensitive",
+      "tools": ["search_emails", "read_email", "draft_email"]
+    },
+    "google-calendar": {
+      "command": "npx",
+      "args": ["-y", "@cocal/google-calendar-mcp"],
+      "env": { "GOOGLE_OAUTH_CREDENTIALS": "/Users/clintonimaro/.config/iris/gcal-credentials.json" },
+      "disabled": true,
+      "risk": "sensitive",
+      "tools": ["list-events", "search-events", "create-event"]
+    },
+    "slack": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-slack"],
+      "env": { "SLACK_BOT_TOKEN": "", "SLACK_TEAM_ID": "" },
+      "disabled": true,
+      "risk": "sensitive",
+      "tools": ["slack_list_channels", "slack_post_message", "slack_get_channel_history"]
+    },
+    "notion": {
+      "command": "npx",
+      "args": ["-y", "@notionhq/notion-mcp-server"],
+      "env": { "NOTION_TOKEN": "" },
+      "disabled": true,
+      "risk": "sensitive"
+    }
+  }
+}

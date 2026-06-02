@@ -11,7 +11,7 @@ from iris.integrations.openai_client import OpenAIResponsesClient
 from iris.mac_controller import ActionResult, MacController
 from iris.perception import ScreenAwarenessService, PerceptionService
 from iris.safety import CancellationToken, SafetyGate
-from iris.tools import ToolRegistry
+from iris.tools import ToolRegistry, mcp_tool_specs
 
 
 @dataclass(frozen=True)
@@ -45,6 +45,7 @@ class ActionRouter:
         self.screen_awareness = screen_awareness
         self._previous_chat_response_id: str | None = None
         registry = tool_registry or ToolRegistry.default()
+        self.mcp_manager = self._start_mcp(registry, config)
         planner = agent_planner or AgentPlanner(openai_client)
         self.agent_executor = agent_executor or AgentExecutor(
             planner=planner,
@@ -58,6 +59,39 @@ class ActionRouter:
             screen_awareness=screen_awareness,
             computer_use_runner=self.run_computer_use,
         )
+
+    def _start_mcp(
+        self, registry: ToolRegistry, config: IrisConfig | None
+    ) -> Any | None:
+        """Connect configured MCP servers and register their tools.
+
+        Failures here must never break the agent, so everything is best-effort.
+        """
+        if config is None:
+            return None
+        try:
+            from iris.mcp import MCPManager, load_mcp_config
+
+            servers = load_mcp_config(config)
+            if not servers:
+                return None
+            manager = MCPManager(servers)
+            manager.start_all()
+            registered = 0
+            for spec in mcp_tool_specs(manager):
+                try:
+                    registry.register(spec)
+                    registered += 1
+                except ValueError:
+                    pass
+            for name, error in manager.errors.items():
+                print(f"iris> mcp server '{name}' unavailable: {error}")
+            if registered:
+                print(f"iris> connected {registered} MCP tool(s)")
+            return manager
+        except Exception as exc:
+            print(f"iris> MCP setup skipped: {exc}")
+            return None
 
     def set_screen_awareness(
         self, screen_awareness: ScreenAwarenessService | None

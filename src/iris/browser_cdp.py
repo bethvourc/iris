@@ -166,41 +166,203 @@ class ChromeCDPBackend:
         )
 
     def click_text(self, text: str) -> ActionResult:
+        return self.click_element(text=text)
+
+    def click_element(
+        self,
+        *,
+        text: str = "",
+        selector: str = "",
+        role: str = "",
+        exact: bool = False,
+    ) -> ActionResult:
         ensured = self.ensure_available() if self.auto_start else None
         if ensured is not None and not ensured.ok:
             return ensured
         script = """
-(needle) => {
+(needle, selector, role, exact) => {
+  const wanted = String(needle || '').toLowerCase();
+  const wantedRole = String(role || '').toLowerCase();
+  const visible = (el) => {
+    const rect = el.getBoundingClientRect();
+    const style = window.getComputedStyle(el);
+    return rect.width > 0 && rect.height > 0 && style.visibility !== 'hidden' && style.display !== 'none';
+  };
+  const roleOf = (el) => String(el.getAttribute('role') || el.tagName || '').toLowerCase();
+  const labelOf = (el) => String(
+    el.getAttribute('aria-label') ||
+    el.getAttribute('name') ||
+    el.getAttribute('placeholder') ||
+    el.innerText ||
+    el.value ||
+    el.title ||
+    ''
+  ).replace(/\\s+/g, ' ').trim();
+  let match = null;
+  if (selector) {
+    try {
+      const selected = document.querySelector(selector);
+      if (selected && visible(selected)) match = selected;
+    } catch (error) {}
+  }
+  const candidates = [...document.querySelectorAll('button,a,input,textarea,select,[contenteditable="true"],[role],[aria-label],[placeholder],[title]')].filter(visible);
+  const matchesText = (el) => {
+    const label = labelOf(el).toLowerCase();
+    if (!wanted) return true;
+    return exact ? label === wanted : label.includes(wanted);
+  };
+  const matchesRole = (el) => !wantedRole || roleOf(el).includes(wantedRole);
+  if (!match) match = candidates.find((el) => matchesText(el) && matchesRole(el));
+  if (!match) return {ok: false, reason: 'not_found', text: needle, selector, role};
+  match.scrollIntoView({block: 'center', inline: 'center'});
+  match.focus({preventScroll: true});
+  match.click();
+  return {
+    ok: true,
+    label: labelOf(match),
+    role: roleOf(match),
+    tag: match.tagName.toLowerCase(),
+    url: location.href
+  };
+}
+"""
+        result = self._call_function(
+            "browser_cdp_click_element", script, [text, selector, role, exact]
+        )
+        if not result.ok:
+            return result
+        payload = result.payload if isinstance(result.payload, dict) else {}
+        if payload.get("ok"):
+            return ActionResult(
+                "browser_cdp_click_element",
+                True,
+                f"Clicked {payload.get('label') or text}.",
+                payload,
+            )
+        return ActionResult(
+            "browser_cdp_click_element",
+            False,
+            f"I could not find {text or selector or role} in the current tab.",
+            payload,
+        )
+
+    def focus_element(
+        self,
+        *,
+        field: str = "",
+        selector: str = "",
+        role: str = "",
+    ) -> ActionResult:
+        ensured = self.ensure_available() if self.auto_start else None
+        if ensured is not None and not ensured.ok:
+            return ensured
+        script = """
+(needle, selector, role) => {
+  const wanted = String(needle || '').toLowerCase();
+  const wantedRole = String(role || '').toLowerCase();
+  const visible = (el) => {
+    const rect = el.getBoundingClientRect();
+    const style = window.getComputedStyle(el);
+    return rect.width > 0 && rect.height > 0 && style.visibility !== 'hidden' && style.display !== 'none';
+  };
+  const roleOf = (el) => String(el.getAttribute('role') || el.tagName || '').toLowerCase();
+  const labelOf = (el) => String(el.getAttribute('aria-label') || el.getAttribute('name') || el.placeholder || el.innerText || el.title || '').replace(/\\s+/g, ' ').trim();
+  let match = null;
+  if (selector) {
+    try {
+      const selected = document.querySelector(selector);
+      if (selected && visible(selected)) match = selected;
+    } catch (error) {}
+  }
+  const candidates = [...document.querySelectorAll('input,textarea,select,[contenteditable="true"],[role="textbox"],button,a,[role],[aria-label],[placeholder]')].filter(visible);
+  if (!match) {
+    match = candidates.find((el) => {
+      const label = labelOf(el).toLowerCase();
+      const textOk = !wanted || label.includes(wanted);
+      const roleOk = !wantedRole || roleOf(el).includes(wantedRole);
+      return textOk && roleOk;
+    });
+  }
+  if (!match) return {ok: false, reason: 'not_found', field: needle, selector, role};
+  match.scrollIntoView({block: 'center', inline: 'center'});
+  match.focus({preventScroll: true});
+  return {ok: true, label: labelOf(match), role: roleOf(match), tag: match.tagName.toLowerCase(), url: location.href};
+}
+"""
+        result = self._call_function(
+            "browser_cdp_focus_element", script, [field, selector, role]
+        )
+        if not result.ok:
+            return result
+        payload = result.payload if isinstance(result.payload, dict) else {}
+        if payload.get("ok"):
+            return ActionResult(
+                "browser_cdp_focus_element",
+                True,
+                f"Focused {payload.get('label') or field or selector or role}.",
+                payload,
+            )
+        return ActionResult(
+            "browser_cdp_focus_element",
+            False,
+            f"I could not focus {field or selector or role} in the current tab.",
+            payload,
+        )
+
+    def submit(self, *, field: str = "", selector: str = "") -> ActionResult:
+        ensured = self.ensure_available() if self.auto_start else None
+        if ensured is not None and not ensured.ok:
+            return ensured
+        script = """
+(needle, selector) => {
   const wanted = String(needle || '').toLowerCase();
   const visible = (el) => {
     const rect = el.getBoundingClientRect();
     const style = window.getComputedStyle(el);
     return rect.width > 0 && rect.height > 0 && style.visibility !== 'hidden' && style.display !== 'none';
   };
-  const labelOf = (el) => String(el.getAttribute('aria-label') || el.innerText || el.value || el.placeholder || el.title || '').replace(/\\s+/g, ' ').trim();
-  const candidates = [...document.querySelectorAll('button,a,input,textarea,[role="button"],[role="link"],[role="textbox"],[aria-label]')].filter(visible);
-  const match = candidates.find((el) => labelOf(el).toLowerCase().includes(wanted));
-  if (!match) return {ok: false, reason: 'not_found', text: needle};
-  match.scrollIntoView({block: 'center', inline: 'center'});
-  match.click();
-  return {ok: true, label: labelOf(match), tag: match.tagName.toLowerCase(), url: location.href};
+  const labelOf = (el) => String(el.getAttribute('aria-label') || el.getAttribute('name') || el.placeholder || el.innerText || el.title || '').replace(/\\s+/g, ' ').trim();
+  let match = null;
+  if (selector) {
+    try { match = document.querySelector(selector); } catch (error) {}
+  }
+  const active = document.activeElement && document.activeElement !== document.body ? document.activeElement : null;
+  const fields = [...document.querySelectorAll('input,textarea,[contenteditable="true"],[role="textbox"]')].filter(visible);
+  if (!match && wanted) match = fields.find((el) => labelOf(el).toLowerCase().includes(wanted));
+  if (!match) match = active || fields[0];
+  if (match) {
+    const form = match.closest && match.closest('form');
+    if (form) {
+      if (form.requestSubmit) form.requestSubmit();
+      else form.submit();
+      return {ok: true, action: 'form_submitted', label: labelOf(match), url: location.href};
+    }
+    match.dispatchEvent(new KeyboardEvent('keydown', {bubbles: true, key: 'Enter', code: 'Enter'}));
+    match.dispatchEvent(new KeyboardEvent('keyup', {bubbles: true, key: 'Enter', code: 'Enter'}));
+    return {ok: true, action: 'enter_pressed', label: labelOf(match), url: location.href};
+  }
+  const submit = [...document.querySelectorAll('button,input[type="submit"],[role="button"]')]
+    .filter(visible)
+    .find((el) => /submit|send|search|go|continue|next|save/i.test(labelOf(el)));
+  if (submit) {
+    submit.click();
+    return {ok: true, action: 'clicked_submit', label: labelOf(submit), url: location.href};
+  }
+  return {ok: false, reason: 'submit_target_not_found', field: needle, selector};
 }
 """
-        result = self._call_function("browser_cdp_click_text", script, [text])
+        result = self._call_function("browser_cdp_submit", script, [field, selector])
         if not result.ok:
             return result
         payload = result.payload if isinstance(result.payload, dict) else {}
         if payload.get("ok"):
             return ActionResult(
-                "browser_cdp_click_text",
-                True,
-                f"Clicked {payload.get('label') or text}.",
-                payload,
+                "browser_cdp_submit", True, "Submitted the browser form.", payload
             )
         return ActionResult(
-            "browser_cdp_click_text",
+            "browser_cdp_submit",
             False,
-            f"I could not find {text} in the current tab.",
+            "I could not find a browser form to submit.",
             payload,
         )
 

@@ -81,6 +81,10 @@ class IrisConfig:
     pushover_token: str | None
     pushover_user: str | None
     notify_timeout_seconds: float
+    email_provider: str
+    resend_api_key: str | None
+    email_from: str | None
+    email_to: str | None
     state_db_path: Path
     autonomy_level: str
     meeting_consent_required: bool
@@ -120,7 +124,7 @@ class IrisConfig:
                 "IRIS_REALTIME_TRANSCRIPTION_MODEL", "gpt-4o-mini-transcribe"
             ),
             screenshot_interval_seconds=_float_env(
-                "IRIS_SCREENSHOT_INTERVAL_SECONDS", 1.5
+                "IRIS_SCREENSHOT_INTERVAL_SECONDS", 0.5
             ),
             gateway_token=os.getenv("IRIS_GATEWAY_TOKEN") or None,
             notify_provider=os.getenv("IRIS_NOTIFY_PROVIDER", "pushover"),
@@ -134,6 +138,10 @@ class IrisConfig:
             or os.getenv("IRIS_PUSHOVER_USER")
             or None,
             notify_timeout_seconds=_float_env("IRIS_NOTIFY_TIMEOUT_SECONDS", 30.0),
+            email_provider=os.getenv("IRIS_EMAIL_PROVIDER", "resend"),
+            resend_api_key=os.getenv("RESEND_API_KEY") or None,
+            email_from=os.getenv("IRIS_EMAIL_FROM") or None,
+            email_to=os.getenv("IRIS_EMAIL_TO") or None,
             state_db_path=Path(
                 os.getenv("IRIS_STATE_DB", str(root / "build" / "iris.sqlite3"))
             ),
@@ -162,6 +170,10 @@ class IrisConfig:
         if self.notify_provider == "pushover":
             return bool(self.pushover_token and self.pushover_user)
         return False
+
+    @property
+    def has_email(self) -> bool:
+        return bool(self.resend_api_key and self.email_from)
 
 
 def _bool_env(name: str, default: bool) -> bool:

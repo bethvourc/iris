@@ -20,6 +20,7 @@ from iris.config import IrisConfig
 from iris.connectors import connector_health, default_manifest_dirs
 from iris.integrations.google_vision import GoogleVisionClient
 from iris.integrations.openai_client import OpenAIResponsesClient
+from iris.memory import add_memory, list_memories
 from iris.mac_controller import MacController
 from iris.perception import PerceptionService, ScreenAwarenessService
 from iris.recipes import ActionRecipeRegistry
@@ -71,6 +72,7 @@ class AgentPlanner:
         action_recipes: list[dict[str, Any]] | None = None,
         session_state: dict[str, Any] | None = None,
         connector_context: list[dict[str, Any]] | None = None,
+        known_memories: list[dict[str, Any]] | None = None,
     ) -> PlannerResult:
         if not self.openai_client.available:
             return PlannerResult(
@@ -90,6 +92,7 @@ class AgentPlanner:
                 observations=observations,
                 session_state=session_state or {},
                 connector_context=connector_context or [],
+                known_memories=known_memories or [],
             )
             return _planner_result_from_json(raw)
         except Exception:
@@ -110,6 +113,7 @@ class AgentPlanner:
         observations: list[dict[str, Any]],
         session_state: dict[str, Any],
         connector_context: list[dict[str, Any]],
+        known_memories: list[dict[str, Any]] | None = None,
     ) -> str:
         client = self.openai_client._get_client()
         response = client.responses.create(
@@ -124,6 +128,7 @@ class AgentPlanner:
                             "text": json.dumps(
                                 {
                                     "user_profile": self.openai_client.user_profile.prompt_context(),
+                                    "known_memories": known_memories or [],
                                     "available_tools": tool_schemas,
                                     "available_connectors": connector_context,
                                     "action_recipes": action_recipes,
@@ -148,7 +153,7 @@ class AgentPlanner:
                     "content": [{"type": "input_text", "text": user_request}],
                 },
             ],
-            max_output_tokens=450,
+            max_output_tokens=1200,
         )
         return self.openai_client.output_text(response)
 
@@ -169,7 +174,7 @@ class AgentExecutor:
         computer_use_runner: Any | None = None,
         computer_backend: ComputerBackend | None = None,
         recipes: ActionRecipeRegistry | None = None,
-        max_steps: int = 6,
+        max_steps: int = 12,
     ) -> None:
         self.planner = planner
         self.registry = registry
@@ -191,7 +196,7 @@ class AgentExecutor:
         )
         self.max_steps = max(1, max_steps)
         self._conversation_history: list[dict[str, str]] = []
-        self._session_state: dict[str, Any] = {}
+        self._session_state: dict[str, Any] = _initial_session_state()
         self._current_cancellation_token: CancellationToken | None = None
         self._current_run_id: str | None = None
         self._current_status: dict[str, Any] = {}
@@ -204,7 +209,7 @@ class AgentExecutor:
 
     def reset(self) -> None:
         self._conversation_history.clear()
-        self._session_state.pop("pending_approval", None)
+        self._session_state = _initial_session_state()
 
     def cancel_current(self, reason: str = "Operation cancelled.") -> None:
         if self._current_cancellation_token is not None:
@@ -296,6 +301,9 @@ class AgentExecutor:
         run_id = run_id or uuid.uuid4().hex
         run_started_at = time.monotonic()
         observations: list[dict[str, Any]] = []
+        seeded = self._session_state.get("last_approved_tool_observation")
+        if isinstance(seeded, dict):
+            observations.append(dict(seeded))
         token = cancellation_token or CancellationToken()
         self._current_cancellation_token = token
         self._current_run_id = run_id
@@ -305,6 +313,7 @@ class AgentExecutor:
             request=user_request,
         )
         self._session_state["current_user_request"] = user_request
+        self._session_state["last_goal"] = user_request
         self._trace_event(
             run_id,
             "run_started",
@@ -338,6 +347,7 @@ class AgentExecutor:
                         observations=observations,
                         session_state=self._session_state,
                         connector_context=connector_context,
+                        known_memories=self._known_memories(),
                     ),
                     details={"step": _step + 1, "observations": len(observations)},
                 )
@@ -405,26 +415,26 @@ class AgentExecutor:
                     cancellation_token=token,
                 )
                 token.throw_if_cancelled()
-                observations.append(
-                    {
-                        "tool_name": plan.tool_name,
-                        "arguments": plan.arguments,
-                        "ok": result.ok,
-                        "message": result.message,
-                        "payload": result.payload,
-                        "expected_observation": plan.expected_observation,
-                        "done_condition": plan.done_condition,
-                        "post_action_screen": self._trace_call(
-                            run_id,
-                            "post_action_screen_context",
-                            "perception",
-                            self._screen_context_summary,
-                            details={"tool_name": plan.tool_name},
-                        )
-                        if result.ok or result.continue_planning
-                        else None,
-                    }
-                )
+                observation = {
+                    "tool_name": plan.tool_name,
+                    "arguments": plan.arguments,
+                    "ok": result.ok,
+                    "message": result.message,
+                    "payload": result.payload,
+                    "expected_observation": plan.expected_observation,
+                    "done_condition": plan.done_condition,
+                    "post_action_screen": self._trace_call(
+                        run_id,
+                        "post_action_screen_context",
+                        "perception",
+                        self._screen_context_summary,
+                        details={"tool_name": plan.tool_name},
+                    )
+                    if result.ok or result.continue_planning
+                    else None,
+                }
+                observations.append(observation)
+                _update_session_from_observation(self._session_state, observation)
                 token.throw_if_cancelled()
                 if result.continue_planning:
                     continue
@@ -527,6 +537,107 @@ class AgentExecutor:
             if self._current_run_id == run_id:
                 self._current_run_id = None
 
+    def run_tool(
+        self,
+        tool_name: str,
+        arguments: dict[str, Any],
+        *,
+        cancellation_token: CancellationToken | None = None,
+    ) -> AgentRunResult:
+        """Execute one tool the Realtime model chose, reusing safety/approval/audit.
+
+        This is the execution shim for the unified voice brain: the Realtime model
+        decides which tool to call, this runs it through the same gate as the deep
+        planner (classification, approval creation, cancellation, session state).
+        """
+        run_id = uuid.uuid4().hex
+        token = cancellation_token or CancellationToken()
+        self._current_cancellation_token = token
+        try:
+            token.throw_if_cancelled()
+            result = self._execute_tool(
+                run_id, tool_name, arguments, cancellation_token=token
+            )
+            observation = {
+                "tool_name": tool_name,
+                "arguments": arguments,
+                "ok": result.ok,
+                "message": result.message,
+                "payload": result.payload,
+            }
+            _update_session_from_observation(self._session_state, observation)
+            return AgentRunResult(
+                result.ok, result.message, result.payload, run_id=run_id
+            )
+        except AutomationPaused as exc:
+            return AgentRunResult(
+                False, str(exc) or "Operation cancelled.", run_id=run_id
+            )
+        finally:
+            if self._current_cancellation_token is token:
+                self._current_cancellation_token = None
+
+    def summarize_session_to_memory(self) -> int:
+        """Distill the conversation into durable memories at session end.
+
+        This is how Iris gets to know the user over time: stable facts and
+        preferences are extracted and stored, then surfaced again next session.
+        """
+        if self.config is None or not self._conversation_history:
+            return 0
+        if not getattr(self.openai_client, "available", False):
+            return 0
+        transcript = "\n".join(
+            f"{turn['role']}: {turn['text']}"
+            for turn in self._conversation_history[-20:]
+        )
+        try:
+            client = self.openai_client._get_client()
+            response = client.responses.create(
+                model=self.openai_client.config.chat_model,
+                instructions=(
+                    "Extract durable facts or preferences about the user worth "
+                    "remembering long-term from this conversation. Return a JSON array "
+                    "of short strings (max 8). Only stable facts, preferences, or "
+                    "standing instructions — no one-off task details or chit-chat. "
+                    "Return [] if nothing is worth keeping."
+                ),
+                input=[
+                    {
+                        "role": "user",
+                        "content": [{"type": "input_text", "text": transcript}],
+                    }
+                ],
+                max_output_tokens=300,
+            )
+            facts = _parse_json_list(self.openai_client.output_text(response))
+        except Exception:
+            return 0
+        if not facts:
+            return 0
+        saved = 0
+        with open_state(self.config) as db:
+            existing = {
+                str(row.get("content") or "").strip().lower()
+                for row in list_memories(db)
+            }
+            for fact in facts:
+                text = str(fact).strip()
+                if not text or text.lower() in existing:
+                    continue
+                add_memory(
+                    db,
+                    category="session_summary",
+                    content=text,
+                    provenance="session_summary",
+                    confidence=0.6,
+                    user_confirmed=False,
+                    sensitive=False,
+                )
+                existing.add(text.lower())
+                saved += 1
+        return saved
+
     def _execute_tool(
         self,
         run_id: str,
@@ -547,6 +658,7 @@ class AgentExecutor:
             computer=self.computer_backend,
             screen_awareness=self.screen_awareness,
             computer_use_runner=self.computer_use_runner,
+            deep_task_runner=self.run,
             session_state=self._session_state,
             recipes=self.recipes,
             config=self.config,
@@ -659,6 +771,26 @@ class AgentExecutor:
         summary = self.computer_backend.observe(include_browser=True).summary()
         summary["control_backends"] = self.computer_backend.backend_health(self.config)
         return summary
+
+    def _known_memories(self, limit: int = 40) -> list[dict[str, Any]]:
+        if self.config is None:
+            return []
+        try:
+            with open_state(self.config) as db:
+                rows = list_memories(db)
+        except Exception:
+            return []
+        memories: list[dict[str, Any]] = []
+        for row in rows:
+            category = str(row.get("category") or "")
+            if category == "profile" or category.startswith("machine_"):
+                continue
+            content = str(row.get("content") or "").strip()
+            if content:
+                memories.append({"category": category, "content": content})
+            if len(memories) >= limit:
+                break
+        return memories
 
     def _connector_context(self) -> list[dict[str, Any]]:
         if self.config is None:
@@ -881,6 +1013,24 @@ class AgentExecutor:
             del self._conversation_history[:-12]
 
 
+def _parse_json_list(raw: str) -> list[Any]:
+    text = (raw or "").strip()
+    if not text:
+        return []
+    try:
+        parsed = json.loads(text)
+    except Exception:
+        start = text.find("[")
+        end = text.rfind("]")
+        if start == -1 or end == -1 or end <= start:
+            return []
+        try:
+            parsed = json.loads(text[start : end + 1])
+        except Exception:
+            return []
+    return parsed if isinstance(parsed, list) else []
+
+
 def _planner_instructions() -> str:
     return """You are the Iris agent planner.
 
@@ -904,20 +1054,16 @@ Rules:
 - available_connectors tells you which app/service manifests exist, whether they are enabled/configured, and which generic tools they expose.
 - If session_context.state.last_approved_tool_observation exists, treat it as the latest observation from the approved action. Use it to answer or choose a non-duplicate next verification step; do not repeat the same approved read/open tool unless the observation is clearly insufficient.
 - If a connector is disabled or missing credentials, use integration_status or explain the setup instead of pretending it works.
-- Prefer: browser_ensure_runtime/browser_open/browser_tabs/browser_current_page/browser_get_dom/browser_click_element/browser_extract, app_windows/app_inspect/app_find_element/app_click_element/app_menu_select/app_hotkey, screen_describe/screen_find_element/screen_click_element, audio_current_media/audio_explain_current_song, media_search/media_play/media_pause, app_volume_set, connector_list, integration_status, task_start_background/task_status, calendar_find_event, reminder_create, message_send, gmail_create_draft, knowledge_search/machine_context/file_find/file_open/file_rename/workflow_run/recipe_run.
+- Prefer generic tools: browser_ensure_runtime/browser_open/browser_tabs/browser_current_page/browser_get_dom/browser_focus_element/browser_click_element/browser_type_into/browser_submit/browser_extract, app_windows/app_inspect/app_find_element/app_click_element/app_menu_select/app_type_text/app_hotkey, screen_describe/screen_find_element/screen_click_element, audio_current_media/audio_explain_current_song, media_search/media_play/media_pause, app_volume_set, connector_list, integration_status, task_start_background/task_status, calendar_find_event, reminder_create, message_send, gmail_create_draft, knowledge_search/machine_context/file_find/file_open/file_rename/workflow_run/recipe_run.
 - Use live_screen_context as current state, but call describe_screen for current-screen/current-tab questions.
 - Use knowledge_search when the user asks what Iris knows/remembers from local notes, docs, project context, prior logs, personal wiki, or ingested files.
-- For media requests such as playing music, prefer media_play or media_search over open_app. Do not use recipe_run for ordinary music playback unless media_play fails and the recipe is the only available fallback.
-- For YouTube or "the video on my screen", use media_play or browser_play_media with service="youtube". If the user says play the current video, do not ask for a title; play the current browser media.
+- For media requests such as playing music or playing the current browser video, use media_play/media_search or a matching recipe. Do not use open_app for media playback.
 - For "turn it down in Spotify" or similar per-app volume requests, use app_volume_set before set_volume.
 - For larger goals that should keep working after the conversation, use task_start_background and include a concrete goal.
 - For "is X connected/configured", use integration_status.
 - For calendar/reminder actions, use calendar_find_event or reminder_create; these may require approval because they touch private data or create records.
-- For iMessage, SMS, Messages, or "text Beth" requests, use message_send only when you have both recipient and exact body. If either is missing, ask a final_answer clarification. Do not use computer_use for Messages unless message_send fails.
-- For dashboards where the user asks for a value, do not stop after browser_open. After opening or if the page is already open, use browser_extract or screen_describe to read the current dashboard. If credentials are required, ask the user to sign in manually.
-- For Stripe sales/revenue checks, use recipe_run with recipe_name="stripe_revenue_check". It will request approval because the recipe is private. Never handle credentials; ask the user to sign in manually if needed.
-- For RevenueCat sales/revenue checks, including aliases like "revenue cat", "revenue card", or "revenue cut", use recipe_run with recipe_name="revenuecat_revenue_check". It will request approval because the recipe is private. Never handle credentials; ask the user to sign in manually if needed.
-- For Gmail draft requests, use gmail_create_draft when the user wants the draft created in Gmail. Use draft_email only when they ask for a local draft or when the recipient/body is incomplete. If the user says "create the draft" after a local draft, use gmail_create_draft with the previous draft context.
+- For private dashboards, messages, inboxes, calendars, and account pages, use a matching recipe or generic private tool and request approval before reading or writing private data. Never handle credentials; ask the user to sign in manually if needed.
+- For email draft requests, use gmail_create_draft when the user wants the draft created in the browser. Use draft_email only when they ask for a local draft or when the recipient/body is incomplete. If the user says "create the draft" after a local draft, use gmail_create_draft with the previous draft context.
 - For renaming files or folders, use file_rename. If the user refers to a recently listed/found item, pass that phrase in target and the requested new name in new_name; the tool can resolve it from session context and will ask approval.
 - If the user says "play it", "click it", "do it", or otherwise refers to a previous media/search action, use media_play or the relevant browser/screen tool instead of repeating the search.
 - For browser navigation, use browser_open with new_tab=false unless the user explicitly asks for a new tab.
@@ -928,11 +1074,71 @@ Rules:
 - If the user gives lyric fragments as text and asks for identification, use identify_song instead of search_web.
 - For private app/site content such as messages, inboxes, calendars, or account pages, ask approval before extraction or summarization.
 - For clicking or visual UI work, prefer browser_click_element/browser_click and app_find_element/app_click_element, then screen_find_element/screen_click_element; use computer_use only when safer layers cannot act.
+- You always control this Mac through the local tools (app/browser/screen primitives). These never require any external model and are always available. Never tell the user that a capability, model, or backend is unavailable, off, or not enabled. If one approach is blocked, silently pick another local tool and keep going. Never mention which backend or model you used.
+- You accomplish novel requests by chaining these general primitives (open/navigate, read the screen, find an element, click, type, verify). Do not refuse a reasonable request just because there is no single dedicated tool for it.
+- For system tasks with no dedicated tool (installing an app, running a script, file system work), use run_shell, e.g. "brew install --cask spotify". It asks for approval once; pick the simplest correct command.
+- available_tools may include external tools named mcp__<server>__<tool> (with a [server] prefix in the description). These come from connected MCP services and are real, usable tools — prefer them when one matches the request.
+- If app_open reports an app is not installed, do not stop: open the web version with browser_open, look for an installer with file_find, or ask the owner — choose the most useful next step.
 - If a tool fails with a retryable observation, choose a fallback tool instead of giving up.
+- Memory: when the user states a durable preference, fact about themselves, or a standing instruction ("always...", "from now on...", "I prefer...", "remember that...", "my X is..."), silently call remember with a concise content string and a category (preferences, facts, contacts, etc.) as one step of the turn. Do not ask permission and do not announce that you saved it unless asked.
+- Apply remembered context: known_memories in the input holds what you have learned about the user. Honor stored preferences (e.g. "use the Spotify app, not the browser") when choosing tools.
+- For "what do you know about me" or recall questions, use recall (and knowledge_search for ingested notes); answer from known_memories and the user_profile, not from guesses.
 - Verify actions when possible before claiming completion.
-- Do not claim an action was done unless you call a tool.
+- Honesty: only state that an action happened or describe a result if it is supported by an observation in this turn. Never invent outcomes (e.g. a song that started, a message that sent). If you have not verified, say what you attempted, not what you assume happened.
 - Do not request destructive, payment, credential, security, or sending actions without approval.
 - Keep final spoken_response conversational and human. It should feel spoken, specific, and alive, not like a generic support bot."""
+
+
+def _initial_session_state() -> dict[str, Any]:
+    return {
+        "active_app": "",
+        "active_tab": {},
+        "last_goal": "",
+        "last_selected_element": {},
+        "last_media_target": {},
+        "last_file_target": "",
+        "last_verification": {},
+    }
+
+
+def _update_session_from_observation(
+    session_state: dict[str, Any], observation: dict[str, Any]
+) -> None:
+    payload = observation.get("payload")
+    if not isinstance(payload, dict):
+        return
+    tool_name = str(observation.get("tool_name") or "")
+    if tool_name.startswith("browser_"):
+        title = str(payload.get("title") or "")
+        url = str(payload.get("url") or payload.get("last_opened_url") or "")
+        if title or url:
+            session_state["active_tab"] = {"title": title, "url": url}
+    if tool_name in {"browser_click_element", "browser_focus_element"}:
+        session_state["last_selected_element"] = {
+            "label": payload.get("label") or "",
+            "role": payload.get("role") or "",
+            "tag": payload.get("tag") or "",
+            "url": payload.get("url") or "",
+        }
+    if tool_name.startswith("app_"):
+        app = str(payload.get("app") or "")
+        if app:
+            session_state["active_app"] = app
+    if tool_name.startswith("media_") or tool_name.startswith("audio_"):
+        session_state["last_media_target"] = payload
+    if tool_name.startswith("file_"):
+        if payload.get("new_path"):
+            session_state["last_file_target"] = str(payload["new_path"])
+        elif payload.get("path"):
+            session_state["last_file_target"] = str(payload["path"])
+    if observation.get("done_condition") or "verified" in payload:
+        session_state["last_verification"] = {
+            "tool_name": tool_name,
+            "ok": observation.get("ok"),
+            "message": observation.get("message"),
+            "done_condition": observation.get("done_condition"),
+            "payload": payload,
+        }
 
 
 def _planner_result_from_json(text: str) -> PlannerResult:

@@ -4,8 +4,10 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from html import unescape
 from html.parser import HTMLParser
+import os
 from pathlib import Path
 import re
+import subprocess
 import time
 from typing import Any, Callable
 from urllib import request
@@ -20,6 +22,7 @@ from iris.connectors import connector_health, default_manifest_dirs, get_connect
 from iris.integrations.google_vision import GoogleVisionClient
 from iris.integrations.openai_client import OpenAIResponsesClient
 from iris.knowledge import format_search_results, search_pages
+from iris.memory import add_memory, list_memories
 from iris.mac_controller import ActionResult, MacController
 from iris.perception import LiveScreenFrame, PerceptionService, ScreenAwarenessService
 from iris.polling import poll_until
@@ -27,7 +30,7 @@ from iris.recipes import ActionRecipeRegistry
 from iris.safety import CancellationToken, SafetyGate, classify_action
 from iris.state import open_state
 from iris import tasks as task_store
-from iris.system import applescript_string, run_osascript
+from iris.system import applescript_string, run_command, run_osascript
 
 
 @dataclass(frozen=True)
@@ -48,6 +51,7 @@ class ToolContext:
     computer: ComputerBackend | None = None
     screen_awareness: ScreenAwarenessService | None = None
     computer_use_runner: Callable[[str], Any] | None = None
+    deep_task_runner: Callable[[str], Any] | None = None
     session_state: dict[str, Any] | None = None
     recipes: ActionRecipeRegistry | None = None
     config: IrisConfig | None = None
@@ -84,6 +88,46 @@ PLANNER_HIDDEN_TOOLS = {
     "media_play_current",
     "find_file",
     "summarize_pdf",
+}
+
+
+CANONICAL_REALTIME_TOOLS = {
+    "app_open",
+    "app_activate",
+    "app_click_text",
+    "app_type_text",
+    "browser_open",
+    "browser_current_page",
+    "browser_get_dom",
+    "browser_click_element",
+    "browser_type_into",
+    "browser_submit",
+    "browser_tabs",
+    "screen_describe",
+    "look_at_screen",
+    "screen_click_element",
+    "file_find",
+    "file_open",
+    "file_list_folder",
+    "file_rename",
+    "media_play",
+    "media_pause",
+    "media_search",
+    "audio_current_media",
+    "set_volume",
+    "app_volume_set",
+    "calendar_find_event",
+    "reminder_create",
+    "gmail_create_draft",
+    "send_email",
+    "message_send",
+    "remember",
+    "recall",
+    "knowledge_search",
+    "run_shell",
+    "web_research",
+    "run_deep_task",
+    "task_status",
 }
 
 
@@ -178,6 +222,16 @@ class ToolRegistry:
             if name not in PLANNER_HIDDEN_TOOLS
         ]
 
+    def realtime_schemas(self, *, mcp_limit: int = 16) -> list[dict[str, Any]]:
+        canonical: list[dict[str, Any]] = []
+        mcp: list[dict[str, Any]] = []
+        for name, tool in self._tools.items():
+            if name in CANONICAL_REALTIME_TOOLS:
+                canonical.append(tool.schema())
+            elif name.startswith("mcp__"):
+                mcp.append(tool.schema())
+        return canonical + mcp[:mcp_limit]
+
     def execute(
         self, name: str, arguments: dict[str, Any], context: ToolContext
     ) -> ToolResult:
@@ -244,6 +298,50 @@ class ApprovalRequired(PermissionError):
         self.tool_name = tool_name
         self.arguments = arguments
         self.reason = reason
+
+
+def mcp_tool_specs(manager: Any) -> list[ToolSpec]:
+    """Wrap each tool exposed by connected MCP servers as an Iris ToolSpec.
+
+    The planner sees these like any other tool; calling one routes through the
+    MCP manager to the right server. Names are namespaced mcp__<server>__<tool>
+    to avoid collisions with built-in tools.
+    """
+    specs: list[ToolSpec] = []
+    for descriptor in manager.tool_descriptors():
+        server = str(descriptor.get("server") or "")
+        tool = str(descriptor.get("tool") or "")
+        if not server or not tool:
+            continue
+        schema = descriptor.get("input_schema")
+        if not isinstance(schema, dict) or schema.get("type") != "object":
+            schema = _object_schema({})
+        risk = descriptor.get("risk")
+        if not isinstance(risk, RiskLevel):
+            risk = RiskLevel.LOW_RISK
+        description = (
+            descriptor.get("description") or f"{tool} via the {server} MCP server."
+        )
+
+        def _execute(
+            arguments: dict[str, Any],
+            context: ToolContext,
+            _server: str = server,
+            _tool: str = tool,
+        ) -> ToolResult:
+            ok, message, payload = manager.call(_server, _tool, arguments)
+            return ToolResult(ok, message, payload, continue_planning=ok)
+
+        specs.append(
+            ToolSpec(
+                name=f"mcp__{server}__{tool}",
+                description=f"[{server}] {description}",
+                parameters=schema,
+                risk=risk,
+                execute=_execute,
+            )
+        )
+    return specs
 
 
 def _default_tools() -> list[ToolSpec]:
@@ -331,9 +429,9 @@ def _default_tools() -> list[ToolSpec]:
         ),
         ToolSpec(
             name="app_type_text",
-            description="Type text into the focused native field. Requires approval.",
+            description="Type text into the focused native field. Request approval first only if the text is a credential, payment detail, or is being submitted/sent.",
             parameters=_object_schema({"text": {"type": "string"}}),
-            risk=RiskLevel.SENSITIVE,
+            risk=RiskLevel.LOW_RISK,
             execute=_app_type_text,
         ),
         ToolSpec(
@@ -401,20 +499,42 @@ def _default_tools() -> list[ToolSpec]:
         ToolSpec(
             name="browser_click_element",
             description="Click a browser element by visible text, role label, or aria label using CDP first.",
-            parameters=_object_schema({"text": {"type": "string"}}, required=["text"]),
+            parameters=_object_schema(
+                {
+                    "text": {"type": "string"},
+                    "selector": {"type": "string"},
+                    "role": {"type": "string"},
+                    "exact": {"type": "boolean"},
+                },
+                required=[],
+            ),
             risk=RiskLevel.LOW_RISK,
             execute=_browser_click_element,
         ),
         ToolSpec(
+            name="browser_focus_element",
+            description="Focus a browser element or field by selector, accessible label, role, placeholder, or text.",
+            parameters=_object_schema(
+                {
+                    "field": {"type": "string"},
+                    "selector": {"type": "string"},
+                    "role": {"type": "string"},
+                },
+                required=[],
+            ),
+            risk=RiskLevel.LOW_RISK,
+            execute=_browser_focus_element,
+        ),
+        ToolSpec(
             name="browser_type",
-            description="Type into the active browser field. Requires approval.",
+            description="Type into the active browser field. Request approval first only if the text is a credential, payment detail, or is being submitted/sent.",
             parameters=_object_schema({"text": {"type": "string"}}),
-            risk=RiskLevel.SENSITIVE,
+            risk=RiskLevel.LOW_RISK,
             execute=_type_text,
         ),
         ToolSpec(
             name="browser_type_into",
-            description="Type text into a browser field by selector, placeholder, aria-label, or focused field. Requires approval.",
+            description="Type text into a browser field by selector, placeholder, aria-label, or focused field. Request approval first only if the text is a credential, payment detail, or is being submitted/sent.",
             parameters=_object_schema(
                 {
                     "field": {"type": "string"},
@@ -422,8 +542,21 @@ def _default_tools() -> list[ToolSpec]:
                 },
                 required=["text"],
             ),
-            risk=RiskLevel.SENSITIVE,
+            risk=RiskLevel.LOW_RISK,
             execute=_browser_type_into,
+        ),
+        ToolSpec(
+            name="browser_submit",
+            description="Submit the current browser form or press Enter in a focused field.",
+            parameters=_object_schema(
+                {
+                    "field": {"type": "string"},
+                    "selector": {"type": "string"},
+                },
+                required=[],
+            ),
+            risk=RiskLevel.LOW_RISK,
+            execute=_browser_submit,
         ),
         ToolSpec(
             name="browser_verify_state",
@@ -466,6 +599,18 @@ def _default_tools() -> list[ToolSpec]:
             parameters=_object_schema({"prompt": {"type": "string"}}, required=[]),
             risk=RiskLevel.LOW_RISK,
             execute=_describe_screen,
+        ),
+        ToolSpec(
+            name="look_at_screen",
+            description=(
+                "Look at the screen directly to answer a visual question (layout, "
+                "images, a non-text app, or anything you cannot read from the page DOM "
+                "or accessibility tree). Prefer browser_get_dom or screen_describe for "
+                "plain text/UI; use this when you genuinely need to see the pixels."
+            ),
+            parameters=_object_schema({"question": {"type": "string"}}, required=[]),
+            risk=RiskLevel.LOW_RISK,
+            execute=_look_at_screen,
         ),
         ToolSpec(
             name="screen_ocr",
@@ -553,7 +698,7 @@ def _default_tools() -> list[ToolSpec]:
         ),
         ToolSpec(
             name="calendar_find_event",
-            description="Search local macOS Calendar events by text and date window. Requires approval because calendar data is private.",
+            description="Search the owner's local macOS Calendar events by text and date window (read-only).",
             parameters=_object_schema(
                 {
                     "query": {"type": "string"},
@@ -561,12 +706,12 @@ def _default_tools() -> list[ToolSpec]:
                 },
                 required=["query"],
             ),
-            risk=RiskLevel.SENSITIVE,
+            risk=RiskLevel.LOW_RISK,
             execute=_calendar_find_event,
         ),
         ToolSpec(
             name="reminder_create",
-            description="Create a macOS Reminders item, optionally with a due date, then open Reminders for confirmation. Requires approval.",
+            description="Create a macOS Reminders item, optionally with a due date, then open Reminders for confirmation.",
             parameters=_object_schema(
                 {
                     "title": {"type": "string"},
@@ -575,7 +720,7 @@ def _default_tools() -> list[ToolSpec]:
                 },
                 required=["title"],
             ),
-            risk=RiskLevel.SENSITIVE,
+            risk=RiskLevel.LOW_RISK,
             execute=_reminder_create,
         ),
         ToolSpec(
@@ -634,6 +779,40 @@ def _default_tools() -> list[ToolSpec]:
             ),
             risk=RiskLevel.LOW_RISK,
             execute=_knowledge_search,
+        ),
+        ToolSpec(
+            name="remember",
+            description=(
+                "Persist a durable fact, preference, or standing instruction about the "
+                "owner so future sessions honor it (e.g. 'use the Spotify app, not the "
+                "browser'). Call this silently whenever the user states something to "
+                "remember; do not ask permission."
+            ),
+            parameters=_object_schema(
+                {
+                    "content": {"type": "string"},
+                    "category": {"type": "string"},
+                },
+                required=["content"],
+            ),
+            risk=RiskLevel.LOW_RISK,
+            execute=_remember,
+        ),
+        ToolSpec(
+            name="recall",
+            description=(
+                "Read back what Iris has learned and stored about the owner "
+                "(preferences, facts, standing instructions). Use for 'what do you know "
+                "about me' and to check stored preferences before acting."
+            ),
+            parameters=_object_schema(
+                {
+                    "category": {"type": "string"},
+                    "limit": {"type": "integer"},
+                }
+            ),
+            risk=RiskLevel.LOW_RISK,
+            execute=_recall,
         ),
         ToolSpec(
             name="machine_context",
@@ -806,7 +985,7 @@ def _default_tools() -> list[ToolSpec]:
         ),
         ToolSpec(
             name="gmail_search_and_summarize",
-            description="Search Gmail, read visible matching message results/content, and summarize it. Requires approval because it reads email content.",
+            description="Search the owner's Gmail, read visible matching message results/content, and summarize it (read-only).",
             parameters=_object_schema(
                 {
                     "query": {"type": "string"},
@@ -814,7 +993,7 @@ def _default_tools() -> list[ToolSpec]:
                 },
                 required=["query"],
             ),
-            risk=RiskLevel.SENSITIVE,
+            risk=RiskLevel.LOW_RISK,
             execute=_gmail_search_and_summarize,
         ),
         ToolSpec(
@@ -875,9 +1054,9 @@ def _default_tools() -> list[ToolSpec]:
         ),
         ToolSpec(
             name="type_text",
-            description="Type text into the active app. Requires approval.",
+            description="Type text into the active app. Request approval first only if the text is a credential, payment detail, or is being submitted/sent.",
             parameters=_object_schema({"text": {"type": "string"}}),
-            risk=RiskLevel.SENSITIVE,
+            risk=RiskLevel.LOW_RISK,
             execute=_type_text,
         ),
         ToolSpec(
@@ -1008,6 +1187,24 @@ def _default_tools() -> list[ToolSpec]:
             execute=_not_yet_connected,
         ),
         ToolSpec(
+            name="send_email",
+            description=(
+                "Send an email for real via the configured provider (Resend). Use when "
+                "the owner asks to actually send/email something. Defaults to the owner's "
+                "own address if no recipient is given. Asks for approval before sending."
+            ),
+            parameters=_object_schema(
+                {
+                    "to": {"type": "string"},
+                    "subject": {"type": "string"},
+                    "body": {"type": "string"},
+                },
+                required=["subject", "body"],
+            ),
+            risk=RiskLevel.SENSITIVE,
+            execute=_send_email,
+        ),
+        ToolSpec(
             name="draft_email",
             description="Draft an email without sending it.",
             parameters=_object_schema(
@@ -1055,6 +1252,40 @@ def _default_tools() -> list[ToolSpec]:
             parameters=_object_schema({"instruction": {"type": "string"}}),
             risk=RiskLevel.LOW_RISK,
             execute=_computer_use,
+        ),
+        ToolSpec(
+            name="run_deep_task",
+            description=(
+                "Delegate a complex, multi-step goal to the deep planner (it will chain "
+                "several tools and verify). Use for research, multi-app workflows, or "
+                "anything needing more than a couple of steps. Returns the final result."
+            ),
+            parameters=_object_schema(
+                {"goal": {"type": "string"}},
+                required=["goal"],
+            ),
+            risk=RiskLevel.LOW_RISK,
+            execute=_run_deep_task,
+        ),
+        ToolSpec(
+            name="run_shell",
+            description=(
+                "Run a shell command on the owner's Mac and return its output. Use this "
+                "to install apps (e.g. 'brew install --cask spotify'), run an installer "
+                "or script, or perform system tasks no other tool covers. Runs in a login "
+                "shell so brew and PATH tools work. Asks for approval before running; "
+                "clearly destructive commands are blocked outright."
+            ),
+            parameters=_object_schema(
+                {
+                    "command": {"type": "string"},
+                    "cwd": {"type": "string"},
+                    "timeout_seconds": {"type": "integer"},
+                },
+                required=["command"],
+            ),
+            risk=RiskLevel.SENSITIVE,
+            execute=_run_shell,
         ),
     ]
 
@@ -1176,7 +1407,30 @@ def _human_tool_error(message: str) -> str:
 
 def _open_app(arguments: dict[str, Any], context: ToolContext) -> ToolResult:
     computer = _computer(context)
-    return _from_action_result(computer.open_app(_string_arg(arguments, "app_name")))
+    app_name = _string_arg(arguments, "app_name")
+    result = computer.open_app(app_name)
+    if not result.ok and _looks_like_app_not_installed(result.detail):
+        return ToolResult(
+            False,
+            (
+                f"{app_name} does not appear to be installed. You can open its web "
+                "version in the browser instead, look for an installer in Downloads, "
+                f"or confirm with the owner before installing {app_name}."
+            ),
+            {"app_name": app_name, "installed": False, "detail": result.detail},
+            continue_planning=True,
+        )
+    return _from_action_result(result)
+
+
+def _looks_like_app_not_installed(detail: str) -> bool:
+    lowered = (detail or "").lower()
+    return (
+        "unable to find application" in lowered
+        or "no application" in lowered
+        or "can't be found" in lowered
+        or "does not exist" in lowered
+    )
 
 
 def _app_activate(arguments: dict[str, Any], context: ToolContext) -> ToolResult:
@@ -1390,15 +1644,35 @@ def _browser_click(arguments: dict[str, Any], context: ToolContext) -> ToolResul
 def _browser_click_element(
     arguments: dict[str, Any], context: ToolContext
 ) -> ToolResult:
-    result = _chrome_cdp().click_text(_string_arg(arguments, "text"))
+    result = _chrome_cdp().click_element(
+        text=_string_arg(arguments, "text"),
+        selector=_string_arg(arguments, "selector"),
+        role=_string_arg(arguments, "role"),
+        exact=bool(arguments.get("exact")),
+    )
     if result.ok:
+        _remember_selection(context, result.payload)
         return _from_action_result(result)
     return _browser_click(
         {"text": _string_arg(arguments, "text"), "browser": "Google Chrome"}, context
     )
 
 
+def _browser_focus_element(
+    arguments: dict[str, Any], context: ToolContext
+) -> ToolResult:
+    result = _chrome_cdp().focus_element(
+        field=_string_arg(arguments, "field"),
+        selector=_string_arg(arguments, "selector"),
+        role=_string_arg(arguments, "role"),
+    )
+    if result.ok:
+        _remember_selection(context, result.payload)
+    return _from_action_result(result)
+
+
 def _browser_type_into(arguments: dict[str, Any], context: ToolContext) -> ToolResult:
+    context.assert_not_cancelled()
     result = _chrome_cdp().type_into(
         field=_string_arg(arguments, "field"),
         text=_string_arg(arguments, "text"),
@@ -1406,6 +1680,14 @@ def _browser_type_into(arguments: dict[str, Any], context: ToolContext) -> ToolR
     if result.ok:
         return _from_action_result(result)
     return _type_text({"text": _string_arg(arguments, "text")}, context)
+
+
+def _browser_submit(arguments: dict[str, Any], context: ToolContext) -> ToolResult:
+    result = _chrome_cdp().submit(
+        field=_string_arg(arguments, "field"),
+        selector=_string_arg(arguments, "selector"),
+    )
+    return _from_action_result(result)
 
 
 def _browser_verify_state(
@@ -1668,6 +1950,11 @@ def _frame_age_seconds(frame: LiveScreenFrame) -> float:
     )
 
 
+def _look_at_screen(arguments: dict[str, Any], context: ToolContext) -> ToolResult:
+    prompt = _string_arg(arguments, "question") or _string_arg(arguments, "prompt")
+    return _describe_screen({"prompt": prompt} if prompt else {}, context)
+
+
 def _describe_screen(arguments: dict[str, Any], context: ToolContext) -> ToolResult:
     frame = _latest_frame(context)
     prompt = _string_arg(
@@ -1867,11 +2154,51 @@ def _screen_click_element(
                 True, f"I clicked {description}.", getattr(result, "payload", None)
             )
         message = str(result.message)
-        if "can't use the computer-control model" not in message:
+        if message and "can't use the computer-control model" not in message:
             return ToolResult(False, message)
+    return _deterministic_click(description, context)
+
+
+def _deterministic_click(description: str, context: ToolContext) -> ToolResult:
+    """Click an on-screen element using only local control (no OpenAI model).
+
+    Routes to the browser DOM when a browser is focused, otherwise the macOS
+    accessibility tree. This is the always-available fallback path.
+    """
+    active_app = ""
+    try:
+        active_app = (
+            _computer(context).observe(include_browser=False).active_app or ""
+        ).lower()
+    except Exception:
+        active_app = ""
+    is_browser = any(
+        name in active_app for name in ("chrome", "safari", "edge", "brave")
+    )
+    attempts: list[Callable[[], ActionResult]] = []
+    if is_browser:
+        attempts.append(lambda: context.controller.browser_click_text(description))
+        attempts.append(lambda: _accessibility().click_element(description))
+    else:
+        attempts.append(lambda: _accessibility().click_element(description))
+        attempts.append(lambda: context.controller.browser_click_text(description))
+    last_detail = ""
+    for attempt in attempts:
+        try:
+            result = attempt()
+        except Exception as exc:
+            last_detail = str(exc)
+            continue
+        if result.ok:
+            return ToolResult(True, f"I clicked {description}.", result.payload)
+        last_detail = result.detail or last_detail
     return ToolResult(
         False,
-        f"I found the screen fallback path for {description}, but I need Accessibility or computer-use access to click it.",
+        (
+            f"I couldn't click {description}. I read the screen but neither the "
+            "browser nor the accessibility tree exposed that element"
+            + (f" ({last_detail})." if last_detail else ".")
+        ),
     )
 
 
@@ -2717,6 +3044,66 @@ def _knowledge_search(arguments: dict[str, Any], context: ToolContext) -> ToolRe
     )
 
 
+def _remember(arguments: dict[str, Any], context: ToolContext) -> ToolResult:
+    content = _string_arg(arguments, "content")
+    if not content:
+        return ToolResult(False, "I need something to remember.")
+    if context.config is None:
+        return ToolResult(False, "Memory is not connected in this runtime.")
+    category = _string_arg(arguments, "category", "preferences") or "preferences"
+    with open_state(context.config) as db:
+        existing = list_memories(db, category)
+        normalized = content.strip().lower()
+        for row in existing:
+            if str(row.get("content") or "").strip().lower() == normalized:
+                return ToolResult(
+                    True,
+                    "Already noted.",
+                    {"category": category, "content": content, "duplicate": True},
+                    continue_planning=True,
+                )
+        memory_id = add_memory(
+            db,
+            category=category,
+            content=content,
+            provenance="conversation",
+            confidence=0.9,
+            user_confirmed=True,
+            sensitive=False,
+        )
+    return ToolResult(
+        True,
+        "Got it, I'll remember that.",
+        {"memory_id": memory_id, "category": category, "content": content},
+        continue_planning=True,
+    )
+
+
+def _recall(arguments: dict[str, Any], context: ToolContext) -> ToolResult:
+    if context.config is None:
+        return ToolResult(False, "Memory is not connected in this runtime.")
+    category = _string_arg(arguments, "category") or None
+    limit = max(1, min(_int_arg(arguments, "limit", 20), 50))
+    with open_state(context.config) as db:
+        rows = list_memories(db, category)
+    items = [
+        {"category": row.get("category"), "content": row.get("content")}
+        for row in rows[:limit]
+    ]
+    if not items:
+        return ToolResult(
+            True,
+            "I haven't stored anything about you yet beyond your profile.",
+            {"memories": []},
+        )
+    lines = [f"- {item['content']}" for item in items]
+    return ToolResult(
+        True,
+        "Here's what I've learned and remembered:\n" + "\n".join(lines),
+        {"memories": items},
+    )
+
+
 def _file_list_folder(arguments: dict[str, Any], context: ToolContext) -> ToolResult:
     raw_path = _string_arg(arguments, "path")
     if not raw_path:
@@ -2746,7 +3133,10 @@ def _file_open(arguments: dict[str, Any], context: ToolContext) -> ToolResult:
     if not raw_path:
         return ToolResult(False, "I need a file path.")
     path = str(_resolve_common_folder(raw_path))
-    return _from_action_result(context.controller.open_file(path))
+    result = _from_action_result(context.controller.open_file(path))
+    if result.ok and context.session_state is not None:
+        context.session_state["last_file_target"] = path
+    return result
 
 
 def _file_rename(arguments: dict[str, Any], context: ToolContext) -> ToolResult:
@@ -2779,6 +3169,7 @@ def _file_rename(arguments: dict[str, Any], context: ToolContext) -> ToolResult:
                 str(destination) if str(item) == str(path) else item
                 for item in previous
             ]
+        context.session_state["last_file_target"] = str(destination)
     return ToolResult(
         True,
         f"Renamed {path.name} to {destination.name}.",
@@ -2910,6 +3301,7 @@ def _workflow_run(arguments: dict[str, Any], context: ToolContext) -> ToolResult
 
 
 def _recipe_run(arguments: dict[str, Any], context: ToolContext) -> ToolResult:
+    context.assert_not_cancelled()
     recipe_name = _string_arg(arguments, "recipe_name") or _string_arg(
         arguments, "name"
     )
@@ -2931,10 +3323,18 @@ def _recipe_run(arguments: dict[str, Any], context: ToolContext) -> ToolResult:
     inputs = raw_inputs if isinstance(raw_inputs, dict) else {}
     max_steps = max(1, min(_int_arg(arguments, "max_steps", 8), 20))
     observations: list[dict[str, Any]] = []
-    tool_registry = ToolRegistry.default()
+    custom_registry = (context.session_state or {}).get("_tool_registry")
+    tool_registry = (
+        custom_registry
+        if isinstance(custom_registry, ToolRegistry)
+        else ToolRegistry.default()
+    )
+    if context.session_state is not None:
+        context.session_state["current_recipe"] = recipe.name
 
     def run_steps(steps: Any) -> bool:
         for step in list(steps)[:max_steps]:
+            context.assert_not_cancelled()
             if not step.tool or step.tool == "recipe_run":
                 continue
             step_args = _recipe_step_args(step.args, inputs)
@@ -2972,14 +3372,15 @@ def _recipe_run(arguments: dict[str, Any], context: ToolContext) -> ToolResult:
     fallback_ok = True
     if not primary_ok and recipe.fallback_steps:
         fallback_ok = run_steps(recipe.fallback_steps)
-    ok = primary_ok or fallback_ok
+    steps_ok = primary_ok or fallback_ok
+    verification = _verify_recipe(recipe, inputs, context, tool_registry)
+    observations.append(verification)
+    ok = steps_ok and bool(verification.get("ok"))
     final_observation = (
         str(observations[-1]["message"]) if observations else recipe.description
     )
-    if recipe.done_condition:
-        final_observation = (
-            f"{final_observation} Done condition: {recipe.done_condition}"
-        )
+    if not ok and recipe.metadata.get("failure_message"):
+        final_observation = str(recipe.metadata["failure_message"])
     return ToolResult(
         ok,
         final_observation,
@@ -2988,10 +3389,62 @@ def _recipe_run(arguments: dict[str, Any], context: ToolContext) -> ToolResult:
             "service": recipe.service,
             "done_condition": recipe.done_condition,
             "verification_tool": recipe.verification_tool,
+            "verified": bool(verification.get("ok")),
             "observations": observations,
         },
-        continue_planning=ok,
+        continue_planning=not ok,
     )
+
+
+def _verify_recipe(
+    recipe: Any,
+    inputs: dict[str, Any],
+    context: ToolContext,
+    tool_registry: ToolRegistry,
+) -> dict[str, Any]:
+    if not recipe.verification_tool:
+        return {
+            "tool": "recipe_verification",
+            "ok": True,
+            "message": "Recipe does not declare a verification tool.",
+            "verification_unavailable": True,
+        }
+    context.assert_not_cancelled()
+    args = _recipe_step_args(
+        recipe.metadata.get("verification_args", {})
+        if isinstance(recipe.metadata, dict)
+        else {},
+        inputs,
+    )
+    tool = tool_registry.get(recipe.verification_tool)
+    if tool is None:
+        return {
+            "tool": recipe.verification_tool,
+            "ok": False,
+            "message": "Verification tool is not available.",
+        }
+    try:
+        result = tool_registry.execute_approved(recipe.verification_tool, args, context)
+    except Exception as exc:
+        result = ToolResult(False, _human_tool_error(str(exc)))
+    verified = bool(result.ok)
+    if recipe.metadata.get("verification_requires_payload_key") and isinstance(
+        result.payload, dict
+    ):
+        verified = bool(
+            result.payload.get(recipe.metadata["verification_requires_payload_key"])
+        )
+    observation = {
+        "tool": recipe.verification_tool,
+        "arguments": args,
+        "ok": verified,
+        "message": result.message,
+        "payload": result.payload,
+        "done_condition": recipe.done_condition,
+    }
+    if context.session_state is not None:
+        context.session_state["last_verification"] = observation
+    return observation
 
 
 def _watch_change(arguments: dict[str, Any], context: ToolContext) -> ToolResult:
@@ -3012,6 +3465,25 @@ def _watch_change(arguments: dict[str, Any], context: ToolContext) -> ToolResult
 
 def _not_yet_connected(arguments: dict[str, Any], context: ToolContext) -> ToolResult:
     return ToolResult(False, "That workflow tool is registered but not connected yet.")
+
+
+def _send_email(arguments: dict[str, Any], context: ToolContext) -> ToolResult:
+    from iris.email_sender import EmailService
+
+    subject = _string_arg(arguments, "subject")
+    body = _string_arg(arguments, "body")
+    to = _string_arg(arguments, "to") or None
+    if context.config is None:
+        return ToolResult(False, "Email is not available in this runtime.")
+    service = EmailService(context.config)
+    if not service.available:
+        return ToolResult(
+            False,
+            "Email isn't configured yet. Set RESEND_API_KEY and IRIS_EMAIL_FROM "
+            "(and IRIS_EMAIL_TO for your own address) to enable sending.",
+        )
+    result = service.send(subject=subject, body=body, to=to)
+    return ToolResult(result.ok, result.detail, {"to": to or context.config.email_to})
 
 
 def _draft_email(arguments: dict[str, Any], context: ToolContext) -> ToolResult:
@@ -3060,10 +3532,81 @@ def _computer_use(arguments: dict[str, Any], context: ToolContext) -> ToolResult
     if not instruction:
         return ToolResult(False, "I need a computer-use instruction.")
     if context.computer_use_runner is None:
-        return ToolResult(False, "Computer-use is not connected in this runtime.")
+        return _computer_use_degraded()
     result = context.computer_use_runner(instruction)
+    message = str(result.message)
+    if not bool(result.ok) and "can't use the computer-control model" in message:
+        return _computer_use_degraded()
+    return ToolResult(bool(result.ok), message, getattr(result, "payload", None))
+
+
+def _run_deep_task(arguments: dict[str, Any], context: ToolContext) -> ToolResult:
+    goal = _string_arg(arguments, "goal") or _string_arg(arguments, "task")
+    if not goal:
+        return ToolResult(False, "I need a goal for the deep task.")
+    if context.deep_task_runner is None:
+        return ToolResult(
+            False, "The deep task runner is not available in this runtime."
+        )
+    result = context.deep_task_runner(goal)
+    ok = bool(getattr(result, "ok", False))
+    message = str(getattr(result, "message", "") or "Done.")
+    return ToolResult(ok, message, getattr(result, "payload", None))
+
+
+def _run_shell(arguments: dict[str, Any], context: ToolContext) -> ToolResult:
+    command = _string_arg(arguments, "command")
+    if not command:
+        return ToolResult(False, "I need a shell command to run.")
+    cwd = _string_arg(arguments, "cwd") or None
+    if cwd:
+        cwd = str(_resolve_common_folder(cwd))
+        if not os.path.isdir(cwd):
+            return ToolResult(False, f"That working directory does not exist: {cwd}")
+    timeout = max(1, min(_int_arg(arguments, "timeout_seconds", 120), 600))
+    shell = os.environ.get("SHELL", "/bin/zsh")
+    try:
+        result = run_command([shell, "-lc", command], timeout=timeout)
+    except subprocess.TimeoutExpired:
+        return ToolResult(
+            False,
+            f"The command ran longer than {timeout}s and was stopped.",
+            {"command": command, "timed_out": True},
+            continue_planning=True,
+        )
+    except Exception as exc:
+        return ToolResult(False, f"I couldn't run that command: {exc}")
+    stdout = _compact_text(result.stdout, 1500)
+    stderr = _compact_text(result.stderr, 800)
+    summary_parts = [f"Exit code {result.returncode}."]
+    if stdout:
+        summary_parts.append(f"Output: {stdout}")
+    if stderr:
+        summary_parts.append(f"Errors: {stderr}")
+    if result.ok and not stdout and not stderr:
+        summary_parts.append("Completed with no output.")
     return ToolResult(
-        bool(result.ok), str(result.message), getattr(result, "payload", None)
+        result.ok,
+        " ".join(summary_parts),
+        {
+            "command": command,
+            "returncode": result.returncode,
+            "stdout": result.stdout,
+            "stderr": result.stderr,
+        },
+        continue_planning=True,
+    )
+
+
+def _computer_use_degraded() -> ToolResult:
+    return ToolResult(
+        False,
+        (
+            "Use the local control tools instead: screen_describe to read the "
+            "screen, then screen_click_element / app_click_text / browser_click_element "
+            "to act, or app_open / browser_open / open_url to navigate."
+        ),
+        continue_planning=True,
     )
 
 
@@ -3084,6 +3627,7 @@ def _remember_media(
         "browser": browser,
         "url": f"https://open.spotify.com/search/{quote_plus(query)}",
     }
+    context.session_state["last_media_target"] = context.session_state["last_media"]
 
 
 def _remember_browser(
@@ -3098,6 +3642,18 @@ def _remember_browser(
     context.session_state["last_opened_url"] = url
     context.session_state["current_browser_task"] = current_task or url
     context.session_state["last_browser"] = browser
+    context.session_state["active_tab"] = {"browser": browser, "url": url}
+
+
+def _remember_selection(context: ToolContext, payload: Any | None) -> None:
+    if context.session_state is None or not isinstance(payload, dict):
+        return
+    context.session_state["last_selected_element"] = {
+        "label": payload.get("label") or "",
+        "role": payload.get("role") or "",
+        "tag": payload.get("tag") or "",
+        "url": payload.get("url") or "",
+    }
 
 
 def _friendly_opened_url(url: str, browser: str | None = None) -> str:
