@@ -118,6 +118,7 @@ CANONICAL_REALTIME_TOOLS = {
     "calendar_find_event",
     "reminder_create",
     "gmail_create_draft",
+    "send_email",
     "message_send",
     "remember",
     "recall",
@@ -1123,6 +1124,24 @@ def _default_tools() -> list[ToolSpec]:
             parameters=_object_schema({"path": {"type": "string"}}),
             risk=RiskLevel.LOW_RISK,
             execute=_not_yet_connected,
+        ),
+        ToolSpec(
+            name="send_email",
+            description=(
+                "Send an email for real via the configured provider (Resend). Use when "
+                "the owner asks to actually send/email something. Defaults to the owner's "
+                "own address if no recipient is given. Asks for approval before sending."
+            ),
+            parameters=_object_schema(
+                {
+                    "to": {"type": "string"},
+                    "subject": {"type": "string"},
+                    "body": {"type": "string"},
+                },
+                required=["subject", "body"],
+            ),
+            risk=RiskLevel.SENSITIVE,
+            execute=_send_email,
         ),
         ToolSpec(
             name="draft_email",
@@ -3358,6 +3377,25 @@ def _watch_change(arguments: dict[str, Any], context: ToolContext) -> ToolResult
 
 def _not_yet_connected(arguments: dict[str, Any], context: ToolContext) -> ToolResult:
     return ToolResult(False, "That workflow tool is registered but not connected yet.")
+
+
+def _send_email(arguments: dict[str, Any], context: ToolContext) -> ToolResult:
+    from iris.email_sender import EmailService
+
+    subject = _string_arg(arguments, "subject")
+    body = _string_arg(arguments, "body")
+    to = _string_arg(arguments, "to") or None
+    if context.config is None:
+        return ToolResult(False, "Email is not available in this runtime.")
+    service = EmailService(context.config)
+    if not service.available:
+        return ToolResult(
+            False,
+            "Email isn't configured yet. Set RESEND_API_KEY and IRIS_EMAIL_FROM "
+            "(and IRIS_EMAIL_TO for your own address) to enable sending.",
+        )
+    result = service.send(subject=subject, body=body, to=to)
+    return ToolResult(result.ok, result.detail, {"to": to or context.config.email_to})
 
 
 def _draft_email(arguments: dict[str, Any], context: ToolContext) -> ToolResult:

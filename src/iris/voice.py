@@ -435,6 +435,14 @@ class RealtimeSpeechSession:
         threading.Thread(target=worker, name="iris-meeting-recap", daemon=True).start()
 
     def _meeting_draft_email(self, subject: str, body: str) -> None:
+        from iris.email_sender import EmailService
+
+        service = EmailService(self.config)
+        if service.available:
+            result = service.send(subject=subject, body=body)
+            if result.ok:
+                return
+            print(f"iris> meeting email send failed: {result.detail}")
         self.router.agent_executor.run_tool(
             "draft_email", {"subject": subject, "body": body}
         )
