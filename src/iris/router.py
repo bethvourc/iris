@@ -19,6 +19,7 @@ class RouterResult:
     ok: bool
     message: str
     payload: Any | None = None
+    run_id: str = ""
 
 
 class ActionRouter:
@@ -69,6 +70,7 @@ class ActionRouter:
         text: str,
         *,
         cancellation_token: CancellationToken | None = None,
+        run_id: str | None = None,
     ) -> RouterResult:
         command = text.strip()
         if not command:
@@ -93,12 +95,18 @@ class ActionRouter:
             "yes, go ahead",
         }:
             result = self.agent_executor.approve_pending()
-            return RouterResult(result.ok, result.message, result.payload)
+            return RouterResult(
+                result.ok, result.message, result.payload, result.run_id
+            )
         if normalized_command in {"deny", "denied", "cancel that", "never mind", "no"}:
             result = self.agent_executor.deny_pending()
-            return RouterResult(result.ok, result.message, result.payload)
-        result = self.agent_executor.run(command, cancellation_token=cancellation_token)
-        return RouterResult(result.ok, result.message, result.payload)
+            return RouterResult(
+                result.ok, result.message, result.payload, result.run_id
+            )
+        result = self.agent_executor.run(
+            command, cancellation_token=cancellation_token, run_id=run_id
+        )
+        return RouterResult(result.ok, result.message, result.payload, result.run_id)
 
     def reset_conversation(self) -> None:
         self._previous_chat_response_id = None

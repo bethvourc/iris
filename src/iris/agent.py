@@ -291,8 +291,9 @@ class AgentExecutor:
         user_request: str,
         *,
         cancellation_token: CancellationToken | None = None,
+        run_id: str | None = None,
     ) -> AgentRunResult:
-        run_id = uuid.uuid4().hex
+        run_id = run_id or uuid.uuid4().hex
         run_started_at = time.monotonic()
         observations: list[dict[str, Any]] = []
         token = cancellation_token or CancellationToken()

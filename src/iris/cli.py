@@ -250,6 +250,16 @@ def build_parser() -> argparse.ArgumentParser:
     tasks_worker.add_argument("--poll-interval", type=float, default=2.0)
     tasks_worker.set_defaults(func=cmd_tasks_worker)
 
+    runs = subparsers.add_parser("runs", help="Inspect orchestrated Iris runs")
+    runs_sub = runs.add_subparsers(dest="runs_command", required=True)
+    runs_show = runs_sub.add_parser("show", help="Show a run snapshot")
+    runs_show.add_argument("run_id")
+    runs_show.set_defaults(func=cmd_runs_show)
+    runs_events = runs_sub.add_parser("events", help="Show run lifecycle events")
+    runs_events.add_argument("run_id")
+    runs_events.add_argument("--limit", type=int, default=200)
+    runs_events.set_defaults(func=cmd_runs_events)
+
     evals = subparsers.add_parser("evals", help="Run Iris agent capability evaluations")
     evals_sub = evals.add_subparsers(dest="evals_command", required=True)
     evals_list = evals_sub.add_parser("list", help="List eval cases")
@@ -979,9 +989,15 @@ def cmd_browser_tabs(args: argparse.Namespace) -> int:
 
 
 def cmd_start(args: argparse.Namespace) -> int:
+    from iris.runtime import RunOrchestrator
     from iris.voice import VoiceSession
 
     config, safety_gate, _, _, _, _, router = _runtime(args)
+
+    def router_factory():
+        return router
+
+    orchestrator = RunOrchestrator(config=config, router_factory=router_factory)
     with open_state(config) as db:
         user_profile = load_user_profile(config, db)
     VoiceSession(
@@ -989,6 +1005,7 @@ def cmd_start(args: argparse.Namespace) -> int:
         router=router,
         safety_gate=safety_gate,
         user_profile=user_profile,
+        orchestrator=orchestrator,
     ).run_terminal_loop(wake_mode=args.wake or args.live)
     return 0
 
@@ -1082,6 +1099,32 @@ def cmd_tasks_worker(args: argparse.Namespace) -> int:
     TaskSupervisor(config=config, router_factory=router_factory).run_forever(
         poll_interval=args.poll_interval
     )
+    return 0
+
+
+def cmd_runs_show(args: argparse.Namespace) -> int:
+    from iris.runtime import RunOrchestrator
+
+    config = _config(args)
+    orchestrator = RunOrchestrator(
+        config=config, router_factory=lambda: _runtime(args)[-1]
+    )
+    snapshot = orchestrator.get_run(args.run_id)
+    if snapshot is None:
+        print("Run not found.", file=sys.stderr)
+        return 1
+    _print_json(snapshot.to_dict())
+    return 0
+
+
+def cmd_runs_events(args: argparse.Namespace) -> int:
+    from iris.runtime import RunOrchestrator
+
+    config = _config(args)
+    orchestrator = RunOrchestrator(
+        config=config, router_factory=lambda: _runtime(args)[-1]
+    )
+    _print_json({"events": orchestrator.list_events(args.run_id, limit=args.limit)})
     return 0
 
 
