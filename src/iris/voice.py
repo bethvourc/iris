@@ -234,6 +234,13 @@ class RealtimeSpeechSession:
         self._last_printed_response_text = ""
         self._last_response_started_at = 0.0
         self._suppress_input_until = 0.0
+        self._current_assistant_item_id = ""
+        self._current_audio_started_at = 0.0
+        self._current_audio_received_ms = 0
+        self._current_audio_played_ms = 0
+        self._current_response_text_chunks: list[str] = []
+        self._interrupted_response_pending = False
+        self._interrupted_response_at = 0.0
         self._pending_calls: list[dict[str, Any]] = []
         self._tool_lock = threading.Lock()
         self._meeting_active = False
@@ -299,6 +306,7 @@ class RealtimeSpeechSession:
                                 "prefix_padding_ms": 300,
                                 "silence_duration_ms": 500,
                                 "create_response": False,
+                                "interrupt_response": self._barge_in_enabled(),
                             },
                         },
                         "output": {
@@ -562,15 +570,17 @@ class RealtimeSpeechSession:
             with self._response_state_lock:
                 self._assistant_response_active = True
                 self._last_response_started_at = time.monotonic()
+                self._current_response_text_chunks = []
                 self._suppress_input_until = max(
                     self._suppress_input_until,
                     time.monotonic() + 1.0,
                 )
             return
         if event_type == "input_audio_buffer.speech_started":
-            if self._input_should_be_muted():
-                return
-            print("iris> heard speech...")
+            if self._handle_barge_in_started(output):
+                print("iris> interrupted, listening...")
+            elif not self._input_should_be_muted():
+                print("iris> heard speech...")
             return
         if event_type == "input_audio_buffer.speech_stopped":
             if self._input_should_be_muted():
@@ -584,11 +594,33 @@ class RealtimeSpeechSession:
             if transcript:
                 self._handle_transcript(transcript)
             return
+        if event_type in {
+            "response.audio_transcript.delta",
+            "response.output_audio_transcript.delta",
+            "response.output_text.delta",
+        }:
+            delta = str(event.get("delta") or "")
+            if delta:
+                with self._response_state_lock:
+                    self._current_response_text_chunks.append(delta)
+            return
+        if event_type == "response.output_item.added":
+            item = event.get("item")
+            if isinstance(item, dict):
+                self._note_assistant_item(item)
+            return
         if event_type in {"response.audio.delta", "response.output_audio.delta"}:
             audio = event.get("delta")
             if isinstance(audio, str) and audio:
-                self._note_audio_output()
-                output.write(base64.b64decode(audio))
+                decoded = base64.b64decode(audio)
+                duration_ms = _pcm16_duration_ms(decoded, self.sample_rate)
+                self._note_audio_output(event, duration_ms)
+                try:
+                    output.write(decoded)
+                    self._note_audio_played(duration_ms)
+                except Exception as exc:
+                    if not self._has_interrupted_response_pending():
+                        print(f"iris error> audio playback failed: {exc}")
             return
         if event_type in {
             "response.audio_transcript.done",
@@ -644,6 +676,7 @@ class RealtimeSpeechSession:
             return
         print(f"you> {transcript}")
         lowered = transcript.lower().strip()
+        interrupted_response = self._consume_interrupted_response()
         if self._meeting_active:
             if _is_meeting_stop(lowered):
                 self._stop_meeting()
@@ -679,7 +712,12 @@ class RealtimeSpeechSession:
         if self._handle_control_word(lowered):
             return
 
-        self._begin_model_response()
+        instructions = (
+            self._revision_interrupt_instructions()
+            if interrupted_response and _is_revision_interrupt(transcript)
+            else None
+        )
+        self._begin_model_response(instructions=instructions)
 
     def _handle_control_word(self, lowered: str) -> bool:
         word = lowered.strip(" \t\r\n.,!?")
@@ -738,7 +776,7 @@ class RealtimeSpeechSession:
             return True
         return False
 
-    def _begin_model_response(self) -> None:
+    def _begin_model_response(self, *, instructions: str | None = None) -> None:
         with self._response_state_lock:
             if (
                 self._assistant_response_active
@@ -751,9 +789,78 @@ class RealtimeSpeechSession:
             self._assistant_response_active = True
             self._last_response_started_at = time.monotonic()
             self._suppress_input_until = time.monotonic() + 3.0
+        response: dict[str, Any] = {"output_modalities": ["audio"]}
+        if instructions:
+            response["instructions"] = instructions
+        self._send_json({"type": "response.create", "response": response})
+
+    def _handle_barge_in_started(self, output) -> bool:  # noqa: ANN001
+        if not self._barge_in_enabled():
+            return False
+        now = time.monotonic()
+        with self._response_state_lock:
+            if not self._assistant_response_active:
+                return False
+            if (
+                self._last_response_started_at
+                and now - self._last_response_started_at
+                < self._barge_in_grace_seconds()
+            ):
+                return False
+            partial_text = "".join(self._current_response_text_chunks).strip()
+            if partial_text:
+                self._last_spoken_text = partial_text
+            self._assistant_response_active = False
+            self._pending_response_text = None
+            self._suppress_input_until = 0.0
+            self._interrupted_response_pending = True
+            self._interrupted_response_at = now
+        with self._tool_lock:
+            self._pending_calls.clear()
+        self._stop_output_playback(output)
+        self._truncate_active_assistant_audio()
+        return True
+
+    def _truncate_active_assistant_audio(self) -> None:
+        with self._response_state_lock:
+            item_id = self._current_assistant_item_id
+            audio_end_ms = self._played_audio_ms_locked()
+            received_ms = self._current_audio_received_ms
+        if not item_id or audio_end_ms <= 0:
+            return
         self._send_json(
-            {"type": "response.create", "response": {"output_modalities": ["audio"]}}
+            {
+                "type": "conversation.item.truncate",
+                "item_id": item_id,
+                "content_index": 0,
+                "audio_end_ms": min(audio_end_ms, received_ms),
+            }
         )
+
+    def _stop_output_playback(self, output) -> None:  # noqa: ANN001
+        try:
+            output.abort()
+        except Exception:
+            try:
+                output.stop()
+            except Exception:
+                return
+        try:
+            output.start()
+        except Exception:
+            pass
+
+    def _note_assistant_item(self, item: dict[str, Any]) -> None:
+        if item.get("type") != "message" or item.get("role") != "assistant":
+            return
+        item_id = str(item.get("id") or "")
+        if not item_id:
+            return
+        with self._response_state_lock:
+            self._current_assistant_item_id = item_id
+            self._current_audio_started_at = 0.0
+            self._current_audio_received_ms = 0
+            self._current_audio_played_ms = 0
 
     def _record_function_call(self, item: dict[str, Any]) -> None:
         name = str(item.get("name") or "")
@@ -1033,27 +1140,56 @@ class RealtimeSpeechSession:
             self._assistant_response_active = False
             self._suppress_input_until = max(
                 self._suppress_input_until,
-                time.monotonic() + 3.0,
+                time.monotonic() + self._echo_suppression_seconds(),
             )
             if self._pending_response_text:
                 pending = self._pending_response_text
                 self._pending_response_text = None
+            self._current_assistant_item_id = ""
+            self._current_audio_started_at = 0.0
+            self._current_audio_received_ms = 0
+            self._current_audio_played_ms = 0
+            self._current_response_text_chunks = []
         if pending:
             self._respond_with_text(pending)
 
-    def _note_audio_output(self) -> None:
+    def _note_audio_output(self, event: dict[str, Any], duration_ms: int) -> None:
+        item_id = str(event.get("item_id") or "")
         with self._response_state_lock:
             self._assistant_response_active = True
             self._last_response_started_at = (
                 self._last_response_started_at or time.monotonic()
             )
+            if item_id:
+                self._current_assistant_item_id = item_id
+            if not self._current_audio_started_at:
+                self._current_audio_started_at = time.monotonic()
+            self._current_audio_received_ms += duration_ms
             self._suppress_input_until = max(
                 self._suppress_input_until,
-                time.monotonic() + 2.5,
+                time.monotonic() + self._echo_suppression_seconds(),
             )
+
+    def _note_audio_played(self, duration_ms: int) -> None:
+        with self._response_state_lock:
+            self._current_audio_played_ms = min(
+                self._current_audio_received_ms,
+                self._current_audio_played_ms + duration_ms,
+            )
+
+    def _played_audio_ms_locked(self) -> int:
+        if not self._current_audio_started_at:
+            return self._current_audio_played_ms
+        wall_ms = int((time.monotonic() - self._current_audio_started_at) * 1000.0)
+        return min(
+            self._current_audio_received_ms,
+            max(self._current_audio_played_ms, wall_ms),
+        )
 
     def _input_should_be_muted(self) -> bool:
         with self._response_state_lock:
+            if self._barge_in_enabled():
+                return False
             return (
                 self._assistant_response_active
                 or time.monotonic() <= self._suppress_input_until
@@ -1067,13 +1203,16 @@ class RealtimeSpeechSession:
             return True
         with self._response_state_lock:
             active = self._assistant_response_active
-            last_spoken = self._last_spoken_text
+            partial_text = "".join(self._current_response_text_chunks).strip()
+            last_spoken = partial_text or self._last_spoken_text
             suppress_until = self._suppress_input_until
-        if active:
+        if active and not self._barge_in_enabled():
             return True
         if time.monotonic() <= suppress_until and _similar_text(
             transcript, last_spoken
         ):
+            return True
+        if active and _similar_text(transcript, last_spoken):
             return True
         return False
 
@@ -1090,6 +1229,42 @@ class RealtimeSpeechSession:
                 self._ws.send(json.dumps(payload))
             except Exception:
                 self._stop.set()
+
+    def _has_interrupted_response_pending(self) -> bool:
+        with self._response_state_lock:
+            return self._interrupted_response_pending
+
+    def _consume_interrupted_response(self) -> bool:
+        with self._response_state_lock:
+            pending = self._interrupted_response_pending and (
+                time.monotonic() - self._interrupted_response_at <= 10.0
+            )
+            self._interrupted_response_pending = False
+            self._interrupted_response_at = 0.0
+            return pending
+
+    def _clear_interrupted_response(self) -> None:
+        with self._response_state_lock:
+            self._interrupted_response_pending = False
+            self._interrupted_response_at = 0.0
+
+    def _barge_in_enabled(self) -> bool:
+        return bool(getattr(self.config, "barge_in_enabled", True))
+
+    def _barge_in_grace_seconds(self) -> float:
+        return max(0, int(getattr(self.config, "barge_in_grace_ms", 250))) / 1000.0
+
+    def _echo_suppression_seconds(self) -> float:
+        return max(0, int(getattr(self.config, "echo_suppression_ms", 800))) / 1000.0
+
+    @staticmethod
+    def _revision_interrupt_instructions() -> str:
+        return (
+            "The user interrupted your previous answer to revise the request. "
+            "Treat the latest user utterance as a correction or refinement of the "
+            "previous prompt, not as an unrelated new topic. Stop the prior answer "
+            "and answer the revised request directly."
+        )
 
     def _realtime_tools(self) -> list[dict[str, Any]]:
         schemas = self.router.agent_executor.registry.realtime_schemas()
@@ -1403,6 +1578,13 @@ def _spoken_runtime_result(text: str) -> str:
     return cleaned
 
 
+def _pcm16_duration_ms(audio: bytes, sample_rate: int) -> int:
+    if not audio or sample_rate <= 0:
+        return 0
+    frames = len(audio) // 2
+    return int((frames / sample_rate) * 1000.0)
+
+
 def _select_input_device(sounddevice_module: Any) -> AudioDevice:
     devices = sounddevice_module.query_devices()
     default_device = getattr(sounddevice_module, "default", None)
@@ -1571,6 +1753,36 @@ def _is_interrupt_command(text: str) -> bool:
         "kill switch",
         "never mind",
     }
+
+
+def _is_revision_interrupt(text: str) -> bool:
+    normalized = _normalize_wake_text(text)
+    if not normalized:
+        return False
+    prefixes = (
+        "actually",
+        "wait",
+        "hold on",
+        "i meant",
+        "i mean",
+        "no i meant",
+        "no actually",
+        "sorry",
+        "scratch that",
+        "instead",
+        "make it",
+        "change it",
+        "go back",
+        "could you go back",
+        "can you go back",
+        "i did mean",
+        "i didnt mean",
+        "i did not mean",
+    )
+    return any(
+        normalized == prefix or normalized.startswith(f"{prefix} ")
+        for prefix in prefixes
+    )
 
 
 def _is_status_question(text: str) -> bool:

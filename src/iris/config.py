@@ -94,6 +94,9 @@ class IrisConfig:
     wake_words: tuple[str, ...]
     speak_responses: bool
     max_response_chars: int
+    barge_in_enabled: bool = True
+    barge_in_grace_ms: int = 250
+    echo_suppression_ms: int = 800
 
     @classmethod
     def from_env(cls, project_root: Path | None = None) -> "IrisConfig":
@@ -153,6 +156,9 @@ class IrisConfig:
             wake_words=_csv_env("IRIS_WAKE_WORDS", ("iris", "hey iris")),
             speak_responses=_bool_env("IRIS_SPEAK_RESPONSES", False),
             max_response_chars=_int_env("IRIS_MAX_RESPONSE_CHARS", 220),
+            barge_in_enabled=_bool_env("IRIS_BARGE_IN_ENABLED", True),
+            barge_in_grace_ms=_int_env("IRIS_BARGE_IN_GRACE_MS", 250),
+            echo_suppression_ms=_int_env("IRIS_ECHO_SUPPRESSION_MS", 800),
         )
 
     @property
