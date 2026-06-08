@@ -672,7 +672,14 @@ def _add_pending_relation(
         (source_type, source_id, candidate_json),
     ).fetchone()
     if existing:
+        _ensure_review_item(
+            db,
+            pending_id=str(existing["pending_id"]),
+            reason=reason,
+            candidate_json=candidate_json,
+        )
         return
+    pending_id = uuid.uuid4().hex
     db.execute(
         """
         INSERT INTO memory_pending_relations
@@ -680,7 +687,7 @@ def _add_pending_relation(
         VALUES (?, ?, ?, ?, ?, ?, ?)
         """,
         (
-            uuid.uuid4().hex,
+            pending_id,
             observation_id,
             source_type,
             source_id,
@@ -688,6 +695,40 @@ def _add_pending_relation(
             candidate_json,
             _now(),
         ),
+    )
+    _ensure_review_item(
+        db,
+        pending_id=pending_id,
+        reason=reason,
+        candidate_json=candidate_json,
+    )
+
+
+def _ensure_review_item(
+    db: sqlite3.Connection,
+    *,
+    pending_id: str,
+    reason: str,
+    candidate_json: str,
+) -> None:
+    exists = db.execute(
+        """
+        SELECT review_id
+        FROM memory_review_items
+        WHERE pending_id = ?
+        """,
+        (pending_id,),
+    ).fetchone()
+    if exists:
+        return
+    now = _now()
+    db.execute(
+        """
+        INSERT INTO memory_review_items
+        (review_id, pending_id, status, reason, candidate_json, created_at, updated_at)
+        VALUES (?, ?, 'pending', ?, ?, ?, ?)
+        """,
+        (uuid.uuid4().hex, pending_id, reason, candidate_json, now, now),
     )
 
 

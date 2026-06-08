@@ -9,6 +9,7 @@ from typing import Any
 
 from iris.config import IrisConfig
 from iris.gateway import GatewayService
+from iris.memory import add_memory
 from iris.approvals import create_approval
 from iris.router import RouterResult
 from iris.runtime import RunOrchestrator
@@ -194,6 +195,100 @@ def test_gateway_lists_runs(tmp_path: Path) -> None:
     assert status == 200
     assert len(payload["runs"]) == 1
     assert payload["runs"][0]["status"] == "done"
+
+
+def test_gateway_memory_facts_endpoint_lists_and_pins_facts(tmp_path: Path) -> None:
+    config = _config(tmp_path)
+    service = GatewayService(config=config, router_factory=lambda: _Router())
+    with open_state(config) as db:
+        add_memory(
+            db,
+            category="preferences",
+            content="I prefer using Spotify for music playback.",
+        )
+
+    status, payload = service.handle_get(
+        "/memory/facts",
+        {"query": ["Spotify"], "limit": ["5"]},
+    )
+
+    assert status == 200
+    assert len(payload["facts"]) == 1
+    fact = payload["facts"][0]
+    assert fact["predicate"] == "prefers"
+    assert "Spotify" in fact["object_value"]
+    assert fact["pinned"] is False
+
+    status, pin_payload = service.handle_post(
+        f"/memory/facts/{fact['relation_id']}/pin",
+        {},
+    )
+
+    assert status == 200
+    assert pin_payload == {
+        "ok": True,
+        "relation_id": fact["relation_id"],
+        "pinned": True,
+    }
+
+    status, payload = service.handle_get(
+        "/memory/facts",
+        {"query": ["Spotify"], "limit": ["5"]},
+    )
+
+    assert status == 200
+    assert payload["facts"][0]["pinned"] is True
+
+
+def test_gateway_memory_review_endpoint_lists_and_decides_items(
+    tmp_path: Path,
+) -> None:
+    config = _config(tmp_path)
+    service = GatewayService(config=config, router_factory=lambda: _Router())
+    now = datetime.now(timezone.utc).isoformat()
+    candidate = {
+        "subject": "user",
+        "subject_kind": "person",
+        "predicate": "prefers",
+        "object_value": "compact review summaries",
+        "object_kind": "preference",
+        "confidence": 0.8,
+        "evidence": "User asked for compact review summaries.",
+    }
+    with open_state(config) as db:
+        memory_id = add_memory(
+            db,
+            category="preferences",
+            content="I prefer concise summaries.",
+        )
+        db.execute(
+            """
+            INSERT INTO memory_pending_relations
+            (pending_id, observation_id, source_type, source_id, reason, candidate_json, created_at)
+            VALUES ('pending-1', NULL, 'memory', ?, 'ambiguous', ?, ?)
+            """,
+            (memory_id, json.dumps(candidate), now),
+        )
+        db.commit()
+
+    status, payload = service.handle_get(
+        "/memory/reviews",
+        {"status": ["pending"], "limit": ["10"]},
+    )
+
+    assert status == 200
+    assert len(payload["items"]) == 1
+    review_id = payload["items"][0]["review_id"]
+
+    status, decision = service.handle_post(
+        f"/memory/reviews/{review_id}/approve",
+        {"notes": "confirmed in browser"},
+    )
+
+    assert status == 200
+    assert decision["ok"] is True
+    assert decision["decision"] == "approve"
+    assert decision["relation_id"]
 
 
 class _Router:

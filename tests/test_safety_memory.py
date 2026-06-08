@@ -9,6 +9,7 @@ from iris.memory import add_memory
 from iris.memory_graph import related_facts, search_facts
 from iris.memory_lifecycle import maintain_lifecycle, set_memory_pinned
 from iris.memory_llm_extract import parse_rich_extraction
+from iris.memory_review import decide_review_item, list_review_items
 from iris.memory_vectors import semantic_search
 from iris.safety import classify_action
 from iris.state import open_state
@@ -16,6 +17,8 @@ from iris.tools import (
     ToolContext,
     _memory_explain,
     _memory_related,
+    _memory_review_decide,
+    _memory_review_list,
     _memory_search,
     _recall,
     _remember,
@@ -271,6 +274,123 @@ def test_llm_sensitive_candidate_is_pending_not_active(tmp_path: Path) -> None:
     assert saved.ok
     assert pending
     assert not any(item["predicate"] == "has_ssn" for item in results)
+
+
+def test_memory_review_approval_materializes_pending_relation(tmp_path: Path) -> None:
+    config = _config(tmp_path)
+    context = _memory_context(
+        config,
+        openai_client=_FakeOpenAIClient(
+            config,
+            {
+                "relations": [
+                    {
+                        "subject": "user",
+                        "subject_kind": "person",
+                        "predicate": "has_ssn",
+                        "object": "123",
+                        "object_kind": "fact",
+                        "confidence": 0.9,
+                        "sensitive": True,
+                        "ambiguous": False,
+                        "evidence": "my SSN is 123",
+                    }
+                ]
+            },
+        ),
+    )
+    _remember({"content": "Remember my SSN is 123", "category": "facts"}, context)
+
+    with open_state(config) as db:
+        items = list_review_items(db)
+        result = decide_review_item(
+            db,
+            review_id=str(items[0]["review_id"]),
+            decision="approve",
+        )
+        active = search_facts(db, "SSN 123", config=config)
+        decisions = db.execute("SELECT * FROM memory_review_decisions").fetchall()
+
+    assert items
+    assert result.ok
+    assert result.relation_id
+    assert any(item["predicate"] == "has_ssn" for item in active)
+    assert decisions
+
+
+def test_memory_review_rejection_keeps_candidate_inactive(tmp_path: Path) -> None:
+    config = _config(tmp_path)
+    context = _memory_context(
+        config,
+        openai_client=_FakeOpenAIClient(
+            config,
+            {
+                "relations": [
+                    {
+                        "subject": "user",
+                        "subject_kind": "person",
+                        "predicate": "has_private_fact",
+                        "object": "sensitive value",
+                        "object_kind": "fact",
+                        "confidence": 0.9,
+                        "sensitive": True,
+                        "ambiguous": False,
+                        "evidence": "sensitive value",
+                    }
+                ]
+            },
+        ),
+    )
+    _remember({"content": "Remember sensitive value", "category": "facts"}, context)
+
+    with open_state(config) as db:
+        item = list_review_items(db)[0]
+        result = decide_review_item(
+            db,
+            review_id=str(item["review_id"]),
+            decision="reject",
+        )
+        active = search_facts(db, "sensitive value", config=config)
+
+    assert result.ok
+    assert not any(item["predicate"] == "has_private_fact" for item in active)
+
+
+def test_memory_review_tools_list_and_confirm_pending_item(tmp_path: Path) -> None:
+    config = _config(tmp_path)
+    context = _memory_context(
+        config,
+        openai_client=_FakeOpenAIClient(
+            config,
+            {
+                "relations": [
+                    {
+                        "subject": "user",
+                        "subject_kind": "person",
+                        "predicate": "has_private_fact",
+                        "object": "sensitive value",
+                        "object_kind": "fact",
+                        "confidence": 0.9,
+                        "sensitive": True,
+                        "ambiguous": False,
+                        "evidence": "sensitive value",
+                    }
+                ]
+            },
+        ),
+    )
+    _remember({"content": "Remember sensitive value", "category": "facts"}, context)
+
+    listed = _memory_review_list({}, context)
+    review_id = listed.payload["items"][0]["review_id"]
+    decided = _memory_review_decide(
+        {"review_id": review_id, "decision": "approve"},
+        context,
+    )
+
+    assert listed.ok
+    assert decided.ok
+    assert decided.payload["relation_id"]
 
 
 def test_llm_enrichment_failure_does_not_break_remember(

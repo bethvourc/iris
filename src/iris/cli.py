@@ -38,6 +38,7 @@ from iris.memory_graph import (
     search_facts,
 )
 from iris.memory_lifecycle import maintain_lifecycle, set_memory_pinned
+from iris.memory_review import decide_review_item, list_review_items
 from iris.plugins import list_plugins, plugin_health, set_plugin_enabled
 from iris.profile import has_user_profile, load_user_profile, save_user_profile
 from iris.providers import ProviderRegistry
@@ -664,6 +665,25 @@ def build_parser() -> argparse.ArgumentParser:
     memory_unpin = memory_sub.add_parser("unpin", help="Allow a graph memory to decay")
     memory_unpin.add_argument("relation_id")
     memory_unpin.set_defaults(func=cmd_memory_unpin)
+    memory_review = memory_sub.add_parser(
+        "review", help="Review pending memory candidates"
+    )
+    memory_review_sub = memory_review.add_subparsers(
+        dest="memory_review_command", required=True
+    )
+    memory_review_list = memory_review_sub.add_parser(
+        "list", help="List pending memory review items"
+    )
+    memory_review_list.add_argument("--status", default="pending")
+    memory_review_list.add_argument("--limit", type=int, default=50)
+    memory_review_list.set_defaults(func=cmd_memory_review_list)
+    for decision in ("approve", "reject", "supersede"):
+        review_decision = memory_review_sub.add_parser(
+            decision, help=f"{decision.title()} a memory review item"
+        )
+        review_decision.add_argument("review_id")
+        review_decision.add_argument("--notes", default="")
+        review_decision.set_defaults(func=cmd_memory_review_decide, decision=decision)
     memory_edit = memory_sub.add_parser("edit", help="Edit memory")
     memory_edit.add_argument("memory_id")
     memory_edit.add_argument("--content", required=True)
@@ -1984,6 +2004,50 @@ def _cmd_memory_set_pinned(args: argparse.Namespace, *, pinned: bool) -> int:
         )
     _print_json({"ok": ok, "relation_id": args.relation_id, "pinned": pinned})
     return 0 if ok else 1
+
+
+def cmd_memory_review_list(args: argparse.Namespace) -> int:
+    config = _config(args)
+    with open_state(config) as db:
+        items = list_review_items(db, status=args.status, limit=args.limit)
+        record_audit(
+            db,
+            actor="user",
+            tool="memory.review.list",
+            risk=RiskLevel.LOW_RISK,
+            result="ok",
+            input_value={"status": args.status, "limit": args.limit},
+            output_value={"count": len(items)},
+        )
+    _print_json(items)
+    return 0
+
+
+def cmd_memory_review_decide(args: argparse.Namespace) -> int:
+    config = _config(args)
+    with open_state(config) as db:
+        result = decide_review_item(
+            db,
+            review_id=args.review_id,
+            decision=args.decision,
+            actor="user",
+            notes=args.notes,
+        )
+        record_audit(
+            db,
+            actor="user",
+            tool=f"memory.review.{args.decision}",
+            risk=RiskLevel.LOW_RISK,
+            result="ok" if result.ok else "error",
+            input_value={
+                "review_id": args.review_id,
+                "decision": args.decision,
+                "notes": args.notes,
+            },
+            output_value=result.__dict__,
+        )
+    _print_json(result.__dict__)
+    return 0 if result.ok else 1
 
 
 def cmd_memory_edit(args: argparse.Namespace) -> int:

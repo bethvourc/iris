@@ -184,7 +184,13 @@ Background runtime:
 ./iris tasks resume <task_id>
 ```
 
-Gateway API routes other than `/health` require:
+Open the visual memory browser after starting the gateway:
+
+```text
+http://127.0.0.1:8765/memory-browser
+```
+
+Gateway API routes other than `/health` and the static `/memory-browser` shell require:
 
 ```text
 Authorization: Bearer <IRIS_GATEWAY_TOKEN>

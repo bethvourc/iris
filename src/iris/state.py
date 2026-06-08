@@ -149,6 +149,29 @@ CREATE TABLE IF NOT EXISTS memory_pending_relations (
   FOREIGN KEY (observation_id) REFERENCES memory_observations(observation_id) ON DELETE SET NULL
 );
 
+CREATE TABLE IF NOT EXISTS memory_review_items (
+  review_id TEXT PRIMARY KEY,
+  pending_id TEXT,
+  status TEXT NOT NULL,
+  reason TEXT NOT NULL,
+  candidate_json TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  FOREIGN KEY (pending_id) REFERENCES memory_pending_relations(pending_id) ON DELETE SET NULL
+);
+
+CREATE TABLE IF NOT EXISTS memory_review_decisions (
+  decision_id TEXT PRIMARY KEY,
+  review_id TEXT NOT NULL,
+  decision TEXT NOT NULL,
+  actor TEXT NOT NULL,
+  relation_id TEXT,
+  created_at TEXT NOT NULL,
+  notes TEXT NOT NULL DEFAULT '',
+  FOREIGN KEY (review_id) REFERENCES memory_review_items(review_id) ON DELETE CASCADE,
+  FOREIGN KEY (relation_id) REFERENCES memory_relations(relation_id) ON DELETE SET NULL
+);
+
 CREATE TABLE IF NOT EXISTS memory_lifecycle (
   relation_id TEXT PRIMARY KEY,
   last_accessed_at TEXT,
@@ -170,6 +193,8 @@ CREATE INDEX IF NOT EXISTS idx_memory_relations_predicate ON memory_relations(pr
 CREATE INDEX IF NOT EXISTS idx_memory_relations_active ON memory_relations(active);
 CREATE INDEX IF NOT EXISTS idx_memory_evidence_relation ON memory_evidence(relation_id);
 CREATE INDEX IF NOT EXISTS idx_memory_pending_relations_source ON memory_pending_relations(source_type, source_id);
+CREATE INDEX IF NOT EXISTS idx_memory_review_items_status ON memory_review_items(status);
+CREATE INDEX IF NOT EXISTS idx_memory_review_items_pending ON memory_review_items(pending_id);
 CREATE INDEX IF NOT EXISTS idx_memory_lifecycle_review ON memory_lifecycle(review_status);
 CREATE INDEX IF NOT EXISTS idx_memory_lifecycle_decay ON memory_lifecycle(decay_score);
 

@@ -14,6 +14,15 @@ def test_gateway_health_does_not_require_token() -> None:
     assert service.authorize("/health", None) is True
 
 
+def test_gateway_memory_browser_does_not_require_token() -> None:
+    service = GatewayService(
+        config=SimpleNamespace(gateway_token=None, agent_name="Iris"),
+        router_factory=lambda: None,
+    )
+
+    assert service.authorize("/memory-browser", None) is True
+
+
 def test_gateway_rejects_protected_routes_without_configured_token() -> None:
     service = GatewayService(
         config=SimpleNamespace(gateway_token=None, agent_name="Iris"),

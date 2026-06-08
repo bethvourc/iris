@@ -31,6 +31,7 @@ from iris.memory_graph import (
     search_facts,
 )
 from iris.memory_llm_extract import enrich_memory_with_llm
+from iris.memory_review import decide_review_item, list_review_items
 from iris.mac_controller import ActionResult, MacController
 from iris.perception import LiveScreenFrame, PerceptionService, ScreenAwarenessService
 from iris.polling import poll_until
@@ -136,6 +137,9 @@ CANONICAL_REALTIME_TOOLS = {
     "memory_search",
     "memory_related",
     "memory_explain",
+    "memory_review_list",
+    "memory_review_decide",
+    "memory_confirm",
     "knowledge_search",
     "run_shell",
     "web_research",
@@ -863,6 +867,45 @@ def _default_tools() -> list[ToolSpec]:
             ),
             risk=RiskLevel.LOW_RISK,
             execute=_memory_explain,
+        ),
+        ToolSpec(
+            name="memory_review_list",
+            description="List pending memory candidates that need user review before becoming active memory.",
+            parameters=_object_schema(
+                {
+                    "status": {"type": "string"},
+                    "limit": {"type": "integer"},
+                }
+            ),
+            risk=RiskLevel.LOW_RISK,
+            execute=_memory_review_list,
+        ),
+        ToolSpec(
+            name="memory_review_decide",
+            description="Approve, reject, or supersede a pending memory review item.",
+            parameters=_object_schema(
+                {
+                    "review_id": {"type": "string"},
+                    "decision": {"type": "string"},
+                    "notes": {"type": "string"},
+                },
+                required=["review_id", "decision"],
+            ),
+            risk=RiskLevel.LOW_RISK,
+            execute=_memory_review_decide,
+        ),
+        ToolSpec(
+            name="memory_confirm",
+            description="Confirm a pending memory review item so it becomes active memory.",
+            parameters=_object_schema(
+                {
+                    "review_id": {"type": "string"},
+                    "notes": {"type": "string"},
+                },
+                required=["review_id"],
+            ),
+            risk=RiskLevel.LOW_RISK,
+            execute=_memory_confirm,
         ),
         ToolSpec(
             name="machine_context",
@@ -3352,6 +3395,54 @@ def _memory_explain(arguments: dict[str, Any], context: ToolContext) -> ToolResu
         f"I found {len(evidence)} supporting evidence item(s)."
     )
     return ToolResult(True, message, result)
+
+
+def _memory_review_list(arguments: dict[str, Any], context: ToolContext) -> ToolResult:
+    if context.config is None:
+        return ToolResult(False, "Memory is not connected in this runtime.")
+    status = _string_arg(arguments, "status", "pending") or "pending"
+    limit = max(1, min(_int_arg(arguments, "limit", 20), 100))
+    with open_state(context.config) as db:
+        items = list_review_items(db, status=status, limit=limit)
+    if not items:
+        return ToolResult(True, "There are no memory review items.", {"items": []})
+    lines = [
+        f"- {item['review_id']}: {item['reason']} — "
+        f"{item.get('candidate', {}).get('predicate')} "
+        f"{item.get('candidate', {}).get('object_value')}"
+        for item in items
+    ]
+    return ToolResult(
+        True,
+        "Pending memory review items:\n" + "\n".join(lines),
+        {"items": items},
+    )
+
+
+def _memory_review_decide(
+    arguments: dict[str, Any], context: ToolContext
+) -> ToolResult:
+    review_id = _string_arg(arguments, "review_id")
+    decision = _string_arg(arguments, "decision")
+    if not review_id or not decision:
+        return ToolResult(False, "I need a review_id and decision.")
+    if context.config is None:
+        return ToolResult(False, "Memory is not connected in this runtime.")
+    with open_state(context.config) as db:
+        result = decide_review_item(
+            db,
+            review_id=review_id,
+            decision=decision,
+            actor="assistant",
+            notes=_string_arg(arguments, "notes"),
+        )
+    return ToolResult(result.ok, result.message, result.__dict__)
+
+
+def _memory_confirm(arguments: dict[str, Any], context: ToolContext) -> ToolResult:
+    copied = dict(arguments)
+    copied["decision"] = "approve"
+    return _memory_review_decide(copied, context)
 
 
 def _file_list_folder(arguments: dict[str, Any], context: ToolContext) -> ToolResult:
