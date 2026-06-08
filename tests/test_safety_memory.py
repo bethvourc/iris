@@ -4,9 +4,10 @@ from pathlib import Path
 
 from iris.actions import LocalAction, RiskLevel
 from iris.config import IrisConfig
-from iris.knowledge import upsert_file_page
+from iris.knowledge import graph_page, rebuild_links, search_pages, upsert_file_page
 from iris.memory import add_memory
 from iris.memory_graph import related_facts, search_facts
+from iris.memory_llm_extract import parse_rich_extraction
 from iris.memory_vectors import semantic_search
 from iris.safety import classify_action
 from iris.state import open_state
@@ -197,16 +198,224 @@ def test_knowledge_page_ingest_creates_embedding(tmp_path: Path) -> None:
     assert rows
 
 
-def _memory_context(config: IrisConfig) -> ToolContext:
+def test_llm_rich_extraction_adds_active_graph_relation(tmp_path: Path) -> None:
+    config = _config(tmp_path)
+    context = _memory_context(
+        config,
+        openai_client=_FakeOpenAIClient(
+            config,
+            {
+                "relations": [
+                    {
+                        "subject": "user",
+                        "subject_kind": "person",
+                        "predicate": "works_on",
+                        "object": "Iris",
+                        "object_kind": "project",
+                        "confidence": 0.88,
+                        "sensitive": False,
+                        "ambiguous": False,
+                        "evidence": "working on Iris",
+                    }
+                ]
+            },
+        ),
+    )
+
+    saved = _remember({"content": "I am working on Iris", "category": "facts"}, context)
+
+    with open_state(config) as db:
+        results = search_facts(db, "works Iris", config=config)
+
+    assert saved.ok
+    assert any(
+        item["predicate"] == "works_on" and item["object_value"] == "Iris"
+        for item in results
+    )
+
+
+def test_llm_sensitive_candidate_is_pending_not_active(tmp_path: Path) -> None:
+    config = _config(tmp_path)
+    context = _memory_context(
+        config,
+        openai_client=_FakeOpenAIClient(
+            config,
+            {
+                "relations": [
+                    {
+                        "subject": "user",
+                        "subject_kind": "person",
+                        "predicate": "has_ssn",
+                        "object": "123",
+                        "object_kind": "fact",
+                        "confidence": 0.9,
+                        "sensitive": True,
+                        "ambiguous": False,
+                        "evidence": "my SSN is 123",
+                    }
+                ]
+            },
+        ),
+    )
+
+    saved = _remember(
+        {"content": "Remember my SSN is 123", "category": "facts"},
+        context,
+    )
+
+    with open_state(config) as db:
+        pending = db.execute("SELECT * FROM memory_pending_relations").fetchall()
+        results = search_facts(db, "SSN 123", config=config)
+
+    assert saved.ok
+    assert pending
+    assert not any(item["predicate"] == "has_ssn" for item in results)
+
+
+def test_llm_enrichment_failure_does_not_break_remember(
+    tmp_path: Path, monkeypatch
+) -> None:
+    import iris.memory_llm_extract as llm_extract
+
+    config = _config(tmp_path)
+
+    def _raise(*_args, **_kwargs) -> None:
+        raise RuntimeError("graph write failed")
+
+    monkeypatch.setattr(llm_extract, "record_extracted_memory_relations", _raise)
+    context = _memory_context(
+        config,
+        openai_client=_FakeOpenAIClient(
+            config,
+            {
+                "relations": [
+                    {
+                        "subject": "user",
+                        "subject_kind": "person",
+                        "predicate": "works_on",
+                        "object": "Iris",
+                        "object_kind": "project",
+                        "confidence": 0.9,
+                        "sensitive": False,
+                        "ambiguous": False,
+                        "evidence": "working on Iris",
+                    }
+                ]
+            },
+        ),
+    )
+
+    saved = _remember({"content": "I am working on Iris", "category": "facts"}, context)
+
+    with open_state(config) as db:
+        rows = db.execute("SELECT * FROM memories").fetchall()
+
+    assert saved.ok
+    assert rows
+
+
+def test_parse_rich_extraction_rejects_low_confidence_and_malformed() -> None:
+    malformed = parse_rich_extraction("not json", source_text="I prefer Spotify")
+    low_confidence = parse_rich_extraction(
+        '{"relations":[{"subject":"user","predicate":"prefers","object":"Spotify","confidence":0.2}]}',
+        source_text="I prefer Spotify",
+    )
+
+    assert malformed.rejected_count == 1
+    assert not low_confidence.active_relations
+    assert not low_confidence.pending_candidates
+    assert low_confidence.rejected_count == 1
+
+
+def test_knowledge_page_graphs_chunks_and_relations(tmp_path: Path) -> None:
+    config = _config(tmp_path)
+    note = tmp_path / "iris.md"
+    note.write_text(
+        "# Iris\nIris uses SQLite. Iris supports local memory.", encoding="utf-8"
+    )
+
+    with open_state(config) as db:
+        page_id = upsert_file_page(db, note, note.read_text(encoding="utf-8"))
+        result = graph_page(db, page_id)
+        chunks = db.execute("SELECT * FROM knowledge_chunks").fetchall()
+        related = related_facts(db, "Iris")
+
+    assert result.pages == 1
+    assert result.chunks == 1
+    assert result.relations >= 2
+    assert chunks
+    assert any(item["predicate"] == "uses" for item in related)
+
+
+def test_knowledge_regraph_deactivates_stale_chunk_relations(tmp_path: Path) -> None:
+    config = _config(tmp_path)
+    note = tmp_path / "iris.md"
+    note.write_text("# Iris\nIris uses SQLite.", encoding="utf-8")
+
+    with open_state(config) as db:
+        page_id = upsert_file_page(db, note, note.read_text(encoding="utf-8"))
+        graph_page(db, page_id)
+        note.write_text("# Iris\nIris uses Postgres.", encoding="utf-8")
+        upsert_file_page(db, note, note.read_text(encoding="utf-8"))
+        graph_page(db, page_id)
+        active = related_facts(db, "Iris")
+        inactive = related_facts(db, "Iris", include_inactive=True)
+
+    assert any(item["object_value"] == "Postgres" for item in active)
+    assert not any(item["object_value"] == "SQLite" for item in active)
+    assert any(
+        item["object_value"] == "SQLite" and item["active"] is False
+        for item in inactive
+    )
+
+
+def test_knowledge_search_includes_graphed_page_facts(tmp_path: Path) -> None:
+    config = _config(tmp_path)
+    note = tmp_path / "iris.md"
+    note.write_text("# Iris\nIris uses SQLite.", encoding="utf-8")
+
+    with open_state(config) as db:
+        page_id = upsert_file_page(db, note, note.read_text(encoding="utf-8"))
+        rebuild_links(db)
+        graph_page(db, page_id)
+        pages = search_pages(db, "Iris", limit=5)
+        graph = search_facts(db, "SQLite", config=config)
+
+    assert pages
+    assert any(item["object_value"] == "SQLite" for item in graph)
+
+
+def _memory_context(
+    config: IrisConfig, *, openai_client: object | None = None
+) -> ToolContext:
     return ToolContext(
         controller=object(),  # type: ignore[arg-type]
         perception=object(),  # type: ignore[arg-type]
         safety_gate=object(),  # type: ignore[arg-type]
-        openai_client=object(),  # type: ignore[arg-type]
+        openai_client=openai_client or object(),  # type: ignore[arg-type]
         google_vision=object(),  # type: ignore[arg-type]
         session_state={},
         config=config,
     )
+
+
+class _FakeOpenAIClient:
+    def __init__(self, config: IrisConfig, payload: dict[str, object]) -> None:
+        self.config = config
+        self.available = True
+        self.payload = payload
+        self.responses = self
+
+    def _get_client(self) -> "_FakeOpenAIClient":
+        return self
+
+    def create(self, **_kwargs: object) -> str:
+        import json
+
+        return json.dumps(self.payload)
+
+    def output_text(self, response: object) -> str:
+        return str(response)
 
 
 def _config(tmp_path: Path) -> IrisConfig:

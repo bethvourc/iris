@@ -13,7 +13,7 @@ IRIS_MCP_CONFIG):
       "mcpServers": {
         "filesystem": {
           "command": "npx",
-          "args": ["-y", "@modelcontextprotocol/server-filesystem", "/Users/me/Documents"],
+          "args": ["-y", "@modelcontextprotocol/server-filesystem", "~/Documents"],
           "env": {},
           "disabled": false,
           "risk": "low_risk"
@@ -76,8 +76,11 @@ def load_mcp_config(config: IrisConfig | None) -> list[MCPServerConfig]:
         command = str(entry.get("command") or "").strip()
         if not command:
             continue
-        args = [str(item) for item in entry.get("args", []) if str(item)]
-        env = {str(key): str(value) for key, value in (entry.get("env") or {}).items()}
+        args = [_expand(str(item)) for item in entry.get("args", []) if str(item)]
+        env = {
+            str(key): _expand(str(value))
+            for key, value in (entry.get("env") or {}).items()
+        }
         risk = _parse_risk(entry.get("risk"))
         allow = tuple(
             str(item)
@@ -105,6 +108,11 @@ def _config_path(config: IrisConfig | None) -> Path | None:
     if config is not None:
         return config.project_root / "mcp.json"
     return None
+
+
+def _expand(value: str) -> str:
+    """Expand ~ and $VARS so configs stay portable across machines."""
+    return os.path.expanduser(os.path.expandvars(value))
 
 
 def _parse_risk(value: Any) -> RiskLevel:

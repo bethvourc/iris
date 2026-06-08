@@ -138,12 +138,24 @@ CREATE TABLE IF NOT EXISTS memory_evidence (
   FOREIGN KEY (observation_id) REFERENCES memory_observations(observation_id) ON DELETE SET NULL
 );
 
+CREATE TABLE IF NOT EXISTS memory_pending_relations (
+  pending_id TEXT PRIMARY KEY,
+  observation_id TEXT,
+  source_type TEXT NOT NULL,
+  source_id TEXT NOT NULL,
+  reason TEXT NOT NULL,
+  candidate_json TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  FOREIGN KEY (observation_id) REFERENCES memory_observations(observation_id) ON DELETE SET NULL
+);
+
 CREATE INDEX IF NOT EXISTS idx_memory_entities_kind ON memory_entities(kind);
 CREATE INDEX IF NOT EXISTS idx_memory_observations_category ON memory_observations(category);
 CREATE INDEX IF NOT EXISTS idx_memory_relations_subject ON memory_relations(subject_entity_id);
 CREATE INDEX IF NOT EXISTS idx_memory_relations_predicate ON memory_relations(predicate);
 CREATE INDEX IF NOT EXISTS idx_memory_relations_active ON memory_relations(active);
 CREATE INDEX IF NOT EXISTS idx_memory_evidence_relation ON memory_evidence(relation_id);
+CREATE INDEX IF NOT EXISTS idx_memory_pending_relations_source ON memory_pending_relations(source_type, source_id);
 
 CREATE TABLE IF NOT EXISTS memory_embeddings (
   embedding_id TEXT PRIMARY KEY,
@@ -317,6 +329,20 @@ CREATE TABLE IF NOT EXISTS knowledge_pages (
   FOREIGN KEY (source_id) REFERENCES knowledge_sources(source_id) ON DELETE SET NULL
 );
 
+CREATE TABLE IF NOT EXISTS knowledge_chunks (
+  chunk_id TEXT PRIMARY KEY,
+  page_id TEXT NOT NULL,
+  sequence INTEGER NOT NULL,
+  content_hash TEXT NOT NULL,
+  content TEXT NOT NULL,
+  summary TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  metadata_json TEXT NOT NULL DEFAULT '{}',
+  UNIQUE (page_id, sequence),
+  FOREIGN KEY (page_id) REFERENCES knowledge_pages(page_id) ON DELETE CASCADE
+);
+
 CREATE TABLE IF NOT EXISTS knowledge_links (
   from_page_id TEXT NOT NULL,
   to_page_id TEXT NOT NULL,
@@ -326,6 +352,9 @@ CREATE TABLE IF NOT EXISTS knowledge_links (
   FOREIGN KEY (from_page_id) REFERENCES knowledge_pages(page_id) ON DELETE CASCADE,
   FOREIGN KEY (to_page_id) REFERENCES knowledge_pages(page_id) ON DELETE CASCADE
 );
+
+CREATE INDEX IF NOT EXISTS idx_knowledge_chunks_page ON knowledge_chunks(page_id);
+CREATE INDEX IF NOT EXISTS idx_knowledge_chunks_hash ON knowledge_chunks(content_hash);
 """
 
 

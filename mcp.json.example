@@ -2,7 +2,7 @@
   "mcpServers": {
     "filesystem": {
       "command": "npx",
-      "args": ["-y", "@modelcontextprotocol/server-filesystem", "/Users/clintonimaro/Documents"],
+      "args": ["-y", "@modelcontextprotocol/server-filesystem", "~/Documents"],
       "env": {},
       "disabled": false,
       "risk": "low_risk"
@@ -25,7 +25,7 @@
     "google-calendar": {
       "command": "npx",
       "args": ["-y", "@cocal/google-calendar-mcp"],
-      "env": { "GOOGLE_OAUTH_CREDENTIALS": "/Users/clintonimaro/.config/iris/gcal-credentials.json" },
+      "env": { "GOOGLE_OAUTH_CREDENTIALS": "${HOME}/.config/iris/gcal-credentials.json" },
       "disabled": true,
       "risk": "sensitive",
       "tools": ["list-events", "search-events", "create-event"]
@@ -33,7 +33,7 @@
     "slack": {
       "command": "npx",
       "args": ["-y", "@modelcontextprotocol/server-slack"],
-      "env": { "SLACK_BOT_TOKEN": "", "SLACK_TEAM_ID": "" },
+      "env": { "SLACK_BOT_TOKEN": "${SLACK_BOT_TOKEN}", "SLACK_TEAM_ID": "${SLACK_TEAM_ID}" },
       "disabled": true,
       "risk": "sensitive",
       "tools": ["slack_list_channels", "slack_post_message", "slack_get_channel_history"]
@@ -41,7 +41,7 @@
     "notion": {
       "command": "npx",
       "args": ["-y", "@notionhq/notion-mcp-server"],
-      "env": { "NOTION_TOKEN": "" },
+      "env": { "NOTION_TOKEN": "${NOTION_TOKEN}" },
       "disabled": true,
       "risk": "sensitive"
     }

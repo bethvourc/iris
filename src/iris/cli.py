@@ -23,6 +23,8 @@ from iris.connectors import (
 from iris.knowledge import (
     format_search_results,
     get_page,
+    graph_all_pages,
+    graph_page,
     ingest_folder,
     list_pages,
     search_pages,
@@ -679,6 +681,24 @@ def build_parser() -> argparse.ArgumentParser:
     knowledge_search.add_argument("--limit", type=int, default=10)
     knowledge_search.add_argument("--json", action="store_true")
     knowledge_search.set_defaults(func=cmd_knowledge_search)
+    knowledge_graph_page = knowledge_sub.add_parser(
+        "graph-page", help="Extract graph relations from a local knowledge page"
+    )
+    knowledge_graph_page.add_argument("page_id")
+    knowledge_graph_page.set_defaults(func=cmd_knowledge_graph_page)
+    knowledge_graph_all = knowledge_sub.add_parser(
+        "graph-all", help="Extract graph relations from local knowledge pages"
+    )
+    knowledge_graph_all.add_argument("--limit", type=int, default=50)
+    knowledge_graph_all.set_defaults(func=cmd_knowledge_graph_all)
+    knowledge_related = knowledge_sub.add_parser(
+        "related", help="Show graph memory related to a knowledge entity"
+    )
+    knowledge_related.add_argument("entity")
+    knowledge_related.add_argument("--limit", type=int, default=10)
+    knowledge_related.add_argument("--include-inactive", action="store_true")
+    knowledge_related.add_argument("--json", action="store_true")
+    knowledge_related.set_defaults(func=cmd_knowledge_related)
     knowledge_list = knowledge_sub.add_parser("list", help="List local knowledge pages")
     knowledge_list.add_argument("--limit", type=int, default=50)
     knowledge_list.set_defaults(func=cmd_knowledge_list)
@@ -1999,6 +2019,7 @@ def cmd_knowledge_search(args: argparse.Namespace) -> int:
     config = _config(args)
     with open_state(config) as db:
         results = search_pages(db, args.query, limit=args.limit)
+        graph_results = search_facts(db, args.query, limit=5, config=config)
         record_audit(
             db,
             actor="user",
@@ -2006,12 +2027,77 @@ def cmd_knowledge_search(args: argparse.Namespace) -> int:
             risk=RiskLevel.LOW_RISK,
             result="ok",
             input_value={"query": args.query, "limit": args.limit},
+            output_value={"count": len(results), "graph_count": len(graph_results)},
+        )
+    if args.json:
+        _print_json({"results": results, "graph_results": graph_results})
+    else:
+        print(format_search_results(results))
+        if graph_results:
+            print(format_fact_results(graph_results))
+    return 0
+
+
+def cmd_knowledge_graph_page(args: argparse.Namespace) -> int:
+    config = _config(args)
+    with open_state(config) as db:
+        result = graph_page(db, args.page_id)
+        record_audit(
+            db,
+            actor="user",
+            tool="knowledge.graph_page",
+            risk=RiskLevel.LOW_RISK,
+            result="ok",
+            input_value={"page_id": args.page_id},
+            output_value=result.__dict__,
+        )
+    _print_json(result.__dict__)
+    return 0
+
+
+def cmd_knowledge_graph_all(args: argparse.Namespace) -> int:
+    config = _config(args)
+    with open_state(config) as db:
+        result = graph_all_pages(db, limit=args.limit)
+        record_audit(
+            db,
+            actor="user",
+            tool="knowledge.graph_all",
+            risk=RiskLevel.LOW_RISK,
+            result="ok",
+            input_value={"limit": args.limit},
+            output_value=result.__dict__,
+        )
+    _print_json(result.__dict__)
+    return 0
+
+
+def cmd_knowledge_related(args: argparse.Namespace) -> int:
+    config = _config(args)
+    with open_state(config) as db:
+        results = related_facts(
+            db,
+            args.entity,
+            limit=args.limit,
+            include_inactive=args.include_inactive,
+        )
+        record_audit(
+            db,
+            actor="user",
+            tool="knowledge.related",
+            risk=RiskLevel.LOW_RISK,
+            result="ok",
+            input_value={
+                "entity": args.entity,
+                "limit": args.limit,
+                "include_inactive": args.include_inactive,
+            },
             output_value={"count": len(results)},
         )
     if args.json:
         _print_json(results)
     else:
-        print(format_search_results(results))
+        print(format_fact_results(results))
     return 0
 
 

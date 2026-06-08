@@ -22,6 +22,7 @@ from iris.integrations.google_vision import GoogleVisionClient
 from iris.integrations.openai_client import OpenAIResponsesClient
 from iris.memory import add_memory, list_memories
 from iris.memory_graph import memory_context_packet
+from iris.memory_llm_extract import enrich_memory_with_llm
 from iris.mac_controller import MacController
 from iris.perception import PerceptionService, ScreenAwarenessService
 from iris.recipes import ActionRecipeRegistry
@@ -626,7 +627,7 @@ class AgentExecutor:
                 text = str(fact).strip()
                 if not text or text.lower() in existing:
                     continue
-                add_memory(
+                memory_id = add_memory(
                     db,
                     category="session_summary",
                     content=text,
@@ -634,6 +635,16 @@ class AgentExecutor:
                     confidence=0.6,
                     user_confirmed=False,
                     sensitive=False,
+                )
+                enrich_memory_with_llm(
+                    db,
+                    memory_id=memory_id,
+                    category="session_summary",
+                    content=text,
+                    provenance="session_summary",
+                    confidence=0.6,
+                    openai_client=self.openai_client,
+                    config=self.config,
                 )
                 existing.add(text.lower())
                 saved += 1

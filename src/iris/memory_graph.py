@@ -86,6 +86,119 @@ def record_memory_fact(
     return relation_ids
 
 
+def record_extracted_memory_relations(
+    db: sqlite3.Connection,
+    *,
+    memory_id: str,
+    category: str,
+    content: str,
+    provenance: str,
+    confidence: float,
+    relations: list[ExtractedRelation],
+    pending: list[dict[str, Any]] | None = None,
+    config: IrisConfig | None = None,
+) -> list[str]:
+    return record_extracted_relations(
+        db,
+        source_type="memory",
+        source_table="memories",
+        source_id=memory_id,
+        category=category,
+        content=content,
+        provenance=provenance,
+        confidence=confidence,
+        relations=relations,
+        pending=pending,
+        config=config,
+    )
+
+
+def record_extracted_relations(
+    db: sqlite3.Connection,
+    *,
+    source_type: str,
+    source_table: str,
+    source_id: str,
+    category: str,
+    content: str,
+    provenance: str,
+    confidence: float,
+    relations: list[ExtractedRelation],
+    pending: list[dict[str, Any]] | None = None,
+    config: IrisConfig | None = None,
+) -> list[str]:
+    observation_id = _ensure_observation(
+        db,
+        content=content,
+        source_type=source_type,
+        source_id=source_id,
+        category=category,
+        confidence=confidence,
+        metadata={"provenance": provenance},
+    )
+    relation_ids = [
+        _upsert_relation(
+            db,
+            relation=relation,
+            observation_id=observation_id,
+            source_table=source_table,
+            source_id=source_id,
+            quote=str(relation.metadata.get("evidence") or content),
+            provenance=provenance,
+            config=config,
+        )
+        for relation in relations
+    ]
+    for item in pending or []:
+        _add_pending_relation(
+            db,
+            observation_id=observation_id,
+            source_type=source_type,
+            source_id=source_id,
+            reason=str(item.get("reason") or "pending_confirmation"),
+            candidate=item,
+        )
+    db.commit()
+    return relation_ids
+
+
+def deactivate_relations_for_source(
+    db: sqlite3.Connection,
+    *,
+    source_table: str,
+    source_id: str,
+    reason: str,
+) -> int:
+    now = _now()
+    rows = db.execute(
+        """
+        SELECT DISTINCT r.relation_id, r.metadata_json
+        FROM memory_relations r
+        JOIN memory_evidence e ON e.relation_id = r.relation_id
+        WHERE e.source_table = ? AND e.source_id = ? AND r.active = 1
+        """,
+        (source_table, source_id),
+    ).fetchall()
+    for row in rows:
+        metadata = _loads(row["metadata_json"])
+        metadata["deactivated_reason"] = reason
+        db.execute(
+            """
+            UPDATE memory_relations
+            SET active = 0, updated_at = ?, metadata_json = ?
+            WHERE relation_id = ?
+            """,
+            (
+                now,
+                json.dumps(metadata, sort_keys=True),
+                row["relation_id"],
+            ),
+        )
+    if rows:
+        db.commit()
+    return len(rows)
+
+
 def backfill_memories(db: sqlite3.Connection) -> int:
     count = 0
     rows = db.execute("SELECT * FROM memories ORDER BY created_at ASC").fetchall()
@@ -498,6 +611,44 @@ def _add_evidence(
             source_table,
             source_id,
             quote,
+            _now(),
+        ),
+    )
+
+
+def _add_pending_relation(
+    db: sqlite3.Connection,
+    *,
+    observation_id: str,
+    source_type: str,
+    source_id: str,
+    reason: str,
+    candidate: dict[str, Any],
+) -> None:
+    candidate_json = json.dumps(candidate, sort_keys=True, default=str)
+    existing = db.execute(
+        """
+        SELECT pending_id
+        FROM memory_pending_relations
+        WHERE source_type = ? AND source_id = ? AND candidate_json = ?
+        """,
+        (source_type, source_id, candidate_json),
+    ).fetchone()
+    if existing:
+        return
+    db.execute(
+        """
+        INSERT INTO memory_pending_relations
+        (pending_id, observation_id, source_type, source_id, reason, candidate_json, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            uuid.uuid4().hex,
+            observation_id,
+            source_type,
+            source_id,
+            reason,
+            candidate_json,
             _now(),
         ),
     )

@@ -30,6 +30,7 @@ from iris.memory_graph import (
     related_facts,
     search_facts,
 )
+from iris.memory_llm_extract import enrich_memory_with_llm
 from iris.mac_controller import ActionResult, MacController
 from iris.perception import LiveScreenFrame, PerceptionService, ScreenAwarenessService
 from iris.polling import poll_until
@@ -3171,6 +3172,7 @@ def _knowledge_search(arguments: dict[str, Any], context: ToolContext) -> ToolRe
     limit = max(1, min(_int_arg(arguments, "limit", 8), 20))
     with open_state(context.config) as db:
         results = search_pages(db, query, limit=limit)
+        graph_results = search_facts(db, query, limit=5, config=context.config)
     if context.session_state is not None:
         context.session_state["last_knowledge_query"] = query
         context.session_state["last_knowledge_results"] = [
@@ -3182,9 +3184,13 @@ def _knowledge_search(arguments: dict[str, Any], context: ToolContext) -> ToolRe
             }
             for item in results
         ]
+        context.session_state["last_knowledge_graph_results"] = graph_results
+    message = format_search_results(results)
+    if graph_results:
+        message = message + "\n" + format_fact_results(graph_results)
     return ToolResult(
         True,
-        format_search_results(results),
+        message,
         {
             "query": query,
             "results": [
@@ -3198,6 +3204,7 @@ def _knowledge_search(arguments: dict[str, Any], context: ToolContext) -> ToolRe
                 }
                 for item in results
             ],
+            "graph_results": graph_results,
         },
     )
 
@@ -3228,6 +3235,16 @@ def _remember(arguments: dict[str, Any], context: ToolContext) -> ToolResult:
             confidence=0.9,
             user_confirmed=True,
             sensitive=False,
+        )
+        enrich_memory_with_llm(
+            db,
+            memory_id=memory_id,
+            category=category,
+            content=content,
+            provenance="conversation",
+            confidence=0.9,
+            openai_client=context.openai_client,
+            config=context.config,
         )
     return ToolResult(
         True,
