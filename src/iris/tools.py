@@ -3247,6 +3247,7 @@ def _recall(arguments: dict[str, Any], context: ToolContext) -> ToolResult:
             db,
             query=category or "",
             limit=min(limit, 20),
+            config=context.config,
         )
         if graph_items:
             lines = [f"- {item['content']}" for item in graph_items[:limit]]
@@ -3287,6 +3288,7 @@ def _memory_search(arguments: dict[str, Any], context: ToolContext) -> ToolResul
             query,
             limit=limit,
             include_inactive=_bool_arg(arguments, "include_inactive"),
+            config=context.config,
         )
     return ToolResult(
         True,

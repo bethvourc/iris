@@ -102,6 +102,9 @@ class IrisConfig:
     turn_max_wait_ms: int = 2500
     turn_min_words_for_immediate_response: int = 4
     live_vad_silence_ms: int = 900
+    embedding_model: str = "text-embedding-3-small"
+    memory_embeddings_enabled: bool = True
+    memory_embedding_provider: str = "local"
 
     @classmethod
     def from_env(cls, project_root: Path | None = None) -> "IrisConfig":
@@ -171,6 +174,13 @@ class IrisConfig:
                 "IRIS_TURN_MIN_WORDS_FOR_IMMEDIATE_RESPONSE", 4
             ),
             live_vad_silence_ms=_int_env("IRIS_LIVE_VAD_SILENCE_MS", 900),
+            embedding_model=os.getenv("IRIS_EMBEDDING_MODEL", "text-embedding-3-small"),
+            memory_embeddings_enabled=_bool_env("IRIS_MEMORY_EMBEDDINGS_ENABLED", True),
+            memory_embedding_provider=os.getenv(
+                "IRIS_MEMORY_EMBEDDING_PROVIDER", "local"
+            )
+            .strip()
+            .lower(),
         )
 
     @property

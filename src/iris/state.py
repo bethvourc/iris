@@ -145,6 +145,35 @@ CREATE INDEX IF NOT EXISTS idx_memory_relations_predicate ON memory_relations(pr
 CREATE INDEX IF NOT EXISTS idx_memory_relations_active ON memory_relations(active);
 CREATE INDEX IF NOT EXISTS idx_memory_evidence_relation ON memory_evidence(relation_id);
 
+CREATE TABLE IF NOT EXISTS memory_embeddings (
+  embedding_id TEXT PRIMARY KEY,
+  source_type TEXT NOT NULL,
+  source_id TEXT NOT NULL,
+  text_hash TEXT NOT NULL,
+  text TEXT NOT NULL,
+  vector_json TEXT NOT NULL,
+  provider TEXT NOT NULL,
+  model TEXT NOT NULL,
+  dimensions INTEGER NOT NULL,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  metadata_json TEXT NOT NULL DEFAULT '{}',
+  UNIQUE (source_type, source_id, provider, model)
+);
+
+CREATE TABLE IF NOT EXISTS memory_retrieval_events (
+  event_id TEXT PRIMARY KEY,
+  query TEXT NOT NULL,
+  source TEXT NOT NULL,
+  selected_json TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  metadata_json TEXT NOT NULL DEFAULT '{}'
+);
+
+CREATE INDEX IF NOT EXISTS idx_memory_embeddings_source ON memory_embeddings(source_type, source_id);
+CREATE INDEX IF NOT EXISTS idx_memory_embeddings_hash ON memory_embeddings(text_hash);
+CREATE INDEX IF NOT EXISTS idx_memory_retrieval_events_created ON memory_retrieval_events(created_at);
+
 CREATE TABLE IF NOT EXISTS meetings (
   meeting_id TEXT PRIMARY KEY,
   title TEXT NOT NULL,

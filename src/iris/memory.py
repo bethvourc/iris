@@ -42,6 +42,16 @@ def add_memory(
     )
     db.commit()
     try:
+        from iris.memory_vectors import upsert_text_embedding
+
+        upsert_text_embedding(
+            db,
+            source_type="memory",
+            source_id=memory_id,
+            text=content,
+            metadata={"category": category, "provenance": provenance},
+        )
+        db.commit()
         from iris.memory_graph import record_memory_fact
 
         record_memory_fact(

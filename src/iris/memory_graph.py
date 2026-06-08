@@ -8,7 +8,13 @@ import sqlite3
 import uuid
 from typing import Any
 
+from iris.config import IrisConfig
 from iris.memory_extract import ExtractedRelation, extract_relations
+from iris.memory_vectors import (
+    record_retrieval_event,
+    semantic_search,
+    upsert_text_embedding,
+)
 
 
 @dataclass(frozen=True)
@@ -39,6 +45,7 @@ def record_memory_fact(
     content: str,
     provenance: str,
     confidence: float,
+    config: IrisConfig | None = None,
 ) -> list[str]:
     relations = extract_relations(content, category=category, confidence=confidence)
     if not relations:
@@ -54,6 +61,14 @@ def record_memory_fact(
     )
     if _has_evidence(db, source_table="memories", source_id=memory_id, quote=content):
         return []
+    upsert_text_embedding(
+        db,
+        source_type="memory_observation",
+        source_id=observation_id,
+        text=content,
+        config=config,
+        metadata={"category": category, "memory_id": memory_id},
+    )
     relation_ids = [
         _upsert_relation(
             db,
@@ -63,6 +78,7 @@ def record_memory_fact(
             source_id=memory_id,
             quote=content,
             provenance=provenance,
+            config=config,
         )
         for relation in relations
     ]
@@ -74,6 +90,16 @@ def backfill_memories(db: sqlite3.Connection) -> int:
     count = 0
     rows = db.execute("SELECT * FROM memories ORDER BY created_at ASC").fetchall()
     for row in rows:
+        upsert_text_embedding(
+            db,
+            source_type="memory",
+            source_id=str(row["memory_id"]),
+            text=str(row["content"]),
+            metadata={
+                "category": str(row["category"]),
+                "provenance": str(row["provenance"]),
+            },
+        )
         relation_ids = record_memory_fact(
             db,
             memory_id=str(row["memory_id"]),
@@ -83,6 +109,7 @@ def backfill_memories(db: sqlite3.Connection) -> int:
             confidence=float(row["confidence"]),
         )
         count += len(relation_ids)
+    db.commit()
     return count
 
 
@@ -92,25 +119,46 @@ def search_facts(
     *,
     limit: int = 10,
     include_inactive: bool = False,
+    config: IrisConfig | None = None,
 ) -> list[dict[str, Any]]:
     terms = _terms(query)
     if not terms:
         return []
     facts = _fetch_facts(db, include_inactive=include_inactive)
+    semantic_results = semantic_search(
+        db,
+        query,
+        source_types={"memory_relation"},
+        limit=max(limit * 3, 20),
+        config=config,
+    )
+    semantic_scores = {
+        str(item["source_id"]): float(item["score"]) for item in semantic_results
+    }
     scored: list[tuple[float, GraphFact]] = []
     for fact in facts:
         haystack = " ".join(
             [fact.subject, fact.predicate, fact.object_value, fact.provenance]
         ).lower()
         score = sum(1.0 for term in terms if term in haystack)
-        if not score:
+        semantic_score = semantic_scores.get(fact.relation_id, 0.0)
+        if not score and semantic_score < 0.05:
             continue
         if fact.active:
             score += 2.0
         score += max(0.0, min(fact.confidence, 1.0))
+        score += semantic_score * 5.0
         scored.append((score, fact))
     scored.sort(key=lambda item: (item[0], item[1].updated_at), reverse=True)
-    return [_fact_payload(fact, score=score) for score, fact in scored[:limit]]
+    results = [_fact_payload(fact, score=score) for score, fact in scored[:limit]]
+    record_retrieval_event(
+        db,
+        query=query,
+        source="memory_graph.search_facts",
+        selected=results,
+        metadata={"include_inactive": include_inactive},
+    )
+    return results
 
 
 def related_facts(
@@ -171,8 +219,9 @@ def memory_context_packet(
     *,
     query: str = "",
     limit: int = 12,
+    config: IrisConfig | None = None,
 ) -> list[dict[str, Any]]:
-    results = search_facts(db, query, limit=limit) if query else []
+    results = search_facts(db, query, limit=limit, config=config) if query else []
     seen = {str(item["relation_id"]) for item in results}
     if len(results) < limit:
         for fact in _fetch_facts(db, include_inactive=False):
@@ -207,6 +256,7 @@ def _upsert_relation(
     source_id: str,
     quote: str,
     provenance: str,
+    config: IrisConfig | None,
 ) -> str:
     now = _now()
     subject_id = _ensure_entity(
@@ -290,6 +340,18 @@ def _upsert_relation(
         source_table=source_table,
         source_id=source_id,
         quote=quote,
+    )
+    upsert_text_embedding(
+        db,
+        source_type="memory_relation",
+        source_id=relation_id,
+        text=f"{relation.subject} {relation.predicate.replace('_', ' ')} {relation.object_value}. Evidence: {quote}",
+        config=config,
+        metadata={
+            "subject": relation.subject,
+            "predicate": relation.predicate,
+            "object_value": relation.object_value,
+        },
     )
     return relation_id
 

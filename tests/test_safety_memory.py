@@ -4,8 +4,10 @@ from pathlib import Path
 
 from iris.actions import LocalAction, RiskLevel
 from iris.config import IrisConfig
+from iris.knowledge import upsert_file_page
 from iris.memory import add_memory
 from iris.memory_graph import related_facts, search_facts
+from iris.memory_vectors import semantic_search
 from iris.safety import classify_action
 from iris.state import open_state
 from iris.tools import (
@@ -142,6 +144,57 @@ def test_existing_flat_memories_backfill_into_graph(tmp_path: Path) -> None:
 
     assert memory_id
     assert results
+
+
+def test_memory_embeddings_and_retrieval_events_are_recorded(tmp_path: Path) -> None:
+    config = _config(tmp_path)
+    context = _memory_context(config)
+    _remember({"content": "Use the Spotify app, not the browser"}, context)
+
+    with open_state(config) as db:
+        embeddings = [
+            dict(row)
+            for row in db.execute(
+                "SELECT source_type, source_id FROM memory_embeddings"
+            ).fetchall()
+        ]
+        results = search_facts(db, "spotify", config=config)
+        events = db.execute("SELECT * FROM memory_retrieval_events").fetchall()
+
+    source_types = {item["source_type"] for item in embeddings}
+    assert {"memory", "memory_observation", "memory_relation"} <= source_types
+    assert results
+    assert events
+
+
+def test_semantic_search_uses_local_vector_fallback(tmp_path: Path) -> None:
+    config = _config(tmp_path)
+    with open_state(config) as db:
+        memory_id = add_memory(
+            db,
+            category="preferences",
+            content="Use Apple Music app for playback",
+        )
+        results = semantic_search(db, "music playback", source_types={"memory"})
+
+    assert memory_id
+    assert results
+    assert results[0]["source_type"] == "memory"
+
+
+def test_knowledge_page_ingest_creates_embedding(tmp_path: Path) -> None:
+    config = _config(tmp_path)
+    note = tmp_path / "note.md"
+    note.write_text("# Iris Runtime\nLocal-first agent memory notes.", encoding="utf-8")
+
+    with open_state(config) as db:
+        page_id = upsert_file_page(db, note, note.read_text(encoding="utf-8"))
+        rows = db.execute(
+            "SELECT * FROM memory_embeddings WHERE source_type = 'knowledge_page'"
+        ).fetchall()
+
+    assert page_id
+    assert rows
 
 
 def _memory_context(config: IrisConfig) -> ToolContext:

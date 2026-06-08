@@ -1843,6 +1843,7 @@ def cmd_memory_search(args: argparse.Namespace) -> int:
             args.query,
             limit=args.limit,
             include_inactive=args.include_inactive,
+            config=config,
         )
         record_audit(
             db,

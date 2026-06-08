@@ -19,7 +19,7 @@ Optional:
 ## Setup
 
 ```bash
-cd /Users/clintonimaro/Documents/Projects/iris
+cd /Users/<username>/Documents/Projects/iris
 uv sync --dev --no-editable
 cp .env.example .env
 ```
@@ -54,7 +54,7 @@ Personalize Iris:
 For non-interactive setup:
 
 ```bash
-./iris setup --name Clinton --pronouns he/him
+./iris setup --name Bethvour --pronouns he/him
 ```
 
 If you use the local HTTP gateway, set a private token first:
@@ -118,7 +118,7 @@ quit
 ./iris status
 ./iris providers
 ./iris profile show
-./iris profile set --name Clinton --pronouns he/him
+./iris profile set --name Bethvour --pronouns he/him
 ./iris setup
 ./iris test-screen
 ./iris test-vision

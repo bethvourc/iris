@@ -9,6 +9,8 @@ import sqlite3
 import uuid
 from typing import Any
 
+from iris.memory_vectors import semantic_search, upsert_text_embedding
+
 
 TEXT_EXTENSIONS = {
     ".txt",
@@ -167,6 +169,13 @@ def upsert_file_page(db: sqlite3.Connection, path: Path, content: str) -> str:
                 json.dumps(metadata, sort_keys=True),
             ),
         )
+    upsert_text_embedding(
+        db,
+        source_type="knowledge_page",
+        source_id=page_id,
+        text=f"{title}\n{summary or content[:1200]}",
+        metadata={"source_id": source_id, "uri": uri},
+    )
     return page_id
 
 
@@ -225,11 +234,12 @@ def search_pages(
             """
         ).fetchall()
     ]
-    scored: list[tuple[int, dict[str, Any]]] = []
+    scored: list[tuple[float, dict[str, Any]]] = []
+    seen_page_ids: set[str] = set()
     for row in rows:
         title = str(row.get("title") or "").lower()
         content = str(row.get("content") or "").lower()
-        score = 0
+        score = 0.0
         for term in terms:
             if term in title:
                 score += 20
@@ -239,6 +249,26 @@ def search_pages(
             row["snippet"] = _snippet(str(row.get("content") or ""), terms)
             row["score"] = score
             scored.append((score, row))
+            seen_page_ids.add(str(row.get("page_id") or ""))
+    if len(scored) < limit:
+        semantic_results = semantic_search(
+            db,
+            query,
+            source_types={"knowledge_page"},
+            limit=max(limit * 2, 10),
+        )
+        semantic_by_page = {
+            str(item["source_id"]): float(item["score"]) for item in semantic_results
+        }
+        for row in rows:
+            page_id = str(row.get("page_id") or "")
+            semantic_score = semantic_by_page.get(page_id, 0.0)
+            if not page_id or page_id in seen_page_ids or semantic_score < 0.05:
+                continue
+            row["snippet"] = _snippet(str(row.get("content") or ""), terms)
+            row["score"] = semantic_score * 10
+            scored.append((semantic_score * 10, row))
+            seen_page_ids.add(page_id)
     scored.sort(
         key=lambda item: (item[0], str(item[1].get("updated_at") or "")), reverse=True
     )

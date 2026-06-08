@@ -779,7 +779,7 @@ class AgentExecutor:
             return []
         try:
             with open_state(self.config) as db:
-                graph_rows = memory_context_packet(db, limit=limit)
+                graph_rows = memory_context_packet(db, limit=limit, config=self.config)
                 if graph_rows:
                     return [
                         {
