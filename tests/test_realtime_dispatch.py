@@ -331,3 +331,48 @@ def test_meta_feedback_about_iris_gets_feedback_instructions() -> None:
     instructions = sent[-1]["response"]["instructions"]
     assert "feedback about Iris" in instructions
     assert "do not rewrite their wording" in instructions
+
+
+def test_voice_turn_buffer_emits_safe_observability_events() -> None:
+    session, _sent = _bare_session()
+    events: list[tuple[str, dict]] = []
+    session._trace_voice_event = (  # type: ignore[method-assign]
+        lambda event_name, *, status="ok", details=None: events.append(
+            (event_name, details or {})
+        )
+    )
+
+    session._handle_transcript("There needs to be a")
+    session._handle_transcript("better detection for Iris")
+
+    event_names = [name for name, _details in events]
+    assert "voice.turn.segment_received" in event_names
+    assert "voice.turn.endpoint_reason" in event_names
+    assert "voice.turn.buffered" in event_names
+    assert "voice.turn.flushed" in event_names
+    for _name, details in events:
+        assert "There needs" not in str(details)
+        assert "better detection" not in str(details)
+
+
+def test_voice_interruption_emits_safe_observability_event() -> None:
+    session, _sent = _bare_session()
+    output = _FakeOutput()
+    events: list[tuple[str, dict]] = []
+    session._trace_voice_event = (  # type: ignore[method-assign]
+        lambda event_name, *, status="ok", details=None: events.append(
+            (event_name, details or {})
+        )
+    )
+    session._assistant_response_active = True
+    session._last_response_started_at = time.monotonic() - 1.0
+    session._current_assistant_item_id = "item_123"
+    session._current_audio_started_at = time.monotonic() - 0.4
+    session._current_audio_received_ms = 1000
+    session._current_audio_played_ms = 300
+
+    assert session._handle_barge_in_started(output) is True
+
+    assert events[-1][0] == "voice.interrupt.detected"
+    assert events[-1][1]["had_assistant_item"] is True
+    assert "item_123" not in str(events[-1][1])

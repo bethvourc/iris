@@ -31,6 +31,7 @@ from iris.safety import CancellationToken, SafetyGate, classify_action
 from iris.state import open_state
 from iris import tasks as task_store
 from iris.system import applescript_string, run_command, run_osascript
+from iris.tracing import record_trace_event
 
 
 @dataclass(frozen=True)
@@ -57,6 +58,7 @@ class ToolContext:
     config: IrisConfig | None = None
     approved_tool_call: bool = False
     cancellation_token: CancellationToken | None = None
+    run_id: str = ""
 
     def assert_not_cancelled(self) -> None:
         if self.cancellation_token is not None:
@@ -2888,6 +2890,20 @@ def _apple_music_search_or_play(
     action = _string_arg(arguments, "action", "search").lower() or "search"
     if not query:
         return ToolResult(False, "I need something to search or play in Apple Music.")
+    event_name = (
+        "media.apple_music.play_attempt"
+        if action == "play"
+        else "media.apple_music.search"
+    )
+    _trace_tool_event(
+        context,
+        event_name,
+        details={
+            "service": "apple_music",
+            "action": action,
+            "query_length": len(query),
+        },
+    )
     result = (
         context.controller.apple_music_play(query)
         if action == "play"
@@ -2903,11 +2919,38 @@ def _apple_music_search_or_play(
         )
         payload = result.payload if isinstance(result.payload, dict) else {}
         verified = bool(payload.get("verified_playback"))
+        if action == "play":
+            _trace_tool_event(
+                context,
+                "media.apple_music.verify",
+                status="ok" if verified else "error",
+                error=None if verified else "playback_not_verified",
+                details={
+                    "service": "apple_music",
+                    "verified_playback": verified,
+                },
+            )
         return ToolResult(
             True,
             result.detail,
             result.payload,
             continue_planning=action == "play" and not verified,
+        )
+    if "macOS blocked Iris from controlling Music" in result.detail:
+        _trace_tool_event(
+            context,
+            "media.apple_music.permission_error",
+            status="error",
+            error="music_automation_blocked",
+            details={"service": "apple_music", "action": action},
+        )
+    if action == "play":
+        _trace_tool_event(
+            context,
+            "media.apple_music.verify",
+            status="error",
+            error="playback_not_verified",
+            details={"service": "apple_music", "verified_playback": False},
         )
     return _from_action_result(result)
 
@@ -3693,6 +3736,41 @@ def _remember_media(
         "url": url,
     }
     context.session_state["last_media_target"] = context.session_state["last_media"]
+
+
+def _trace_tool_event(
+    context: ToolContext,
+    event_name: str,
+    *,
+    status: str = "ok",
+    error: str | None = None,
+    details: dict[str, Any] | None = None,
+) -> None:
+    if context.config is None or not context.run_id:
+        return
+    try:
+        with open_state(context.config) as db:
+            record_trace_event(
+                db,
+                run_id=context.run_id,
+                event_name=event_name,
+                component="tool",
+                status=status,
+                error=error,
+                details=_safe_tool_trace_details(details or {}),
+            )
+    except Exception:
+        return
+
+
+def _safe_tool_trace_details(details: dict[str, Any]) -> dict[str, Any]:
+    safe: dict[str, Any] = {}
+    for key, value in details.items():
+        if isinstance(value, bool | int | float) or value is None:
+            safe[key] = value
+        elif key in {"service", "surface", "action"}:
+            safe[key] = str(value)[:80]
+    return safe
 
 
 def _remember_browser(

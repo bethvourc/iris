@@ -664,6 +664,7 @@ class AgentExecutor:
             config=self.config,
             approved_tool_call=approved,
             cancellation_token=cancellation_token,
+            run_id=run_id,
         )
         started_at = time.monotonic()
         self._set_current_status(

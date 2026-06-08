@@ -7,6 +7,7 @@ import signal
 import threading
 import time
 import base64
+import uuid
 from difflib import SequenceMatcher
 from dataclasses import dataclass
 from typing import Any
@@ -26,6 +27,7 @@ from iris.safety import SafetyGate
 from iris.scheduler import SchedulerService
 from iris.state import open_state
 from iris.system import run_command
+from iris.tracing import record_trace_event
 
 
 @dataclass(frozen=True)
@@ -268,6 +270,7 @@ class RealtimeSpeechSession:
             advise=self._copilot_advise,
             announce=self.announce,
         )
+        self._voice_trace_run_id = f"voice-{uuid.uuid4().hex}"
 
     def run(self) -> None:
         if not self.config.openai_api_key:
@@ -679,10 +682,23 @@ class RealtimeSpeechSession:
                     )
 
     def _handle_transcript(self, transcript: str) -> None:
+        normalized = _normalize_wake_text(transcript)
+        if _is_filler_transcript(normalized):
+            self._trace_voice_event(
+                "voice.turn.dropped_filler",
+                details={"word_count": len(normalized.split())},
+            )
         if self._should_ignore_transcript(transcript):
             return
         print(f"you> {transcript}")
         lowered = transcript.lower().strip()
+        self._trace_voice_event(
+            "voice.turn.segment_received",
+            details={
+                "word_count": len(normalized.split()),
+                "char_count": len(transcript),
+            },
+        )
         interrupted_response = self._consume_interrupted_response()
         if self._meeting_active:
             self._clear_turn_buffer()
@@ -834,10 +850,20 @@ class RealtimeSpeechSession:
             self._suppress_input_until = 0.0
             self._interrupted_response_pending = True
             self._interrupted_response_at = now
+            item_id = self._current_assistant_item_id
+            audio_end_ms = self._played_audio_ms_locked()
         with self._tool_lock:
             self._pending_calls.clear()
         self._stop_output_playback(output)
         self._truncate_active_assistant_audio()
+        self._trace_voice_event(
+            "voice.interrupt.detected",
+            details={
+                "had_assistant_item": bool(item_id),
+                "audio_end_ms": audio_end_ms,
+                "pending_calls_cleared": True,
+            },
+        )
         return True
 
     def _truncate_active_assistant_audio(self) -> None:
@@ -906,7 +932,15 @@ class RealtimeSpeechSession:
                 self._turn_buffer_interrupted_response or interrupted_response
             )
             combined = _join_turn_segments(self._turn_buffer_segments)
+            segment_count = len(self._turn_buffer_segments)
+            word_count = len(_normalize_wake_text(combined).split())
             should_flush = self._should_flush_turn_locked(combined, transcript, now)
+            endpoint_reason = self._turn_endpoint_reason_locked(
+                combined,
+                transcript,
+                now,
+                should_flush=should_flush,
+            )
             if should_flush:
                 response_instructions = self._turn_response_instructions_locked(
                     combined, instructions
@@ -916,20 +950,69 @@ class RealtimeSpeechSession:
             else:
                 self._schedule_turn_flush_locked()
         if should_flush:
+            self._trace_voice_event(
+                "voice.turn.endpoint_reason",
+                details={
+                    "endpoint_reason": endpoint_reason,
+                    "word_count": word_count,
+                },
+            )
+            self._trace_voice_event(
+                "voice.turn.flushed",
+                details={
+                    "segment_count": segment_count,
+                    "endpoint_reason": endpoint_reason,
+                    "word_count": word_count,
+                },
+            )
             self._begin_model_response(instructions=response_instructions)
+        else:
+            self._trace_voice_event(
+                "voice.turn.endpoint_reason",
+                details={
+                    "endpoint_reason": endpoint_reason,
+                    "word_count": len(_normalize_wake_text(transcript).split()),
+                },
+            )
+            self._trace_voice_event(
+                "voice.turn.buffered",
+                details={
+                    "endpoint_reason": endpoint_reason,
+                    "word_count": len(_normalize_wake_text(transcript).split()),
+                },
+            )
 
     def _flush_turn_buffer(self) -> None:
         response_instructions: str | None = None
+        segment_count = 0
+        word_count = 0
         with self._turn_buffer_lock:
             if not self._turn_buffer_segments:
                 return
             combined = _join_turn_segments(self._turn_buffer_segments)
+            segment_count = len(self._turn_buffer_segments)
+            word_count = len(_normalize_wake_text(combined).split())
             response_instructions = self._turn_response_instructions_locked(
                 combined,
                 None,
             )
             self._cancel_turn_timer_locked()
             self._reset_turn_buffer_locked()
+        self._trace_voice_event(
+            "voice.turn.endpoint_reason",
+            details={
+                "endpoint_reason": "timeout",
+                "word_count": word_count,
+            },
+        )
+        self._trace_voice_event(
+            "voice.turn.flushed",
+            details={
+                "segment_count": segment_count,
+                "endpoint_reason": "timeout",
+                "word_count": word_count,
+            },
+        )
         self._begin_model_response(instructions=response_instructions)
 
     def _clear_turn_buffer(self) -> None:
@@ -954,6 +1037,24 @@ class RealtimeSpeechSession:
             word_count >= self._turn_min_words_for_immediate_response()
             and not _is_partial_turn(combined)
         )
+
+    def _turn_endpoint_reason_locked(
+        self,
+        combined: str,
+        latest: str,
+        now: float,
+        *,
+        should_flush: bool,
+    ) -> str:
+        if _is_direct_voice_command(latest):
+            return "direct_command"
+        if now - self._turn_buffer_started_at >= self._turn_max_wait_seconds():
+            return "max_wait"
+        if _is_partial_turn(combined):
+            return "partial_turn"
+        if len(self._turn_buffer_segments) > 1:
+            return "continuation_complete" if should_flush else "continuation_wait"
+        return "complete" if should_flush else "waiting_for_continuation"
 
     def _turn_response_instructions_locked(
         self,
@@ -1417,6 +1518,27 @@ class RealtimeSpeechSession:
     def _live_vad_silence_ms(self) -> int:
         return max(200, int(getattr(self.config, "live_vad_silence_ms", 900)))
 
+    def _trace_voice_event(
+        self,
+        event_name: str,
+        *,
+        status: str = "ok",
+        details: dict[str, Any] | None = None,
+    ) -> None:
+        try:
+            safe_details = _safe_trace_details(details or {})
+            with open_state(self.config) as db:
+                record_trace_event(
+                    db,
+                    run_id=self._voice_trace_run_id,
+                    event_name=event_name,
+                    component="voice",
+                    status=status,
+                    details=safe_details,
+                )
+        except Exception:
+            return
+
     @staticmethod
     def _revision_interrupt_instructions() -> str:
         return (
@@ -1743,6 +1865,16 @@ def _join_turn_segments(segments: list[str]) -> str:
     if not cleaned:
         return ""
     return re.sub(r"\s+", " ", " ".join(cleaned)).strip()
+
+
+def _safe_trace_details(details: dict[str, Any]) -> dict[str, Any]:
+    safe: dict[str, Any] = {}
+    for key, value in details.items():
+        if isinstance(value, bool | int | float) or value is None:
+            safe[key] = value
+        elif key.endswith("_reason") or key in {"service", "surface", "action"}:
+            safe[key] = str(value)[:80]
+    return safe
 
 
 def _pcm16_duration_ms(audio: bytes, sample_rate: int) -> int:
