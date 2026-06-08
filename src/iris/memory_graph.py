@@ -10,6 +10,11 @@ from typing import Any
 
 from iris.config import IrisConfig
 from iris.memory_extract import ExtractedRelation, extract_relations
+from iris.memory_lifecycle import (
+    ensure_lifecycle,
+    lifecycle_by_relation,
+    record_memory_access,
+)
 from iris.memory_vectors import (
     record_retrieval_event,
     semantic_search,
@@ -238,6 +243,7 @@ def search_facts(
     if not terms:
         return []
     facts = _fetch_facts(db, include_inactive=include_inactive)
+    lifecycle = lifecycle_by_relation(db, {fact.relation_id for fact in facts})
     semantic_results = semantic_search(
         db,
         query,
@@ -261,9 +267,14 @@ def search_facts(
             score += 2.0
         score += max(0.0, min(fact.confidence, 1.0))
         score += semantic_score * 5.0
+        score *= _lifecycle_score(lifecycle.get(fact.relation_id))
         scored.append((score, fact))
     scored.sort(key=lambda item: (item[0], item[1].updated_at), reverse=True)
-    results = [_fact_payload(fact, score=score) for score, fact in scored[:limit]]
+    results = [
+        _fact_payload(fact, score=score, lifecycle=lifecycle.get(fact.relation_id))
+        for score, fact in scored[:limit]
+    ]
+    record_memory_access(db, [str(item["relation_id"]) for item in results])
     record_retrieval_event(
         db,
         query=query,
@@ -285,6 +296,7 @@ def related_facts(
     if not normalized:
         return []
     facts = _fetch_facts(db, include_inactive=include_inactive)
+    lifecycle = lifecycle_by_relation(db, {fact.relation_id for fact in facts})
     scored: list[tuple[float, GraphFact]] = []
     for fact in facts:
         subject = _normalize(fact.subject)
@@ -299,9 +311,15 @@ def related_facts(
         if score:
             if fact.active:
                 score += 1.0
+            score *= _lifecycle_score(lifecycle.get(fact.relation_id))
             scored.append((score, fact))
     scored.sort(key=lambda item: (item[0], item[1].updated_at), reverse=True)
-    return [_fact_payload(fact, score=score) for score, fact in scored[:limit]]
+    results = [
+        _fact_payload(fact, score=score, lifecycle=lifecycle.get(fact.relation_id))
+        for score, fact in scored[:limit]
+    ]
+    record_memory_access(db, [str(item["relation_id"]) for item in results])
+    return results
 
 
 def explain_fact(db: sqlite3.Connection, query: str) -> dict[str, Any] | None:
@@ -337,10 +355,28 @@ def memory_context_packet(
     results = search_facts(db, query, limit=limit, config=config) if query else []
     seen = {str(item["relation_id"]) for item in results}
     if len(results) < limit:
-        for fact in _fetch_facts(db, include_inactive=False):
+        fallback_facts = _fetch_facts(db, include_inactive=False)
+        lifecycle = lifecycle_by_relation(
+            db, {fact.relation_id for fact in fallback_facts}
+        )
+        fallback_facts.sort(
+            key=lambda fact: (
+                bool((lifecycle.get(fact.relation_id) or {}).get("pinned")),
+                _lifecycle_score(lifecycle.get(fact.relation_id)),
+                fact.updated_at,
+            ),
+            reverse=True,
+        )
+        for fact in fallback_facts:
             if fact.relation_id in seen:
                 continue
-            results.append(_fact_payload(fact, score=0.0))
+            results.append(
+                _fact_payload(
+                    fact,
+                    score=0.0,
+                    lifecycle=lifecycle.get(fact.relation_id),
+                )
+            )
             seen.add(fact.relation_id)
             if len(results) >= limit:
                 break
@@ -446,6 +482,7 @@ def _upsert_relation(
                 json.dumps(metadata, sort_keys=True),
             ),
         )
+    ensure_lifecycle(db, relation_id)
     _add_evidence(
         db,
         relation_id=relation_id,
@@ -705,7 +742,10 @@ def _fetch_facts(db: sqlite3.Connection, *, include_inactive: bool) -> list[Grap
     ]
 
 
-def _fact_payload(fact: GraphFact, *, score: float) -> dict[str, Any]:
+def _fact_payload(
+    fact: GraphFact, *, score: float, lifecycle: dict[str, Any] | None = None
+) -> dict[str, Any]:
+    lifecycle = lifecycle or {}
     return {
         "relation_id": fact.relation_id,
         "subject": fact.subject,
@@ -720,8 +760,23 @@ def _fact_payload(fact: GraphFact, *, score: float) -> dict[str, Any]:
         "provenance": fact.provenance,
         "updated_at": fact.updated_at,
         "evidence_count": fact.evidence_count,
+        "decay_score": float(lifecycle.get("decay_score") or 1.0),
+        "pinned": bool(lifecycle.get("pinned")),
+        "review_status": str(lifecycle.get("review_status") or "active"),
+        "last_accessed_at": lifecycle.get("last_accessed_at"),
+        "access_count": int(lifecycle.get("access_count") or 0),
         "score": score,
     }
+
+
+def _lifecycle_score(lifecycle: dict[str, Any] | None) -> float:
+    if not lifecycle:
+        return 1.0
+    if bool(lifecycle.get("pinned")):
+        return 1.0
+    if str(lifecycle.get("review_status") or "") == "stale":
+        return min(float(lifecycle.get("decay_score") or 0.2), 0.2)
+    return max(0.03, min(float(lifecycle.get("decay_score") or 1.0), 1.0))
 
 
 def _terms(query: str) -> list[str]:

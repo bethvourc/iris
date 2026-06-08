@@ -37,6 +37,7 @@ from iris.memory_graph import (
     related_facts,
     search_facts,
 )
+from iris.memory_lifecycle import maintain_lifecycle, set_memory_pinned
 from iris.plugins import list_plugins, plugin_health, set_plugin_enabled
 from iris.profile import has_user_profile, load_user_profile, save_user_profile
 from iris.providers import ProviderRegistry
@@ -652,6 +653,17 @@ def build_parser() -> argparse.ArgumentParser:
     )
     memory_explain.add_argument("query")
     memory_explain.set_defaults(func=cmd_memory_explain)
+    memory_sub.add_parser(
+        "maintain", help="Recompute memory decay and lifecycle state"
+    ).set_defaults(func=cmd_memory_maintain)
+    memory_pin = memory_sub.add_parser(
+        "pin", help="Prevent a graph memory from decaying"
+    )
+    memory_pin.add_argument("relation_id")
+    memory_pin.set_defaults(func=cmd_memory_pin)
+    memory_unpin = memory_sub.add_parser("unpin", help="Allow a graph memory to decay")
+    memory_unpin.add_argument("relation_id")
+    memory_unpin.set_defaults(func=cmd_memory_unpin)
     memory_edit = memory_sub.add_parser("edit", help="Edit memory")
     memory_edit.add_argument("memory_id")
     memory_edit.add_argument("--content", required=True)
@@ -1932,6 +1944,46 @@ def cmd_memory_explain(args: argparse.Namespace) -> int:
         return 1
     _print_json(result)
     return 0
+
+
+def cmd_memory_maintain(args: argparse.Namespace) -> int:
+    config = _config(args)
+    with open_state(config) as db:
+        result = maintain_lifecycle(db)
+        record_audit(
+            db,
+            actor="user",
+            tool="memory.maintain",
+            risk=RiskLevel.LOW_RISK,
+            result="ok",
+            output_value=result.__dict__,
+        )
+    _print_json(result.__dict__)
+    return 0
+
+
+def cmd_memory_pin(args: argparse.Namespace) -> int:
+    return _cmd_memory_set_pinned(args, pinned=True)
+
+
+def cmd_memory_unpin(args: argparse.Namespace) -> int:
+    return _cmd_memory_set_pinned(args, pinned=False)
+
+
+def _cmd_memory_set_pinned(args: argparse.Namespace, *, pinned: bool) -> int:
+    config = _config(args)
+    with open_state(config) as db:
+        ok = set_memory_pinned(db, args.relation_id, pinned)
+        record_audit(
+            db,
+            actor="user",
+            tool="memory.pin" if pinned else "memory.unpin",
+            risk=RiskLevel.LOW_RISK,
+            result="ok" if ok else "error",
+            input_value={"relation_id": args.relation_id, "pinned": pinned},
+        )
+    _print_json({"ok": ok, "relation_id": args.relation_id, "pinned": pinned})
+    return 0 if ok else 1
 
 
 def cmd_memory_edit(args: argparse.Namespace) -> int:

@@ -149,6 +149,20 @@ CREATE TABLE IF NOT EXISTS memory_pending_relations (
   FOREIGN KEY (observation_id) REFERENCES memory_observations(observation_id) ON DELETE SET NULL
 );
 
+CREATE TABLE IF NOT EXISTS memory_lifecycle (
+  relation_id TEXT PRIMARY KEY,
+  last_accessed_at TEXT,
+  access_count INTEGER NOT NULL DEFAULT 0,
+  decay_score REAL NOT NULL DEFAULT 1.0,
+  expires_at TEXT,
+  pinned INTEGER NOT NULL DEFAULT 0,
+  review_status TEXT NOT NULL DEFAULT 'active',
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  metadata_json TEXT NOT NULL DEFAULT '{}',
+  FOREIGN KEY (relation_id) REFERENCES memory_relations(relation_id) ON DELETE CASCADE
+);
+
 CREATE INDEX IF NOT EXISTS idx_memory_entities_kind ON memory_entities(kind);
 CREATE INDEX IF NOT EXISTS idx_memory_observations_category ON memory_observations(category);
 CREATE INDEX IF NOT EXISTS idx_memory_relations_subject ON memory_relations(subject_entity_id);
@@ -156,6 +170,8 @@ CREATE INDEX IF NOT EXISTS idx_memory_relations_predicate ON memory_relations(pr
 CREATE INDEX IF NOT EXISTS idx_memory_relations_active ON memory_relations(active);
 CREATE INDEX IF NOT EXISTS idx_memory_evidence_relation ON memory_evidence(relation_id);
 CREATE INDEX IF NOT EXISTS idx_memory_pending_relations_source ON memory_pending_relations(source_type, source_id);
+CREATE INDEX IF NOT EXISTS idx_memory_lifecycle_review ON memory_lifecycle(review_status);
+CREATE INDEX IF NOT EXISTS idx_memory_lifecycle_decay ON memory_lifecycle(decay_score);
 
 CREATE TABLE IF NOT EXISTS memory_embeddings (
   embedding_id TEXT PRIMARY KEY,

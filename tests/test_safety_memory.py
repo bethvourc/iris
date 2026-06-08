@@ -7,6 +7,7 @@ from iris.config import IrisConfig
 from iris.knowledge import graph_page, rebuild_links, search_pages, upsert_file_page
 from iris.memory import add_memory
 from iris.memory_graph import related_facts, search_facts
+from iris.memory_lifecycle import maintain_lifecycle, set_memory_pinned
 from iris.memory_llm_extract import parse_rich_extraction
 from iris.memory_vectors import semantic_search
 from iris.safety import classify_action
@@ -383,6 +384,63 @@ def test_knowledge_search_includes_graphed_page_facts(tmp_path: Path) -> None:
 
     assert pages
     assert any(item["object_value"] == "SQLite" for item in graph)
+
+
+def test_memory_lifecycle_records_access_and_decay(tmp_path: Path) -> None:
+    config = _config(tmp_path)
+    context = _memory_context(config)
+    _remember({"content": "Use the Spotify app, not the browser"}, context)
+
+    with open_state(config) as db:
+        first = search_facts(db, "spotify", config=config)
+        relation_id = str(first[0]["relation_id"])
+        accessed = db.execute(
+            "SELECT access_count FROM memory_lifecycle WHERE relation_id = ?",
+            (relation_id,),
+        ).fetchone()
+        db.execute(
+            """
+            UPDATE memory_relations
+            SET updated_at = '2020-01-01T00:00:00+00:00'
+            WHERE relation_id = ?
+            """,
+            (relation_id,),
+        )
+        result = maintain_lifecycle(db)
+        lifecycle = db.execute(
+            "SELECT decay_score, review_status FROM memory_lifecycle WHERE relation_id = ?",
+            (relation_id,),
+        ).fetchone()
+
+    assert accessed["access_count"] >= 1
+    assert result.relations >= 1
+    assert lifecycle["decay_score"] < 1.0
+
+
+def test_pinned_memory_does_not_decay(tmp_path: Path) -> None:
+    config = _config(tmp_path)
+    context = _memory_context(config)
+    _remember({"content": "I am working on Iris", "category": "facts"}, context)
+
+    with open_state(config) as db:
+        relation_id = str(search_facts(db, "Iris", config=config)[0]["relation_id"])
+        assert set_memory_pinned(db, relation_id, True)
+        db.execute(
+            """
+            UPDATE memory_relations
+            SET updated_at = '2020-01-01T00:00:00+00:00'
+            WHERE relation_id = ?
+            """,
+            (relation_id,),
+        )
+        maintain_lifecycle(db)
+        lifecycle = db.execute(
+            "SELECT decay_score, pinned FROM memory_lifecycle WHERE relation_id = ?",
+            (relation_id,),
+        ).fetchone()
+
+    assert lifecycle["pinned"] == 1
+    assert lifecycle["decay_score"] == 1.0
 
 
 def _memory_context(
