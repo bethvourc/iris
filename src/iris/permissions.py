@@ -24,6 +24,7 @@ class PermissionChecker:
             self.check_screen_recording(),
             self.check_accessibility(),
             self.check_automation(),
+            self.check_music_automation(),
         ]
 
     def check_microphone(self) -> PermissionStatus:
@@ -124,3 +125,48 @@ class PermissionChecker:
             detail=detail,
             settings_hint="System Settings > Privacy & Security > Automation",
         )
+
+    def check_music_automation(self) -> PermissionStatus:
+        result = run_osascript(
+            """
+try
+  tell application "Music"
+    if it is running then
+      return "Music is running"
+    end if
+    return "Music is installed"
+  end tell
+on error errMsg
+  return "error:" & errMsg
+end try
+""",
+            timeout=8,
+        )
+        text = result.stdout.strip()
+        if result.ok and text and not text.lower().startswith("error:"):
+            status = "available"
+            detail = text
+        else:
+            status = "missing"
+            detail = _music_automation_detail(text or result.stderr)
+        return PermissionStatus(
+            name="Music Automation",
+            status=status,
+            capability="Apple Music search, playback, and metadata control",
+            detail=detail,
+            settings_hint="System Settings > Privacy & Security > Automation > allow this terminal app to control Music",
+        )
+
+
+def _music_automation_detail(detail: str) -> str:
+    lowered = detail.lower()
+    if (
+        "not authorized" in lowered
+        or "not allowed" in lowered
+        or "automation" in lowered
+    ):
+        return (
+            "macOS blocked Iris from controlling Music. Allow the terminal app "
+            "running Iris to control Music in Automation settings."
+        )
+    return detail or "Music Automation was not available."

@@ -29,6 +29,7 @@ def control_backend_status(config: IrisConfig | None = None) -> list[dict[str, A
         _accessibility_status(),
         _browser_cdp_status(),
         _browser_applescript_status(),
+        _apple_music_status(),
         _computer_use_status(config),
         _coordinate_status(),
     ]
@@ -123,6 +124,48 @@ end try
     )
 
 
+def _apple_music_status() -> ControlBackendStatus:
+    if not shutil.which("osascript"):
+        return ControlBackendStatus(
+            "apple_music",
+            "Apple Music",
+            False,
+            45,
+            "osascript is missing",
+            {"settings": "System Settings > Privacy & Security > Automation"},
+        )
+    result = run_osascript(
+        """
+try
+  tell application "Music"
+    if it is running then return "running"
+    return "installed"
+  end tell
+on error errMsg
+  return "error:" & errMsg
+end try
+""",
+        timeout=5,
+    )
+    text = result.stdout.strip()
+    available = result.ok and text and not text.lower().startswith("error:")
+    detail = (
+        text
+        if available
+        else _music_backend_detail(
+            text or result.stderr or "Music AppleScript unavailable"
+        )
+    )
+    return ControlBackendStatus(
+        "apple_music",
+        "Apple Music",
+        bool(available),
+        45,
+        detail,
+        {"settings": "System Settings > Privacy & Security > Automation"},
+    )
+
+
 def _computer_use_status(config: IrisConfig | None) -> ControlBackendStatus:
     available = bool(config and config.openai_api_key and config.computer_use_model)
     detail = (
@@ -145,3 +188,17 @@ def _coordinate_status() -> ControlBackendStatus:
     return ControlBackendStatus(
         "coordinates", "Coordinate Fallback", available, 100, detail
     )
+
+
+def _music_backend_detail(detail: str) -> str:
+    lowered = detail.lower()
+    if (
+        "not authorized" in lowered
+        or "not allowed" in lowered
+        or "automation" in lowered
+    ):
+        return (
+            "macOS blocked Iris from controlling Music. Allow this terminal app to "
+            "control Music in System Settings > Privacy & Security > Automation."
+        )
+    return detail

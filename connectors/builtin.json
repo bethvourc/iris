@@ -82,6 +82,14 @@
       "auth_type": "local_app"
     },
     {
+      "id": "apple-music",
+      "name": "Apple Music",
+      "category": "media",
+      "description": "Search, play, pause, and inspect Apple Music through the local Music app.",
+      "tools": ["media_search", "media_play", "media_pause", "audio_current_media"],
+      "auth_type": "mac_permission"
+    },
+    {
       "id": "youtube",
       "name": "YouTube",
       "category": "media",

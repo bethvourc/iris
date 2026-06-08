@@ -70,6 +70,12 @@ def _bare_session() -> tuple[RealtimeSpeechSession, list[dict]]:
     session._current_response_text_chunks = []
     session._interrupted_response_pending = False
     session._interrupted_response_at = 0.0
+    session._turn_buffer_lock = threading.Lock()
+    session._turn_buffer_segments = []
+    session._turn_buffer_timer = None
+    session._turn_buffer_started_at = 0.0
+    session._turn_buffer_last_at = 0.0
+    session._turn_buffer_interrupted_response = False
     session.awake = True
     session.wake_gated = True
     session._meeting_active = False
@@ -77,6 +83,11 @@ def _bare_session() -> tuple[RealtimeSpeechSession, list[dict]]:
         barge_in_enabled=True,
         barge_in_grace_ms=0,
         echo_suppression_ms=800,
+        turn_buffer_enabled=True,
+        turn_continuation_ms=1200,
+        turn_max_wait_ms=2500,
+        turn_min_words_for_immediate_response=4,
+        live_vad_silence_ms=900,
         wake_words=("iris", "hey iris"),
     )
     session.router = _FakeRouter()
@@ -257,3 +268,66 @@ def test_audio_delta_tracks_played_duration_from_pcm16() -> None:
     assert session._current_assistant_item_id == "item_456"
     assert session._current_audio_received_ms == 1000
     assert session._current_audio_played_ms == 1000
+
+
+def test_partial_voice_turn_buffers_without_response() -> None:
+    session, sent = _bare_session()
+
+    session._handle_transcript("Okay, so, um, I feel like there needs to be")
+
+    assert sent == []
+    assert session._turn_buffer_segments == [
+        "Okay, so, um, I feel like there needs to be"
+    ]
+    session._clear_turn_buffer()
+
+
+def test_voice_turn_continuation_flushes_as_one_response() -> None:
+    session, sent = _bare_session()
+
+    session._handle_transcript("There needs to be a")
+    session._handle_transcript("better detection for Iris")
+
+    assert sent[-1]["type"] == "response.create"
+    assert "continuous turn" in sent[-1]["response"]["instructions"]
+    assert session._turn_buffer_segments == []
+
+
+def test_direct_voice_command_bypasses_turn_buffer() -> None:
+    session, sent = _bare_session()
+
+    session._handle_transcript("Could you open Apple Music")
+
+    assert sent[-1]["type"] == "response.create"
+    assert session._turn_buffer_segments == []
+
+
+def test_voice_turn_flush_warns_model_when_still_partial() -> None:
+    session, sent = _bare_session()
+
+    session._handle_transcript("I feel like")
+    session._flush_turn_buffer()
+
+    assert sent[-1]["type"] == "response.create"
+    assert "may be incomplete" in sent[-1]["response"]["instructions"]
+
+
+def test_when_i_setup_clause_buffers_for_continuation() -> None:
+    session, sent = _bare_session()
+
+    session._handle_transcript("When I do the Iris start")
+
+    assert sent == []
+    assert session._turn_buffer_segments == ["When I do the Iris start"]
+    session._clear_turn_buffer()
+
+
+def test_meta_feedback_about_iris_gets_feedback_instructions() -> None:
+    session, sent = _bare_session()
+
+    session._handle_transcript("We still need better detection for Iris")
+
+    assert sent[-1]["type"] == "response.create"
+    instructions = sent[-1]["response"]["instructions"]
+    assert "feedback about Iris" in instructions
+    assert "do not rewrite their wording" in instructions

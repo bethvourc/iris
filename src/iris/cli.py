@@ -317,7 +317,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     doctor.add_argument(
         "--open",
-        choices=["microphone", "screen", "accessibility", "automation"],
+        choices=["microphone", "screen", "accessibility", "automation", "music"],
         help="Open the matching macOS privacy settings pane",
     )
     doctor.set_defaults(func=cmd_doctor)
@@ -1003,6 +1003,7 @@ def cmd_doctor(args: argparse.Namespace) -> int:
         "screen": "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture",
         "accessibility": "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility",
         "automation": "x-apple.systempreferences:com.apple.preference.security?Privacy_Automation",
+        "music": "x-apple.systempreferences:com.apple.preference.security?Privacy_Automation",
     }
     if args.open:
         run_command(["open", settings_urls[args.open]], timeout=5)
@@ -1049,6 +1050,14 @@ def cmd_doctor(args: argparse.Namespace) -> int:
     ):
         print("  CDP setup:")
         print(f"    {report['cdp_setup']}")
+    if not any(
+        item["backend_id"] == "apple_music" and item["available"] for item in backends
+    ):
+        print("  Apple Music setup:")
+        print(
+            "    Allow the terminal app running Iris to control Music in "
+            "System Settings > Privacy & Security > Automation."
+        )
     ready = [item for item in connectors if item.get("health") == "ready"]
     needs_setup = [
         item
@@ -1069,20 +1078,31 @@ def _doctor_ok(report: dict[str, object]) -> bool:
     backends = report.get("control_backends")
     if not isinstance(permissions, list) or not isinstance(backends, list):
         return False
-    required_permissions = {"Microphone", "Screen Recording", "Accessibility"}
+    required_permissions = {
+        "Microphone",
+        "Screen Recording",
+        "Accessibility",
+        "Music Automation",
+    }
     permission_ok = all(
         not isinstance(item, dict)
         or item.get("name") not in required_permissions
         or item.get("status") == "available"
         for item in permissions
     )
-    backend_ok = any(
+    accessibility_ok = any(
         isinstance(item, dict)
         and item.get("backend_id") == "accessibility"
         and item.get("available")
         for item in backends
     )
-    return permission_ok and backend_ok
+    apple_music_ok = any(
+        isinstance(item, dict)
+        and item.get("backend_id") == "apple_music"
+        and item.get("available")
+        for item in backends
+    )
+    return permission_ok and accessibility_ok and apple_music_ok
 
 
 def cmd_test_notify(args: argparse.Namespace) -> int:

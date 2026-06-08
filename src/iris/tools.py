@@ -1328,6 +1328,12 @@ def _prefer_cdp(browser: str = "Google Chrome") -> bool:
 def _media_service(value: str) -> str:
     normalized = value.strip().lower().replace(" ", "")
     aliases = {
+        "apple": "apple_music",
+        "applemusic": "apple_music",
+        "applemusic.com": "apple_music",
+        "music": "apple_music",
+        "music.app": "apple_music",
+        "music.apple.com": "apple_music",
         "yt": "youtube",
         "youtube.com": "youtube",
         "youtu.be": "youtube",
@@ -2258,8 +2264,12 @@ def _change_volume(arguments: dict[str, Any], context: ToolContext) -> ToolResul
 
 
 def _media_control(arguments: dict[str, Any], context: ToolContext) -> ToolResult:
-    service = _string_arg(arguments, "service", "spotify").lower()
+    service = _media_service(_string_arg(arguments, "service", "spotify"))
     action = _string_arg(arguments, "action").lower()
+    if service == "apple_music":
+        if action == "play_pause":
+            return _from_action_result(context.controller.apple_music_play_pause())
+        return ToolResult(False, f"Media control for {service} is not connected yet.")
     if service and service != "spotify":
         return ToolResult(False, f"Media control for {service} is not connected yet.")
     if action == "play_pause":
@@ -2274,16 +2284,27 @@ def _media_control(arguments: dict[str, Any], context: ToolContext) -> ToolResul
 def _media_search(arguments: dict[str, Any], context: ToolContext) -> ToolResult:
     copied = dict(arguments)
     copied["action"] = "search"
-    if _media_service(_string_arg(copied, "service", "spotify")) == "youtube":
+    service = _media_service(_string_arg(copied, "service", "spotify"))
+    if service == "youtube":
         return _youtube_media_play(copied, context)
+    if service == "apple_music":
+        return _apple_music_search_or_play(copied, context)
     return _media_search_or_play(copied, context)
 
 
 def _media_play(arguments: dict[str, Any], context: ToolContext) -> ToolResult:
     copied = dict(arguments)
-    if _media_service(_string_arg(copied, "service", "spotify")) == "youtube":
+    service = _media_service(_string_arg(copied, "service", "spotify"))
+    if service == "youtube":
         copied["action"] = "play"
         return _youtube_media_play(copied, context)
+    if service == "apple_music":
+        copied["action"] = "play" if _string_arg(copied, "query") else ""
+        return (
+            _apple_music_search_or_play(copied, context)
+            if _string_arg(copied, "query")
+            else _media_play_current(copied, context)
+        )
     if _string_arg(copied, "query"):
         copied["action"] = "play"
         return _media_search_or_play(copied, context)
@@ -2715,6 +2736,8 @@ def _media_search_or_play(
     browser = _string_arg(arguments, "browser", "Google Chrome")
     if service == "youtube":
         return _youtube_media_play(arguments, context)
+    if service == "apple_music":
+        return _apple_music_search_or_play(arguments, context)
     if not query:
         return ToolResult(False, "I need something to search or play.")
     if service and service != "spotify":
@@ -2858,6 +2881,37 @@ def _media_search_or_play(
     return _from_action_result(web_result)
 
 
+def _apple_music_search_or_play(
+    arguments: dict[str, Any], context: ToolContext
+) -> ToolResult:
+    query = _string_arg(arguments, "query")
+    action = _string_arg(arguments, "action", "search").lower() or "search"
+    if not query:
+        return ToolResult(False, "I need something to search or play in Apple Music.")
+    result = (
+        context.controller.apple_music_play(query)
+        if action == "play"
+        else context.controller.apple_music_search(query)
+    )
+    if result.ok:
+        _remember_media(
+            context,
+            service="apple_music",
+            query=query,
+            surface="app",
+            browser="",
+        )
+        payload = result.payload if isinstance(result.payload, dict) else {}
+        verified = bool(payload.get("verified_playback"))
+        return ToolResult(
+            True,
+            result.detail,
+            result.payload,
+            continue_planning=action == "play" and not verified,
+        )
+    return _from_action_result(result)
+
+
 def _spotify_web_cdp(
     query: str,
     *,
@@ -2967,6 +3021,11 @@ def _media_play_current(arguments: dict[str, Any], context: ToolContext) -> Tool
             },
             context,
         )
+    if service == "apple_music" or remembered_service == "apple_music":
+        result = context.controller.apple_music_play_pause()
+        if result.ok:
+            return ToolResult(True, "I toggled playback in Music.", result.payload)
+        return _from_action_result(result)
     if service and service != "spotify":
         return ToolResult(False, f"Media playback for {service} is not connected yet.")
     if surface == "browser" or remembered_surface == "browser":
@@ -3620,12 +3679,18 @@ def _remember_media(
 ) -> None:
     if context.session_state is None:
         return
+    if service == "apple_music":
+        url = f"music://music.apple.com/search?term={quote_plus(query)}"
+    elif service == "youtube":
+        url = f"https://www.youtube.com/results?search_query={quote_plus(query)}"
+    else:
+        url = f"https://open.spotify.com/search/{quote_plus(query)}"
     context.session_state["last_media"] = {
         "service": service,
         "query": query,
         "surface": surface,
         "browser": browser,
-        "url": f"https://open.spotify.com/search/{quote_plus(query)}",
+        "url": url,
     }
     context.session_state["last_media_target"] = context.session_state["last_media"]
 

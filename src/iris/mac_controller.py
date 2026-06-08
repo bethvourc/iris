@@ -487,6 +487,148 @@ needle => {
             {"query": query, "browser": browser},
         )
 
+    def apple_music_search(self, query: str) -> ActionResult:
+        self.safety_gate.allow(LocalAction("apple_music_search", {"query": query}))
+        found = self._apple_music_find_track(query, play=False)
+        if found.ok:
+            payload = found.payload if isinstance(found.payload, dict) else {}
+            title = payload.get("title") or query
+            artist = payload.get("artist") or "Apple Music"
+            return ActionResult(
+                "apple_music_search",
+                True,
+                f"I found {artist} - {title} in Music.",
+                payload,
+            )
+        opened = self._open_apple_music_search(query)
+        if opened.ok:
+            return ActionResult(
+                "apple_music_search",
+                True,
+                f"I opened Apple Music search for {query}.",
+                {"query": query, "surface": "app"},
+            )
+        return ActionResult("apple_music_search", False, found.detail or opened.detail)
+
+    def apple_music_play(self, query: str) -> ActionResult:
+        self.safety_gate.allow(LocalAction("apple_music_play", {"query": query}))
+        result = self._apple_music_find_track(query, play=True)
+        if result.ok:
+            payload = result.payload if isinstance(result.payload, dict) else {}
+            title = payload.get("title") or query
+            artist = payload.get("artist") or "Apple Music"
+            state = str(payload.get("state") or "").lower()
+            verified = state == "playing"
+            return ActionResult(
+                "apple_music_play",
+                True,
+                (
+                    f"Apple Music is playing {artist} - {title}."
+                    if verified
+                    else f"I selected {artist} - {title} in Music, but I could not verify playback yet."
+                ),
+                {**payload, "verified_playback": verified},
+            )
+        opened = self._open_apple_music_search(query)
+        return ActionResult(
+            "apple_music_play",
+            False,
+            (
+                f"I opened Apple Music search for {query}, but I could not find and verify a playable result."
+                if opened.ok
+                else result.detail
+            ),
+            {"query": query, "surface": "app", "retry_with_screen": opened.ok},
+        )
+
+    def apple_music_play_pause(self) -> ActionResult:
+        self.safety_gate.allow(LocalAction("apple_music_play_pause"))
+        return self.pause_current_media(toggle=True, preferred_service="Music")
+
+    def _apple_music_find_track(self, query: str, *, play: bool) -> ActionResult:
+        if not query.strip():
+            return ActionResult(
+                "apple_music_find_track", False, "Music query is empty."
+            )
+        play_line = "play foundTrack" if play else ""
+        script = f"""
+set queryText to {applescript_string(query)}
+try
+  tell application "Music"
+    activate
+    set foundTracks to search library playlist 1 for queryText only songs
+    if (count of foundTracks) is 0 then
+      return "NOT_FOUND"
+    end if
+    set foundTrack to item 1 of foundTracks
+    set trackName to name of foundTrack
+    set artistName to artist of foundTrack
+    {play_line}
+    delay 0.5
+    set playerState to player state as text
+    return "FOUND|" & artistName & "|" & trackName & "|" & playerState
+  end tell
+on error errText
+  return "ERROR|" & errText
+end try
+"""
+        result = run_osascript(script, timeout=12)
+        if not result.ok:
+            return ActionResult(
+                "apple_music_find_track",
+                False,
+                _human_music_error(result.stderr or result.stdout),
+                {"query": query},
+            )
+        output = result.stdout.strip()
+        if output.startswith("FOUND|"):
+            _prefix, artist, title, state = (output.split("|", 3) + [""])[:4]
+            return ActionResult(
+                "apple_music_find_track",
+                True,
+                f"{artist} - {title} is {state} in Music.",
+                {
+                    "query": query,
+                    "service": "apple_music",
+                    "artist": artist,
+                    "title": title,
+                    "state": state,
+                    "surface": "app",
+                },
+            )
+        if output.startswith("ERROR|"):
+            return ActionResult(
+                "apple_music_find_track",
+                False,
+                _human_music_error(output.removeprefix("ERROR|")),
+                {"query": query},
+            )
+        return ActionResult(
+            "apple_music_find_track",
+            False,
+            f"I could not find {query} in Music.",
+            {"query": query},
+        )
+
+    def _open_apple_music_search(self, query: str) -> ActionResult:
+        encoded = quote_plus(query)
+        url = f"music://music.apple.com/search?term={encoded}"
+        result = run_command(["open", url], timeout=10)
+        if result.ok:
+            return ActionResult(
+                "apple_music_search_url",
+                True,
+                f"opened Apple Music search for {query}",
+                {"query": query, "url": url},
+            )
+        fallback = run_command(["open", "-a", "Music"], timeout=10)
+        return ActionResult(
+            "apple_music_search_url",
+            fallback.ok,
+            fallback.stderr or result.stderr or result.stdout,
+            {"query": query, "url": url},
+        )
+
     def current_media(self) -> ActionResult:
         spotify = run_osascript(
             """
@@ -860,4 +1002,22 @@ def _human_browser_error(detail: str) -> str:
     cleaned = re.sub(r"^\d+:\d+:\s*execution error:\s*", "", detail).strip()
     cleaned = re.sub(r"\s*For more information: https?://\S+", "", cleaned).strip()
     cleaned = cleaned.replace("Google Chrome got an error: ", "")
+    return cleaned or detail
+
+
+def _human_music_error(detail: str) -> str:
+    if not detail:
+        return "Music could not complete that request."
+    lowered = detail.lower()
+    if (
+        "not authorized" in lowered
+        or "not allowed" in lowered
+        or "automation" in lowered
+    ):
+        return (
+            "macOS blocked Iris from controlling Music. Allow your terminal app to "
+            "control Music in System Settings > Privacy & Security > Automation."
+        )
+    cleaned = re.sub(r"^\d+:\d+:\s*execution error:\s*", "", detail).strip()
+    cleaned = cleaned.replace("Music got an error: ", "")
     return cleaned or detail
