@@ -41,6 +41,20 @@ def add_memory(
         ),
     )
     db.commit()
+    try:
+        from iris.memory_graph import record_memory_fact
+
+        record_memory_fact(
+            db,
+            memory_id=memory_id,
+            category=category,
+            content=content,
+            provenance=provenance,
+            confidence=confidence,
+        )
+    except Exception:
+        # Flat memory is the compatibility source; graph sync must not break it.
+        pass
     return memory_id
 
 

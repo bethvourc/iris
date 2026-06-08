@@ -29,6 +29,12 @@ from iris.knowledge import (
 )
 from iris.meetings import list_meetings, start_silent_meeting, stop_meeting
 from iris.memory import add_memory, edit_memory, forget_memory, list_memories
+from iris.memory_graph import (
+    explain_fact,
+    format_fact_results,
+    related_facts,
+    search_facts,
+)
 from iris.plugins import list_plugins, plugin_health, set_plugin_enabled
 from iris.profile import has_user_profile, load_user_profile, save_user_profile
 from iris.providers import ProviderRegistry
@@ -625,6 +631,25 @@ def build_parser() -> argparse.ArgumentParser:
     memory_list = memory_sub.add_parser("list", help="List memory")
     memory_list.add_argument("--category", default=None)
     memory_list.set_defaults(func=cmd_memory_list)
+    memory_search = memory_sub.add_parser("search", help="Search graph-backed memory")
+    memory_search.add_argument("query")
+    memory_search.add_argument("--limit", type=int, default=10)
+    memory_search.add_argument("--include-inactive", action="store_true")
+    memory_search.add_argument("--json", action="store_true")
+    memory_search.set_defaults(func=cmd_memory_search)
+    memory_related = memory_sub.add_parser(
+        "related", help="Show graph memory related to an entity"
+    )
+    memory_related.add_argument("entity")
+    memory_related.add_argument("--limit", type=int, default=10)
+    memory_related.add_argument("--include-inactive", action="store_true")
+    memory_related.add_argument("--json", action="store_true")
+    memory_related.set_defaults(func=cmd_memory_related)
+    memory_explain = memory_sub.add_parser(
+        "explain", help="Explain graph memory evidence"
+    )
+    memory_explain.add_argument("query")
+    memory_explain.set_defaults(func=cmd_memory_explain)
     memory_edit = memory_sub.add_parser("edit", help="Edit memory")
     memory_edit.add_argument("memory_id")
     memory_edit.add_argument("--content", required=True)
@@ -1807,6 +1832,84 @@ def cmd_memory_list(args: argparse.Namespace) -> int:
     config = _config(args)
     with open_state(config) as db:
         _print_json(list_memories(db, args.category))
+    return 0
+
+
+def cmd_memory_search(args: argparse.Namespace) -> int:
+    config = _config(args)
+    with open_state(config) as db:
+        results = search_facts(
+            db,
+            args.query,
+            limit=args.limit,
+            include_inactive=args.include_inactive,
+        )
+        record_audit(
+            db,
+            actor="user",
+            tool="memory.search",
+            risk=RiskLevel.LOW_RISK,
+            result="ok",
+            input_value={
+                "query": args.query,
+                "limit": args.limit,
+                "include_inactive": args.include_inactive,
+            },
+            output_value={"count": len(results)},
+        )
+    if args.json:
+        _print_json(results)
+    else:
+        print(format_fact_results(results))
+    return 0
+
+
+def cmd_memory_related(args: argparse.Namespace) -> int:
+    config = _config(args)
+    with open_state(config) as db:
+        results = related_facts(
+            db,
+            args.entity,
+            limit=args.limit,
+            include_inactive=args.include_inactive,
+        )
+        record_audit(
+            db,
+            actor="user",
+            tool="memory.related",
+            risk=RiskLevel.LOW_RISK,
+            result="ok",
+            input_value={
+                "entity": args.entity,
+                "limit": args.limit,
+                "include_inactive": args.include_inactive,
+            },
+            output_value={"count": len(results)},
+        )
+    if args.json:
+        _print_json(results)
+    else:
+        print(format_fact_results(results))
+    return 0
+
+
+def cmd_memory_explain(args: argparse.Namespace) -> int:
+    config = _config(args)
+    with open_state(config) as db:
+        result = explain_fact(db, args.query)
+        record_audit(
+            db,
+            actor="user",
+            tool="memory.explain",
+            risk=RiskLevel.LOW_RISK,
+            result="ok" if result else "error",
+            input_value={"query": args.query},
+            output_value={"found": result is not None},
+        )
+    if result is None:
+        print("I did not find evidence for that graph memory.", file=sys.stderr)
+        return 1
+    _print_json(result)
     return 0
 
 

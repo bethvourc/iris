@@ -23,6 +23,13 @@ from iris.integrations.google_vision import GoogleVisionClient
 from iris.integrations.openai_client import OpenAIResponsesClient
 from iris.knowledge import format_search_results, search_pages
 from iris.memory import add_memory, list_memories
+from iris.memory_graph import (
+    explain_fact,
+    format_fact_results,
+    memory_context_packet,
+    related_facts,
+    search_facts,
+)
 from iris.mac_controller import ActionResult, MacController
 from iris.perception import LiveScreenFrame, PerceptionService, ScreenAwarenessService
 from iris.polling import poll_until
@@ -125,6 +132,9 @@ CANONICAL_REALTIME_TOOLS = {
     "message_send",
     "remember",
     "recall",
+    "memory_search",
+    "memory_related",
+    "memory_explain",
     "knowledge_search",
     "run_shell",
     "web_research",
@@ -817,6 +827,43 @@ def _default_tools() -> list[ToolSpec]:
             execute=_recall,
         ),
         ToolSpec(
+            name="memory_search",
+            description="Search Iris graph-backed memory for relevant facts, preferences, and relationships.",
+            parameters=_object_schema(
+                {
+                    "query": {"type": "string"},
+                    "limit": {"type": "integer"},
+                    "include_inactive": {"type": "boolean"},
+                },
+                required=["query"],
+            ),
+            risk=RiskLevel.LOW_RISK,
+            execute=_memory_search,
+        ),
+        ToolSpec(
+            name="memory_related",
+            description="Find graph memory facts related to a person, project, app, or concept.",
+            parameters=_object_schema(
+                {
+                    "entity": {"type": "string"},
+                    "limit": {"type": "integer"},
+                    "include_inactive": {"type": "boolean"},
+                },
+                required=["entity"],
+            ),
+            risk=RiskLevel.LOW_RISK,
+            execute=_memory_related,
+        ),
+        ToolSpec(
+            name="memory_explain",
+            description="Explain why Iris believes a graph memory fact, including evidence and provenance.",
+            parameters=_object_schema(
+                {"query": {"type": "string"}}, required=["query"]
+            ),
+            risk=RiskLevel.LOW_RISK,
+            execute=_memory_explain,
+        ),
+        ToolSpec(
             name="machine_context",
             description="Inspect local machine context: installed apps, common project folders, browser profile, and connector health.",
             parameters=_object_schema({}),
@@ -1366,6 +1413,15 @@ def _int_arg(arguments: dict[str, Any], name: str, default: int = 0) -> int:
         return int(arguments.get(name, default))
     except (TypeError, ValueError):
         return default
+
+
+def _bool_arg(arguments: dict[str, Any], name: str, default: bool = False) -> bool:
+    value = arguments.get(name, default)
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        return value.strip().lower() in {"1", "true", "yes", "on"}
+    return bool(value)
 
 
 def _normalize_url(url: str) -> str:
@@ -3187,6 +3243,18 @@ def _recall(arguments: dict[str, Any], context: ToolContext) -> ToolResult:
     category = _string_arg(arguments, "category") or None
     limit = max(1, min(_int_arg(arguments, "limit", 20), 50))
     with open_state(context.config) as db:
+        graph_items = memory_context_packet(
+            db,
+            query=category or "",
+            limit=min(limit, 20),
+        )
+        if graph_items:
+            lines = [f"- {item['content']}" for item in graph_items[:limit]]
+            return ToolResult(
+                True,
+                "Here's what I've learned and remembered:\n" + "\n".join(lines),
+                {"memories": graph_items, "source": "graph"},
+            )
         rows = list_memories(db, category)
     items = [
         {"category": row.get("category"), "content": row.get("content")}
@@ -3202,8 +3270,69 @@ def _recall(arguments: dict[str, Any], context: ToolContext) -> ToolResult:
     return ToolResult(
         True,
         "Here's what I've learned and remembered:\n" + "\n".join(lines),
-        {"memories": items},
+        {"memories": items, "source": "flat"},
     )
+
+
+def _memory_search(arguments: dict[str, Any], context: ToolContext) -> ToolResult:
+    query = _string_arg(arguments, "query")
+    if not query:
+        return ToolResult(False, "I need a memory search query.")
+    if context.config is None:
+        return ToolResult(False, "Memory is not connected in this runtime.")
+    limit = max(1, min(_int_arg(arguments, "limit", 8), 20))
+    with open_state(context.config) as db:
+        results = search_facts(
+            db,
+            query,
+            limit=limit,
+            include_inactive=_bool_arg(arguments, "include_inactive"),
+        )
+    return ToolResult(
+        True,
+        format_fact_results(results),
+        {"query": query, "results": results},
+    )
+
+
+def _memory_related(arguments: dict[str, Any], context: ToolContext) -> ToolResult:
+    entity = _string_arg(arguments, "entity")
+    if not entity:
+        return ToolResult(False, "I need an entity to inspect.")
+    if context.config is None:
+        return ToolResult(False, "Memory is not connected in this runtime.")
+    limit = max(1, min(_int_arg(arguments, "limit", 8), 20))
+    with open_state(context.config) as db:
+        results = related_facts(
+            db,
+            entity,
+            limit=limit,
+            include_inactive=_bool_arg(arguments, "include_inactive"),
+        )
+    return ToolResult(
+        True,
+        format_fact_results(results),
+        {"entity": entity, "results": results},
+    )
+
+
+def _memory_explain(arguments: dict[str, Any], context: ToolContext) -> ToolResult:
+    query = _string_arg(arguments, "query")
+    if not query:
+        return ToolResult(False, "I need a memory fact or entity to explain.")
+    if context.config is None:
+        return ToolResult(False, "Memory is not connected in this runtime.")
+    with open_state(context.config) as db:
+        result = explain_fact(db, query)
+    if result is None:
+        return ToolResult(True, "I did not find evidence for that graph memory.", None)
+    status = "active" if result.get("active") else "superseded"
+    evidence = result.get("evidence") or []
+    message = (
+        f"{result['content']} is {status}. "
+        f"I found {len(evidence)} supporting evidence item(s)."
+    )
+    return ToolResult(True, message, result)
 
 
 def _file_list_folder(arguments: dict[str, Any], context: ToolContext) -> ToolResult:

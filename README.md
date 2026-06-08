@@ -149,6 +149,9 @@ Memory and knowledge:
 
 ```bash
 ./iris memory add --category project --content "Iris is local-first."
+./iris memory search "spotify preferences"
+./iris memory related "Iris"
+./iris memory explain "spotify"
 ./iris knowledge ingest-folder ~/Documents/Notes
 ./iris knowledge search "agent runtime"
 ```

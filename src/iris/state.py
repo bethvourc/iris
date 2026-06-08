@@ -88,6 +88,63 @@ CREATE TABLE IF NOT EXISTS memories (
   updated_at TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS memory_entities (
+  entity_id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  normalized_name TEXT NOT NULL UNIQUE,
+  kind TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  metadata_json TEXT NOT NULL DEFAULT '{}'
+);
+
+CREATE TABLE IF NOT EXISTS memory_observations (
+  observation_id TEXT PRIMARY KEY,
+  content TEXT NOT NULL,
+  source_type TEXT NOT NULL,
+  source_id TEXT NOT NULL,
+  category TEXT NOT NULL,
+  confidence REAL NOT NULL,
+  created_at TEXT NOT NULL,
+  metadata_json TEXT NOT NULL DEFAULT '{}',
+  UNIQUE (source_type, source_id, content)
+);
+
+CREATE TABLE IF NOT EXISTS memory_relations (
+  relation_id TEXT PRIMARY KEY,
+  subject_entity_id TEXT NOT NULL,
+  predicate TEXT NOT NULL,
+  object_entity_id TEXT,
+  object_value TEXT NOT NULL,
+  active INTEGER NOT NULL DEFAULT 1,
+  confidence REAL NOT NULL,
+  provenance TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  metadata_json TEXT NOT NULL DEFAULT '{}',
+  FOREIGN KEY (subject_entity_id) REFERENCES memory_entities(entity_id) ON DELETE CASCADE,
+  FOREIGN KEY (object_entity_id) REFERENCES memory_entities(entity_id) ON DELETE SET NULL
+);
+
+CREATE TABLE IF NOT EXISTS memory_evidence (
+  evidence_id TEXT PRIMARY KEY,
+  relation_id TEXT NOT NULL,
+  observation_id TEXT,
+  source_table TEXT NOT NULL,
+  source_id TEXT NOT NULL,
+  quote TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  FOREIGN KEY (relation_id) REFERENCES memory_relations(relation_id) ON DELETE CASCADE,
+  FOREIGN KEY (observation_id) REFERENCES memory_observations(observation_id) ON DELETE SET NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_memory_entities_kind ON memory_entities(kind);
+CREATE INDEX IF NOT EXISTS idx_memory_observations_category ON memory_observations(category);
+CREATE INDEX IF NOT EXISTS idx_memory_relations_subject ON memory_relations(subject_entity_id);
+CREATE INDEX IF NOT EXISTS idx_memory_relations_predicate ON memory_relations(predicate);
+CREATE INDEX IF NOT EXISTS idx_memory_relations_active ON memory_relations(active);
+CREATE INDEX IF NOT EXISTS idx_memory_evidence_relation ON memory_evidence(relation_id);
+
 CREATE TABLE IF NOT EXISTS meetings (
   meeting_id TEXT PRIMARY KEY,
   title TEXT NOT NULL,
@@ -271,3 +328,10 @@ def connect(path: Path) -> sqlite3.Connection:
 def migrate(db: sqlite3.Connection) -> None:
     db.executescript(SCHEMA)
     db.commit()
+    try:
+        from iris.memory_graph import backfill_memories
+
+        backfill_memories(db)
+    except Exception:
+        # State should remain usable even if graph backfill hits legacy data.
+        pass
