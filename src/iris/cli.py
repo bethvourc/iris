@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import argparse
+import difflib
 import json
 from pathlib import Path
+import re
 import shutil
 import sys
 
@@ -39,9 +41,213 @@ from iris.watchers import add_watch, list_watches, run_watch_once
 from iris.workflows import list_workflows, run_workflow
 
 
+COMMON_COMMANDS = (
+    ("iris start --live", "Start live voice mode"),
+    ("iris start", "Start an interactive Iris session"),
+    ("iris status", "Show local configuration status"),
+    ("iris doctor", "Check permissions, connectors, and control backends"),
+    ("iris tasks list", "List durable agent tasks"),
+    ("iris runs list", "Inspect recent Iris runs"),
+)
+
+COMMAND_HINTS = {
+    "live": ("iris start --live",),
+    "listen": ("iris start --live",),
+    "health": ("iris doctor", "iris control health"),
+    "task": ("iris tasks list",),
+    "run-next": ("iris tasks run-next",),
+    "session": ("iris sessions list",),
+    "plugin": ("iris plugins list",),
+    "connector": ("iris connectors list",),
+}
+
+
+class IrisArgumentParser(argparse.ArgumentParser):
+    def error(self, message: str) -> None:
+        self._print_human_error(message)
+        raise SystemExit(2)
+
+    def _print_human_error(self, message: str) -> None:
+        print(_format_parse_error(self, message), file=sys.stderr)
+
+
+def _format_parse_error(parser: argparse.ArgumentParser, message: str) -> str:
+    invalid = _parse_invalid_choice(message)
+    required = _parse_required_argument(message)
+
+    lines = ["Iris couldn't understand that command.", ""]
+    if invalid:
+        argument, value = invalid
+        choices = _choices_for_argument(parser, argument)
+        lines.extend(_invalid_choice_lines(parser, argument, value, choices))
+    elif required:
+        choices = _choices_for_argument(parser, required)
+        lines.extend(_missing_argument_lines(parser, required, choices))
+    elif message.startswith("unrecognized arguments:"):
+        lines.extend(_unrecognized_argument_lines(parser, message))
+    else:
+        lines.append(f"Problem: {_sentence(message)}")
+        lines.append("")
+        lines.append(f"Run `{parser.prog} --help` to see valid usage.")
+
+    lines.append("")
+    lines.append("Developer detail:")
+    lines.append(f"  {_developer_detail(invalid, required, message)}")
+    return "\n".join(lines)
+
+
+def _parse_invalid_choice(message: str) -> tuple[str, str] | None:
+    match = re.match(
+        r"argument (?P<argument>[^:]+): invalid choice: (?P<value>.+?) "
+        r"\(choose from .+\)",
+        message,
+    )
+    if not match:
+        return None
+    return match.group("argument"), match.group("value").strip("'\"")
+
+
+def _parse_required_argument(message: str) -> str | None:
+    match = re.match(r"the following arguments are required: (?P<argument>.+)", message)
+    if not match:
+        return None
+    return match.group("argument").split(", ", maxsplit=1)[0]
+
+
+def _choices_for_argument(
+    parser: argparse.ArgumentParser, argument: str
+) -> tuple[str, ...]:
+    for action in parser._actions:
+        if _action_matches_argument(action, argument):
+            choices = action.choices or ()
+            if isinstance(choices, dict):
+                return tuple(str(choice) for choice in choices)
+            return tuple(str(choice) for choice in choices)
+    return ()
+
+
+def _action_matches_argument(action: argparse.Action, argument: str) -> bool:
+    return (
+        action.dest == argument
+        or argument in action.option_strings
+        or action.dest == argument.replace("-", "_").lstrip("-")
+    )
+
+
+def _invalid_choice_lines(
+    parser: argparse.ArgumentParser,
+    argument: str,
+    value: str,
+    choices: tuple[str, ...],
+) -> list[str]:
+    lines: list[str] = []
+    if argument == "command":
+        lines.append(f"Problem: `{value}` is not an Iris command.")
+    elif argument.endswith("_command"):
+        command_name = argument.removesuffix("_command").replace("_", " ")
+        lines.append(f"Problem: `{value}` is not a valid `{command_name}` command.")
+    else:
+        lines.append(f"Problem: `{value}` is not valid for `{argument}`.")
+
+    suggestions = _command_suggestions(parser, value, choices)
+    if suggestions:
+        lines.append("")
+        lines.append("Try:")
+        lines.extend(f"  {suggestion}" for suggestion in suggestions[:4])
+    elif choices:
+        lines.append("")
+        lines.append("Valid values:")
+        lines.extend(f"  {choice}" for choice in choices[:8])
+        if len(choices) > 8:
+            lines.append(f"  ...and {len(choices) - 8} more")
+
+    lines.extend(_help_lines(parser))
+    return lines
+
+
+def _missing_argument_lines(
+    parser: argparse.ArgumentParser,
+    argument: str,
+    choices: tuple[str, ...],
+) -> list[str]:
+    lines: list[str] = []
+    if argument.endswith("_command"):
+        lines.append(f"Problem: `{parser.prog}` needs another command.")
+    else:
+        lines.append(f"Problem: `{argument}` is required.")
+
+    suggestions = _command_suggestions(parser, "", choices)
+    if suggestions:
+        lines.append("")
+        lines.append("Try one of:")
+        lines.extend(f"  {suggestion}" for suggestion in suggestions[:5])
+
+    lines.extend(_help_lines(parser))
+    return lines
+
+
+def _unrecognized_argument_lines(
+    parser: argparse.ArgumentParser, message: str
+) -> list[str]:
+    value = message.removeprefix("unrecognized arguments:").strip()
+    return [
+        f"Problem: Iris does not recognize `{value}` here.",
+        "",
+        f"Run `{parser.prog} --help` to see the options accepted in this context.",
+    ]
+
+
+def _command_suggestions(
+    parser: argparse.ArgumentParser, value: str, choices: tuple[str, ...]
+) -> list[str]:
+    suggestions: list[str] = []
+    if parser.prog == "iris" and value in COMMAND_HINTS:
+        suggestions.extend(COMMAND_HINTS[value])
+
+    close_matches = difflib.get_close_matches(value, choices, n=4, cutoff=0.55)
+    suggestions.extend(f"{parser.prog} {match}" for match in close_matches)
+
+    if not suggestions and parser.prog == "iris":
+        suggestions.extend(command for command, _description in COMMON_COMMANDS[:4])
+    elif not suggestions and choices:
+        suggestions.extend(f"{parser.prog} {choice}" for choice in choices[:5])
+
+    return list(dict.fromkeys(suggestions))
+
+
+def _help_lines(parser: argparse.ArgumentParser) -> list[str]:
+    if parser.prog == "iris":
+        lines = ["", "Common commands:"]
+        width = max(len(command) for command, _description in COMMON_COMMANDS)
+        for command, description in COMMON_COMMANDS:
+            lines.append(f"  {command:<{width}}  {description}")
+        lines.append("")
+        lines.append("Run `iris --help` to see every command.")
+        return lines
+    return ["", f"Run `{parser.prog} --help` to see valid usage."]
+
+
+def _sentence(message: str) -> str:
+    return message[:1].upper() + message[1:]
+
+
+def _developer_detail(
+    invalid: tuple[str, str] | None, required: str | None, message: str
+) -> str:
+    if invalid:
+        argument, value = invalid
+        return f"argparse: invalid choice for {argument}: {value}"
+    if required:
+        return f"argparse: missing required argument: {required}"
+    return f"argparse: {message}"
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
-    args = parser.parse_args(argv)
+    try:
+        args = parser.parse_args(argv)
+    except SystemExit as exc:
+        return int(exc.code) if isinstance(exc.code, int) else 2
     try:
         return args.func(args)
     except AutomationPaused as exc:
@@ -56,7 +262,7 @@ def main(argv: list[str] | None = None) -> int:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="iris", description="Local Mac agent CLI")
+    parser = IrisArgumentParser(prog="iris", description="Local Mac agent CLI")
     parser.add_argument(
         "--project-root",
         default=str(default_project_root()),
