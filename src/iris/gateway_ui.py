@@ -272,6 +272,9 @@ DASHBOARD_HTML = r"""<!doctype html>
     .empty { padding: 56px 24px; text-align: center; color: var(--muted); display: grid; gap: 8px; justify-items: center; }
     .empty-title { font: 500 1.05rem var(--sans); color: var(--text); }
     .empty p { margin: 0; font-size: .88rem; max-width: 420px; }
+    .empty-line { padding: 10px 2px 16px; color: var(--faint); font-size: .85rem; }
+
+    .stack { display: grid; gap: 10px; min-width: 0; align-content: start; }
 
     .kv { margin: 0; display: grid; gap: 7px; padding: 11px 13px; background: var(--raised); border: 1px solid var(--line-soft); border-radius: 6px; }
     .kv-row { display: grid; grid-template-columns: minmax(90px, 34%) 1fr; gap: 12px; align-items: baseline; }
@@ -435,6 +438,9 @@ DASHBOARD_HTML = r"""<!doctype html>
     }
     function emptyState(title, message) {
       return `<div class="empty"><div class="empty-title">${escapeHtml(title)}</div><p>${escapeHtml(message || "")}</p></div>`;
+    }
+    function emptyRow(message) {
+      return `<div class="empty-line">${escapeHtml(message)}</div>`;
     }
     function actionError(anchor, message) {
       const container = anchor.closest(".card-actions, .row-side, .toolbar") || anchor.parentElement;
@@ -655,7 +661,7 @@ DASHBOARD_HTML = r"""<!doctype html>
                 <div class="row-meta">risk ${escapeHtml(a.risk || "unknown")} · run ${shortId(a.run_id)}</div>
               </div>
               <div class="row-side"><span class="row-time">${timeAgo(a.created_at)}</span></div>
-            </div>`).join("") : emptyState("All clear", "No approvals are waiting on you.")}
+            </div>`).join("") : emptyRow("All clear, no approvals are waiting on you.")}
         </section>`;
       view.innerHTML = `
         <div class="stats">
@@ -667,9 +673,9 @@ DASHBOARD_HTML = r"""<!doctype html>
         <div class="cols">
           <section class="panel">
             <div class="panel-head"><h2>Recent runs</h2><span class="panel-count">${recentRuns.length}</span><button class="ghost small" data-go="runs">View all</button></div>
-            ${recentRuns.length ? recentRuns.map(runRow).join("") : emptyState("No runs yet", "Send a message through the gateway to start one.")}
+            ${recentRuns.length ? recentRuns.map(runRow).join("") : emptyRow("No runs yet — send a message through the gateway to start one.")}
           </section>
-          <div style="display:grid;gap:10px;min-width:0">
+          <div class="stack">
             ${attention}
             <section class="panel">
               <div class="panel-head"><h2>Sessions</h2><span class="panel-count">${sessionList.length}</span></div>
@@ -681,7 +687,7 @@ DASHBOARD_HTML = r"""<!doctype html>
                     <div class="row-meta">${shortId(s.session_id)} · ${escapeHtml(s.channel || "–")}</div>
                   </div>
                   <div class="row-side"><span class="row-time">${timeAgo(s.updated_at)}</span></div>
-                </div>`).join("") : emptyState("No sessions", "")}
+                </div>`).join("") : emptyRow("No sessions yet.")}
             </section>
           </div>
         </div>`;
