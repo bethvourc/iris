@@ -14,23 +14,23 @@ DASHBOARD_HTML = r"""<!doctype html>
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%233d5be6' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'><circle cx='12' cy='12' r='10'/><path d='M11.78 14C10.45 15.39 8.57 17 7 17a5 5 0 1 1 0-10c5.09 0 6.54 8.5 11.52 8.5A3.48 3.48 0 0 0 22 12a3.48 3.48 0 0 0-3.48-3.5c-.9 0-2.05.76-3.02 1.57'/></svg>">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Spline+Sans:wght@400;500;600&family=Spline+Sans+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Spline+Sans:wght@400;500;600&family=Spline+Sans+Mono:wght@400;500;600&family=Manrope:wght@500;600;700&display=swap" rel="stylesheet">
   <style>
     :root {
-      --bg: #0a0b0d;
-      --panel: #0e0f12;
-      --raised: #111216;
-      --line: rgba(255,255,255,.09);
-      --line-soft: rgba(255,255,255,.055);
-      --text: #ededef;
-      --muted: #9a9ca6;
-      --faint: #6b6d76;
+      --bg: #f4f5f7;
+      --panel: #ffffff;
+      --raised: #f6f7f9;
+      --line: #e1e3e9;
+      --line-soft: #e9ebef;
+      --text: #181a20;
+      --muted: #5f6470;
+      --faint: #9095a0;
       --accent: #3d5be6;
       --accent-deep: #2e4ccc;
-      --accent-strong: #8094ff;
-      --moss: #4fbf8b;
-      --amber: #d9a94e;
-      --rust: #d96b59;
+      --accent-strong: #3d5be6;
+      --moss: #2a9d68;
+      --amber: #a87b1e;
+      --rust: #c2483a;
       --sans: "Spline Sans", "Avenir Next", "Segoe UI", sans-serif;
       --mono: "Spline Sans Mono", ui-monospace, "SF Mono", Menlo, monospace;
     }
@@ -43,7 +43,7 @@ DASHBOARD_HTML = r"""<!doctype html>
       background: var(--bg);
     }
     ::selection { background: rgba(61,91,230,.35); }
-    :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 2px; }
+    :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
     [hidden] { display: none !important; }
 
     .brand { display: flex; align-items: center; gap: 9px; }
@@ -70,19 +70,19 @@ DASHBOARD_HTML = r"""<!doctype html>
     .primary:hover { background: var(--accent-deep); }
     .ghost { background: transparent; border-color: var(--line); color: var(--text); padding: 7px 14px; font-size: .85rem; }
     .ghost:hover { border-color: var(--accent); }
-    .btn-good { background: rgba(79,191,139,.1); border-color: rgba(79,191,139,.32); color: var(--moss); padding: 7px 14px; font-size: .85rem; }
-    .btn-good:hover { background: rgba(79,191,139,.18); }
-    .btn-danger { background: rgba(217,107,89,.09); border-color: rgba(217,107,89,.3); color: var(--rust); padding: 7px 14px; font-size: .85rem; }
-    .btn-danger:hover { background: rgba(217,107,89,.16); }
+    .btn-good { background: rgba(42,157,104,.1); border-color: rgba(42,157,104,.35); color: var(--moss); padding: 7px 14px; font-size: .85rem; }
+    .btn-good:hover { background: rgba(42,157,104,.16); }
+    .btn-danger { background: rgba(194,72,58,.08); border-color: rgba(194,72,58,.32); color: var(--rust); padding: 7px 14px; font-size: .85rem; }
+    .btn-danger:hover { background: rgba(194,72,58,.14); }
     .small { padding: 4px 10px; font-size: .78rem; }
 
     .icon-btn {
       width: 32px; height: 32px; flex: none;
       display: inline-grid; place-items: center;
-      background: transparent; border-color: var(--line); color: var(--muted);
+      background: transparent; border: 0; border-radius: 8px; color: var(--muted);
       padding: 0;
     }
-    .icon-btn:hover { border-color: var(--accent); color: var(--text); }
+    .icon-btn:hover { background: rgba(20,24,36,.06); color: var(--text); }
     .icon-btn svg { width: 15px; height: 15px; stroke: currentColor; fill: none; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
     .icon-btn.busy svg { animation: spin .7s linear infinite; }
     @keyframes spin { to { transform: rotate(360deg); } }
@@ -101,31 +101,31 @@ DASHBOARD_HTML = r"""<!doctype html>
     }
     .gate-top .logo-mark { width: 30px; height: 30px; color: var(--accent); }
     .gate-body {
-      width: min(460px, 100%);
-      margin: clamp(48px, 13vh, 140px) auto 0;
-      display: grid; gap: 18px;
+      width: min(420px, 100%);
+      margin: clamp(48px, 16vh, 170px) auto 0;
+      display: grid; gap: 14px;
+      font-family: "Manrope", var(--sans);
       animation: rise .25s ease-out both;
     }
     .gate-body h1 {
-      margin: 0 0 10px;
-      font: 600 clamp(2rem, 5vw, 2.6rem)/1.1 var(--sans);
-      letter-spacing: -.03em; color: #14161b;
+      margin: 0 0 16px;
+      font: 700 clamp(1.5rem, 3.5vw, 1.85rem)/1.15 "Manrope", var(--sans);
+      letter-spacing: -.025em; color: #14161b;
+      text-align: center;
     }
-    .gate-field { display: grid; gap: 9px; }
-    .gate-label { font: 600 .92rem var(--sans); color: #23252b; }
     .gate-input { position: relative; }
     .gate-input input {
       background: #fff;
       border: 1px solid #e1e3e9;
       border-radius: 999px;
       color: #181a20;
-      font: 400 .95rem var(--sans);
-      padding: 15px 54px 15px 22px;
+      font: 500 .92rem "Manrope", var(--sans);
+      padding: 14px 54px 14px 22px;
       transition: border-color .15s ease, box-shadow .15s ease;
     }
     .gate-input input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(61,91,230,.12); }
     .gate-input input:focus-visible { outline: none; }
-    .gate-input input::placeholder { color: #a7abb5; }
+    .gate-input input::placeholder { color: #a7abb5; font-weight: 500; }
     .gate-eye {
       position: absolute; top: 50%; right: 9px; transform: translateY(-50%);
       width: 38px; height: 38px; border-radius: 50%;
@@ -136,11 +136,12 @@ DASHBOARD_HTML = r"""<!doctype html>
     .gate-eye svg { width: 20px; height: 20px; stroke: currentColor; fill: none; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
     .gate-submit {
       background: var(--accent); color: #fff;
-      border-radius: 999px; padding: 15px 22px;
-      font: 600 1rem var(--sans);
-      margin-top: 4px;
+      border-radius: 999px; padding: 14px 22px;
+      font: 600 .95rem "Manrope", var(--sans);
+      margin-top: 2px;
     }
     .gate-submit:hover { background: var(--accent-deep); }
+    .gate-submit:focus-visible { outline-offset: 3px; }
     .gate-submit:disabled { opacity: .7; cursor: default; }
     .gate-error { min-height: 1.3em; margin: 0; font-size: .85rem; color: #c2483a; text-align: center; }
     .gate-foot { border-top: 1px solid #e4e6eb; padding-top: 18px; margin-top: 2px; }
@@ -149,36 +150,35 @@ DASHBOARD_HTML = r"""<!doctype html>
     /* ---------- top nav ---------- */
     .nav {
       position: sticky; top: 0; z-index: 20;
-      display: flex; align-items: center; gap: 24px;
-      padding: 0 clamp(20px, 4vw, 40px);
+      display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; gap: 16px;
+      padding: 0 clamp(16px, 4vw, 40px);
       height: 56px;
-      background: rgba(10,11,13,.88);
+      background: rgba(244,245,247,.88);
       backdrop-filter: blur(10px);
       border-bottom: 1px solid var(--line-soft);
     }
-    .tabs { display: flex; align-items: stretch; gap: 2px; height: 100%; overflow-x: auto; scrollbar-width: none; }
+    .tabs { display: flex; align-items: stretch; gap: 2px; height: 56px; overflow-x: auto; scrollbar-width: none; min-width: 0; }
     .tabs::-webkit-scrollbar { display: none; }
     .nav-item {
-      display: flex; align-items: center; gap: 8px;
-      padding: 0 13px; border: 0; border-radius: 0;
+      display: flex; align-items: center; gap: 7px;
+      padding: 0 14px; border: 0; border-radius: 0;
       background: none; color: var(--muted);
-      font: 500 .86rem var(--sans); cursor: pointer; white-space: nowrap;
+      font: 500 .88rem var(--sans); cursor: pointer; white-space: nowrap;
       position: relative; transition: color .15s ease;
     }
     .nav-item:hover { color: var(--text); }
     .nav-item.active { color: var(--text); }
     .nav-item.active::after {
-      content: ""; position: absolute; left: 10px; right: 10px; bottom: -1px;
+      content: ""; position: absolute; left: 12px; right: 12px; bottom: -1px;
       height: 2px; background: var(--accent);
     }
-    .nav-item svg { width: 15px; height: 15px; stroke: currentColor; fill: none; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; flex: none; }
     .nav-badge {
       font: 600 .66rem var(--mono);
-      color: var(--amber); background: rgba(217,169,78,.13);
+      color: var(--amber); background: rgba(168,123,30,.12);
       border-radius: 4px; padding: 1px 6px;
     }
     .nav-badge:empty { display: none; }
-    .nav-right { margin-left: auto; display: flex; align-items: center; gap: 8px; }
+    .nav-right { display: flex; align-items: center; gap: 8px; justify-content: flex-end; }
 
     /* ---------- main ---------- */
     main { padding: 30px clamp(20px, 4vw, 40px) 64px; max-width: 1160px; width: 100%; margin: 0 auto; }
@@ -188,7 +188,7 @@ DASHBOARD_HTML = r"""<!doctype html>
     .top-actions { display: flex; gap: 8px; flex: none; align-items: center; }
 
     /* ---------- stats ---------- */
-    .stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin-bottom: 10px; }
+    .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 10px; margin-bottom: 10px; }
     .stat {
       background: var(--panel);
       border: 1px solid var(--line-soft);
@@ -237,29 +237,29 @@ DASHBOARD_HTML = r"""<!doctype html>
     .chip:hover { color: var(--text); border-color: var(--accent); }
     .chip.active { background: rgba(61,91,230,.14); border-color: var(--accent); color: var(--accent-strong); }
 
-    .cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(330px, 1fr)); gap: 10px; }
+    .cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(300px, 100%), 1fr)); gap: 10px; }
     .card { background: var(--panel); border: 1px solid var(--line-soft); border-radius: 8px; padding: 16px; display: grid; gap: 10px; align-content: start; animation: rise .2s ease-out both; }
     .card:hover { border-color: var(--line); }
     @keyframes rise { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
 
     .fact-line { font-size: .95rem; line-height: 1.5; overflow-wrap: anywhere; }
     .fact-line .pred { font: 500 .8em var(--mono); color: var(--accent-strong); padding: 0 2px; }
-    .conf { height: 2px; background: rgba(255,255,255,.09); overflow: hidden; }
+    .conf { height: 2px; background: rgba(20,24,36,.08); overflow: hidden; }
     .conf i { display: block; height: 100%; background: var(--accent); }
 
     .pills { display: flex; flex-wrap: wrap; gap: 6px; }
     .pill { font: 500 .68rem var(--mono); border: 1px solid var(--line); border-radius: 4px; padding: 2px 8px; color: var(--muted); font-variant-numeric: tabular-nums; }
-    .pill.on { color: var(--amber); border-color: rgba(217,169,78,.4); }
-    .pill.k-good { color: var(--moss); border-color: rgba(79,191,139,.35); }
-    .pill.k-bad { color: var(--rust); border-color: rgba(217,107,89,.35); }
-    .pill.k-wait { color: var(--amber); border-color: rgba(217,169,78,.4); }
+    .pill.on { color: var(--amber); border-color: rgba(168,123,30,.4); }
+    .pill.k-good { color: var(--moss); border-color: rgba(42,157,104,.4); }
+    .pill.k-bad { color: var(--rust); border-color: rgba(194,72,58,.4); }
+    .pill.k-wait { color: var(--amber); border-color: rgba(168,123,30,.4); }
 
     .card-actions { display: flex; flex-wrap: wrap; gap: 8px; }
 
     pre {
       margin: 0; padding: 11px 13px;
       background: var(--raised); border: 1px solid var(--line-soft); border-radius: 6px;
-      font: 400 .76rem/1.55 var(--mono); color: #b9bbc4;
+      font: 400 .76rem/1.55 var(--mono); color: #4a4e59;
       white-space: pre-wrap; overflow-wrap: anywhere; overflow: auto; max-height: 260px;
     }
     details summary { cursor: pointer; font-size: .8rem; color: var(--muted); user-select: none; }
@@ -268,7 +268,6 @@ DASHBOARD_HTML = r"""<!doctype html>
 
     .toolbar { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin-bottom: 16px; }
     .toolbar input[type="search"] { width: min(340px, 100%); }
-    .toolbar .spacer { flex: 1; }
 
     .empty { padding: 56px 24px; text-align: center; color: var(--muted); display: grid; gap: 8px; justify-items: center; }
     .empty-title { font: 500 1.05rem var(--sans); color: var(--text); }
@@ -280,20 +279,19 @@ DASHBOARD_HTML = r"""<!doctype html>
     .kv dd { margin: 0; font-size: .88rem; color: var(--text); overflow-wrap: anywhere; font-variant-numeric: tabular-nums; }
 
     .inline-error { font-size: .8rem; color: var(--rust); align-self: center; }
-    .inline-note { font-size: .8rem; color: var(--muted); align-self: center; font-variant-numeric: tabular-nums; }
 
     .mono { font-family: var(--mono); font-variant-numeric: tabular-nums; }
 
     /* ---------- modal ---------- */
     .modal-backdrop {
       position: fixed; inset: 0; z-index: 50;
-      background: rgba(0,0,0,.62);
+      background: rgba(15,18,30,.4);
       display: flex; align-items: center; justify-content: center; padding: 24px;
     }
     .modal {
       width: min(720px, 100%); max-height: 82vh; overflow: auto;
       background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
-      padding: 20px 22px; box-shadow: 0 24px 64px rgba(0,0,0,.5);
+      padding: 20px 22px; box-shadow: 0 24px 64px rgba(15,18,30,.18);
       display: grid; gap: 12px;
     }
     .modal-head { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
@@ -304,18 +302,21 @@ DASHBOARD_HTML = r"""<!doctype html>
     }
 
     ::-webkit-scrollbar { width: 10px; height: 10px; }
-    ::-webkit-scrollbar-thumb { background: rgba(255,255,255,.14); border-radius: 6px; border: 2px solid var(--bg); }
+    ::-webkit-scrollbar-thumb { background: rgba(20,24,36,.18); border-radius: 6px; border: 2px solid var(--bg); }
     ::-webkit-scrollbar-track { background: transparent; }
 
     @media (max-width: 920px) {
-      .nav { gap: 14px; }
-      .nav .word { display: none; }
-      .nav-item { padding: 0 9px; }
-      .nav-item span.nav-label { display: none; }
-      .stats { grid-template-columns: repeat(2, 1fr); }
       .cols { grid-template-columns: 1fr; }
-      .top { flex-direction: column; align-items: flex-start; }
-      .top-actions { align-self: flex-end; }
+    }
+    @media (max-width: 720px) {
+      .nav { grid-template-columns: auto 1fr auto; gap: 10px; }
+      .nav .word { display: none; }
+      .nav-item { padding: 0 10px; font-size: .84rem; }
+      main { padding-top: 22px; }
+      .top { flex-direction: column; align-items: flex-start; gap: 8px; margin-bottom: 18px; }
+      .top-actions { position: absolute; right: clamp(16px, 4vw, 40px); margin-top: 2px; }
+      .top { position: relative; }
+      .toolbar input[type="search"] { width: 100%; }
     }
   </style>
 </head>
@@ -328,15 +329,12 @@ DASHBOARD_HTML = r"""<!doctype html>
     </div>
     <form class="gate-body" id="gateForm">
       <h1>Log in to continue</h1>
-      <div class="gate-field">
-        <label class="gate-label" for="gateToken">Gateway token</label>
-        <div class="gate-input">
-          <input id="gateToken" type="password" placeholder="IRIS_GATEWAY_TOKEN" autocomplete="current-password" autofocus>
-          <button class="gate-eye" type="button" id="gateEye" aria-label="Show token" aria-pressed="false">
-            <svg id="eyeClosed" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 12.5c2.6 2.9 5.7 4.3 9 4.3s6.4-1.4 9-4.3"/><path d="M5.4 15.5 4 17.4"/><path d="m9.5 17.3-.7 2.2"/><path d="m14.5 17.3.7 2.2"/><path d="m18.6 15.5 1.4 1.9"/></svg>
-            <svg id="eyeOpen" viewBox="0 0 24 24" aria-hidden="true" hidden><path d="M2.5 12S6 5.5 12 5.5 21.5 12 21.5 12 18 18.5 12 18.5 2.5 12 2.5 12Z"/><circle cx="12" cy="12" r="3.2"/></svg>
-          </button>
-        </div>
+      <div class="gate-input">
+        <input id="gateToken" type="password" placeholder="Gateway token" aria-label="Gateway token" autocomplete="current-password" autofocus>
+        <button class="gate-eye" type="button" id="gateEye" aria-label="Show token" aria-pressed="false">
+          <svg id="eyeClosed" viewBox="0 0 24 24" aria-hidden="true"><path d="M2 10C2 10 6.5 15 12 15C17.5 15 22 10 22 10"/><path d="M12 15v2.6"/><path d="m7.3 14.3-1.4 2.2"/><path d="m16.7 14.3 1.4 2.2"/></svg>
+          <svg id="eyeOpen" viewBox="0 0 24 24" aria-hidden="true" hidden><path d="M2 8C2 8 6.47715 3 12 3C17.5228 3 22 8 22 8"/><path d="M21.544 13.045C21.848 13.4713 22 13.6845 22 14C22 14.3155 21.848 14.5287 21.544 14.955C20.1779 16.8706 16.6892 21 12 21C7.31078 21 3.8221 16.8706 2.45604 14.955C2.15201 14.5287 2 14.3155 2 14C2 13.6845 2.15201 13.4713 2.45604 13.045C3.8221 11.1294 7.31078 7 12 7C16.6892 7 20.1779 11.1294 21.544 13.045Z"/><path d="M15 14C15 12.3431 13.6569 11 12 11C10.3431 11 9 12.3431 9 14C9 15.6569 10.3431 17 12 17C13.6569 17 15 15.6569 15 14Z"/></svg>
+        </button>
       </div>
       <button class="gate-submit" type="submit" id="gateSubmit">Login</button>
       <p class="gate-error" id="gateError"></p>
@@ -352,32 +350,16 @@ DASHBOARD_HTML = r"""<!doctype html>
         <div class="word">Iris</div>
       </div>
       <nav class="tabs" aria-label="Views">
-        <!-- Icons: Hugeicons stroke-rounded (hugeicons.com) -->
-        <button class="nav-item active" data-view="overview">
-          <svg viewBox="0 0 24 24"><path d="M13.6903 19.4567C13.5 18.9973 13.5 18.4149 13.5 17.25C13.5 16.0851 13.5 15.5027 13.6903 15.0433C13.944 14.4307 14.4307 13.944 15.0433 13.6903C15.5027 13.5 16.0851 13.5 17.25 13.5C18.4149 13.5 18.9973 13.5 19.4567 13.6903C20.0693 13.944 20.556 14.4307 20.8097 15.0433C21 15.5027 21 16.0851 21 17.25C21 18.4149 21 18.9973 20.8097 19.4567C20.556 20.0693 20.0693 20.556 19.4567 20.8097C18.9973 21 18.4149 21 17.25 21C16.0851 21 15.5027 21 15.0433 20.8097C14.4307 20.556 13.944 20.0693 13.6903 19.4567Z"/><path d="M13.6903 8.95671C13.5 8.49728 13.5 7.91485 13.5 6.75C13.5 5.58515 13.5 5.00272 13.6903 4.54329C13.944 3.93072 14.4307 3.44404 15.0433 3.1903C15.5027 3 16.0851 3 17.25 3C18.4149 3 18.9973 3 19.4567 3.1903C20.0693 3.44404 20.556 3.93072 20.8097 4.54329C21 5.00272 21 5.58515 21 6.75C21 7.91485 21 8.49728 20.8097 8.95671C20.556 9.56928 20.0693 10.056 19.4567 10.3097C18.9973 10.5 18.4149 10.5 17.25 10.5C16.0851 10.5 15.5027 10.5 15.0433 10.3097C14.4307 10.056 13.944 9.56928 13.6903 8.95671Z"/><path d="M3.1903 19.4567C3 18.9973 3 18.4149 3 17.25C3 16.0851 3 15.5027 3.1903 15.0433C3.44404 14.4307 3.93072 13.944 4.54329 13.6903C5.00272 13.5 5.58515 13.5 6.75 13.5C7.91485 13.5 8.49728 13.5 8.95671 13.6903C9.56928 13.944 10.056 14.4307 10.3097 15.0433C10.5 15.5027 10.5 16.0851 10.5 17.25C10.5 18.4149 10.5 18.9973 10.3097 19.4567C10.056 20.0693 9.56928 20.556 8.95671 20.8097C8.49728 21 7.91485 21 6.75 21C5.58515 21 5.00272 21 4.54329 20.8097C3.93072 20.556 3.44404 20.0693 3.1903 19.4567Z"/><path d="M3.1903 8.95671C3 8.49728 3 7.91485 3 6.75C3 5.58515 3 5.00272 3.1903 4.54329C3.44404 3.93072 3.93072 3.44404 4.54329 3.1903C5.00272 3 5.58515 3 6.75 3C7.91485 3 8.49728 3 8.95671 3.1903C9.56928 3.44404 10.056 3.93072 10.3097 4.54329C10.5 5.00272 10.5 5.58515 10.5 6.75C10.5 7.91485 10.5 8.49728 10.3097 8.95671C10.056 9.56928 9.56928 10.056 8.95671 10.3097C8.49728 10.5 7.91485 10.5 6.75 10.5C5.58515 10.5 5.00272 10.5 4.54329 10.3097C3.93072 10.056 3.44404 9.56928 3.1903 8.95671Z"/></svg>
-          <span class="nav-label">Overview</span>
-        </button>
-        <button class="nav-item" data-view="memory">
-          <svg viewBox="0 0 24 24"><path d="M4.22222 21.9948V18.4451C4.22222 17.1737 3.88927 16.5128 3.23482 15.4078C2.4503 14.0833 2 12.5375 2 10.8866C2 5.97866 5.97969 2 10.8889 2C15.7981 2 19.7778 5.97866 19.7778 10.8866C19.7778 11.4663 19.7778 11.7562 19.802 11.9187C19.8598 12.3072 20.0411 12.6414 20.2194 12.9873L22 16.4407L20.6006 17.1402C20.195 17.3429 19.9923 17.4443 19.851 17.6314C19.7097 17.8184 19.67 18.0296 19.5904 18.4519L19.5826 18.4931C19.4004 19.4606 19.1993 20.5286 18.6329 21.2024C18.4329 21.4403 18.1853 21.6336 17.9059 21.7699C17.4447 21.9948 16.8777 21.9948 15.7437 21.9948C15.219 21.9948 14.6928 22.0069 14.1682 21.9942C12.9247 21.9639 12 20.9184 12 19.7044"/><path d="M14.388 10.5315C13.9617 10.5315 13.5729 10.3702 13.2784 10.1048M14.388 10.5315C14.388 11.6774 13.7241 12.7658 12.4461 12.7658C11.1681 12.7658 10.5043 13.8541 10.5043 15M14.388 10.5315C16.5373 10.5315 16.5373 7.18017 14.388 7.18017C14.1927 7.18017 14.0053 7.21403 13.8312 7.27624C13.9362 4.77819 10.3349 4.1 9.51923 6.44018M10.5043 8.29729C10.5043 7.52323 10.1133 6.8411 9.51923 6.44018M9.51923 6.44018C7.66742 5.19034 5.19883 7.4331 6.37324 9.43277C4.40226 9.72827 4.61299 12.7658 6.6205 12.7658C7.18344 12.7658 7.68111 12.4844 7.98234 12.0538"/></svg>
-          <span class="nav-label">Memory</span>
-        </button>
-        <button class="nav-item" data-view="reviews">
-          <svg viewBox="0 0 24 24"><path d="M13.498 2H8.49805C7.66962 2 6.99805 2.67157 6.99805 3.5C6.99805 4.32843 7.66962 5 8.49805 5H13.498C14.3265 5 14.998 4.32843 14.998 3.5C14.998 2.67157 14.3265 2 13.498 2Z"/><path d="M6.99805 15H10.4266M6.99805 11H14.998"/><path d="M18.9981 13.5V9.48263C18.9981 6.65424 18.9981 5.24004 18.1194 4.36137C17.4781 3.72007 16.5515 3.54681 14.9981 3.5M11.998 21.9995L8.99805 21.9995C6.16963 21.9995 4.75541 21.9995 3.87674 21.1208C2.99806 20.2421 2.99805 18.8279 2.99805 15.9995L2.99806 9.48269C2.99805 6.65425 2.99805 5.24004 3.87673 4.36136C4.51802 3.72007 5.44456 3.54681 6.99795 3.5"/><path d="M13.998 20C13.998 20 14.998 20 15.998 22C15.998 22 18.1745 17 20.998 16"/></svg>
-          <span class="nav-label">Review queue</span>
-          <span class="nav-badge" id="navReviews"></span>
-        </button>
-        <button class="nav-item" data-view="runs">
-          <svg viewBox="0 0 24 24"><path d="M4.31802 19.682C3 18.364 3 16.2426 3 12C3 7.75736 3 5.63604 4.31802 4.31802C5.63604 3 7.75736 3 12 3C16.2426 3 18.364 3 19.682 4.31802C21 5.63604 21 7.75736 21 12C21 16.2426 21 18.364 19.682 19.682C18.364 21 16.2426 21 12 21C7.75736 21 5.63604 21 4.31802 19.682Z"/><path d="M7 14L9.79289 11.2071C10.1834 10.8166 10.8166 10.8166 11.2071 11.2071L12.7929 12.7929C13.1834 13.1834 13.8166 13.1834 14.2071 12.7929L17 10"/></svg>
-          <span class="nav-label">Runs</span>
-        </button>
-        <button class="nav-item" data-view="approvals">
-          <svg viewBox="0 0 24 24"><path d="M18.9905 19H19M18.9905 19C18.3678 19.6175 17.2393 19.4637 16.4479 19.4637C15.4765 19.4637 15.0087 19.6537 14.3154 20.347C13.7251 20.9374 12.9337 22 12 22C11.0663 22 10.2749 20.9374 9.68457 20.347C8.99128 19.6537 8.52349 19.4637 7.55206 19.4637C6.76068 19.4637 5.63218 19.6175 5.00949 19C4.38181 18.3776 4.53628 17.2444 4.53628 16.4479C4.53628 15.4414 4.31616 14.9786 3.59938 14.2618C2.53314 13.1956 2.00002 12.6624 2 12C2.00001 11.3375 2.53312 10.8044 3.59935 9.73817C4.2392 9.09832 4.53628 8.46428 4.53628 7.55206C4.53628 6.76065 4.38249 5.63214 5 5.00944C5.62243 4.38178 6.7556 4.53626 7.55208 4.53626C8.46427 4.53626 9.09832 4.2392 9.73815 3.59937C10.8044 2.53312 11.3375 2 12 2C12.6625 2 13.1956 2.53312 14.2618 3.59937C14.9015 4.23907 15.5355 4.53626 16.4479 4.53626C17.2393 4.53626 18.3679 4.38247 18.9906 5C19.6182 5.62243 19.4637 6.75559 19.4637 7.55206C19.4637 8.55858 19.6839 9.02137 20.4006 9.73817C21.4669 10.8044 22 11.3375 22 12C22 12.6624 21.4669 13.1956 20.4006 14.2618C19.6838 14.9786 19.4637 15.4414 19.4637 16.4479C19.4637 17.2444 19.6182 18.3776 18.9905 19Z"/><path d="M9 12.8929C9 12.8929 10.2 13.5447 10.8 14.5C10.8 14.5 12.6 10.75 15 9.5"/></svg>
-          <span class="nav-label">Approvals</span>
-          <span class="nav-badge" id="navApprovals"></span>
-        </button>
+        <button class="nav-item active" data-view="overview">Overview</button>
+        <button class="nav-item" data-view="memory">Memory</button>
+        <button class="nav-item" data-view="reviews">Review queue<span class="nav-badge" id="navReviews"></span></button>
+        <button class="nav-item" data-view="runs">Runs</button>
+        <button class="nav-item" data-view="approvals">Approvals<span class="nav-badge" id="navApprovals"></span></button>
       </nav>
       <div class="nav-right">
-        <button class="ghost small" id="signOut">Sign out</button>
+        <button class="icon-btn" id="signOut" title="Sign out" aria-label="Sign out">
+          <svg viewBox="0 0 24 24"><path d="M15.5 8.04045C15.4588 6.87972 15.3216 6.15451 14.8645 5.58671C14.2114 4.77536 13.0944 4.52064 10.8605 4.01121L9.85915 3.78286C6.4649 3.00882 4.76777 2.6218 3.63388 3.51317C2.5 4.40454 2.5 6.1257 2.5 9.56803V14.432C2.5 17.8743 2.5 19.5955 3.63388 20.4868C4.76777 21.3782 6.4649 20.9912 9.85915 20.2171L10.8605 19.9888C13.0944 19.4794 14.2114 19.2246 14.8645 18.4133C15.3216 17.8455 15.4588 17.1203 15.5 15.9595"/><path d="M18.5 9.01172C18.5 9.01172 21.5 11.2212 21.5 12.0117C21.5 12.8023 18.5 15.0117 18.5 15.0117M21 12.0117H8.49998"/></svg>
+        </button>
       </div>
     </header>
 
@@ -418,7 +400,6 @@ DASHBOARD_HTML = r"""<!doctype html>
       view: "overview",
       memMode: "facts",
       memQuery: "",
-      includeInactive: false,
       runFilter: "",
     };
 
@@ -531,8 +512,8 @@ DASHBOARD_HTML = r"""<!doctype html>
       const input = $("#gateToken");
       input.value = "";
       input.type = "password";
-      $("#eyeClosed").hidden = false;
-      $("#eyeOpen").hidden = true;
+      $("#eyeClosed").toggleAttribute("hidden", false);
+      $("#eyeOpen").toggleAttribute("hidden", true);
       input.focus();
     }
     function showApp() {
@@ -574,8 +555,8 @@ DASHBOARD_HTML = r"""<!doctype html>
       const input = $("#gateToken");
       const show = input.type === "password";
       input.type = show ? "text" : "password";
-      $("#eyeClosed").hidden = show;
-      $("#eyeOpen").hidden = !show;
+      $("#eyeClosed").toggleAttribute("hidden", show);
+      $("#eyeOpen").toggleAttribute("hidden", !show);
       const eye = $("#gateEye");
       eye.setAttribute("aria-label", show ? "Hide token" : "Show token");
       eye.setAttribute("aria-pressed", String(show));
@@ -713,33 +694,13 @@ DASHBOARD_HTML = r"""<!doctype html>
           <div class="chips" id="memMode">
             <button class="chip ${state.memMode === "facts" ? "active" : ""}" data-mem-mode="facts">Facts</button>
             <button class="chip ${state.memMode === "related" ? "active" : ""}" data-mem-mode="related">Related graph</button>
-            <button class="chip ${state.includeInactive ? "active" : ""}" id="memInactive" title="Show inactive facts too">Inactive</button>
           </div>
-          <div class="spacer"></div>
-          <span class="inline-note" id="memNote"></span>
-          <button class="ghost" id="memMaintain">Run maintenance</button>
         </div>
         <div class="cards" id="memResults"></div>`;
       $("#memQuery").addEventListener("keydown", (event) => {
         if (event.key === "Enter") {
           state.memQuery = $("#memQuery").value.trim();
           loadMemoryResults();
-        }
-      });
-      $("#memInactive").addEventListener("click", () => {
-        state.includeInactive = !state.includeInactive;
-        $("#memInactive").classList.toggle("active", state.includeInactive);
-        loadMemoryResults();
-      });
-      $("#memMaintain").addEventListener("click", async () => {
-        const note = $("#memNote");
-        try {
-          const data = await api("/memory/maintain", { method: "POST", body: "{}" });
-          note.textContent = `${data.relations || 0} relation(s) touched, ${data.stale || 0} stale`;
-          loadMemoryResults();
-        } catch (error) {
-          note.textContent = error.message;
-          note.classList.add("inline-error");
         }
       });
       await loadMemoryResults();
@@ -750,17 +711,16 @@ DASHBOARD_HTML = r"""<!doctype html>
       if (!target) return;
       try {
         const q = encodeURIComponent(state.memQuery);
-        const inactive = state.includeInactive ? "true" : "false";
         let facts = [];
         if (state.memMode === "related") {
           if (!state.memQuery) {
             target.innerHTML = emptyState("Pick an entity", "Type an entity name and press Enter to walk its graph neighbourhood.");
             return;
           }
-          const data = await api(`/memory/related?entity=${q}&limit=30&include_inactive=${inactive}`);
+          const data = await api(`/memory/related?entity=${q}&limit=30`);
           facts = data.facts || [];
         } else {
-          const data = await api(`/memory/facts?query=${q}&limit=30&include_inactive=${inactive}`);
+          const data = await api(`/memory/facts?query=${q}&limit=30`);
           facts = data.facts || [];
         }
         if (!facts.length) {
