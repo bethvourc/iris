@@ -58,7 +58,14 @@ class GatewayService:
             gateway = service
 
         server = ThreadingHTTPServer((host, port), Handler)
-        print(f"Iris gateway listening on http://{host}:{port}")
+        base_url = f"http://{host}:{port}"
+        print(f"Iris gateway listening on {base_url}")
+        print(f"Open {base_url}/memory-browser to use the UI")
+        if not self.config.gateway_token:
+            print(
+                "WARNING: IRIS_GATEWAY_TOKEN is not set; all API endpoints will "
+                "return 401. Set it before serving to enable access."
+            )
         server.serve_forever()
 
     def authorize(self, path: str, authorization_header: str | None) -> bool:
@@ -344,6 +351,9 @@ class _GatewayHandler(BaseHTTPRequestHandler):
 
     def do_GET(self) -> None:  # noqa: N802
         parsed = urlparse(self.path)
+        if parsed.path in ("", "/"):
+            self._redirect("/memory-browser")
+            return
         if not self._authorize(parsed.path):
             return
         if parsed.path == "/memory-browser":
@@ -399,6 +409,12 @@ class _GatewayHandler(BaseHTTPRequestHandler):
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         self.wfile.write(body)
+
+    def _redirect(self, location: str) -> None:
+        self.send_response(302)
+        self.send_header("Location", location)
+        self.send_header("Content-Length", "0")
+        self.end_headers()
 
     def _write_html(self, status: int, html: str) -> None:
         body = html.encode("utf-8")
