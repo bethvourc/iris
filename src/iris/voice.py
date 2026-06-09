@@ -7,6 +7,7 @@ import signal
 import threading
 import time
 import base64
+import uuid
 from difflib import SequenceMatcher
 from dataclasses import dataclass
 from typing import Any
@@ -26,6 +27,7 @@ from iris.safety import SafetyGate
 from iris.scheduler import SchedulerService
 from iris.state import open_state
 from iris.system import run_command
+from iris.tracing import record_trace_event
 
 
 @dataclass(frozen=True)
@@ -241,6 +243,12 @@ class RealtimeSpeechSession:
         self._current_response_text_chunks: list[str] = []
         self._interrupted_response_pending = False
         self._interrupted_response_at = 0.0
+        self._turn_buffer_lock = threading.Lock()
+        self._turn_buffer_segments: list[str] = []
+        self._turn_buffer_timer: threading.Timer | None = None
+        self._turn_buffer_started_at = 0.0
+        self._turn_buffer_last_at = 0.0
+        self._turn_buffer_interrupted_response = False
         self._pending_calls: list[dict[str, Any]] = []
         self._tool_lock = threading.Lock()
         self._meeting_active = False
@@ -262,6 +270,7 @@ class RealtimeSpeechSession:
             advise=self._copilot_advise,
             announce=self.announce,
         )
+        self._voice_trace_run_id = f"voice-{uuid.uuid4().hex}"
 
     def run(self) -> None:
         if not self.config.openai_api_key:
@@ -304,7 +313,7 @@ class RealtimeSpeechSession:
                                 "type": "server_vad",
                                 "threshold": 0.5,
                                 "prefix_padding_ms": 300,
-                                "silence_duration_ms": 500,
+                                "silence_duration_ms": self._live_vad_silence_ms(),
                                 "create_response": False,
                                 "interrupt_response": self._barge_in_enabled(),
                             },
@@ -529,6 +538,7 @@ class RealtimeSpeechSession:
 
     def stop(self) -> None:
         self._stop.set()
+        self._clear_turn_buffer()
         if self._ws is not None:
             try:
                 self._ws.close()
@@ -672,12 +682,26 @@ class RealtimeSpeechSession:
                     )
 
     def _handle_transcript(self, transcript: str) -> None:
+        normalized = _normalize_wake_text(transcript)
+        if _is_filler_transcript(normalized):
+            self._trace_voice_event(
+                "voice.turn.dropped_filler",
+                details={"word_count": len(normalized.split())},
+            )
         if self._should_ignore_transcript(transcript):
             return
         print(f"you> {transcript}")
         lowered = transcript.lower().strip()
+        self._trace_voice_event(
+            "voice.turn.segment_received",
+            details={
+                "word_count": len(normalized.split()),
+                "char_count": len(transcript),
+            },
+        )
         interrupted_response = self._consume_interrupted_response()
         if self._meeting_active:
+            self._clear_turn_buffer()
             if _is_meeting_stop(lowered):
                 self._stop_meeting()
             else:
@@ -685,9 +709,11 @@ class RealtimeSpeechSession:
                     self._meeting_transcript.append(transcript)
             return
         if _is_meeting_start(lowered):
+            self._clear_turn_buffer()
             self._start_meeting(transcript)
             return
         if _is_sleep_command(lowered):
+            self._clear_turn_buffer()
             self.awake = False
             self._respond_with_text("Going quiet. Say Iris when you need me.")
             return
@@ -699,6 +725,7 @@ class RealtimeSpeechSession:
                 " ,.!?"
             )
             if not command:
+                self._clear_turn_buffer()
                 self._respond_with_text(
                     f"I'm here, {self.user_profile.preferred_name}."
                 )
@@ -710,6 +737,7 @@ class RealtimeSpeechSession:
             return
 
         if self._handle_control_word(lowered):
+            self._clear_turn_buffer()
             return
 
         instructions = (
@@ -717,6 +745,13 @@ class RealtimeSpeechSession:
             if interrupted_response and _is_revision_interrupt(transcript)
             else None
         )
+        if self._turn_buffer_enabled():
+            self._buffer_or_flush_turn(
+                transcript,
+                interrupted_response=interrupted_response,
+                instructions=instructions,
+            )
+            return
         self._begin_model_response(instructions=instructions)
 
     def _handle_control_word(self, lowered: str) -> bool:
@@ -815,10 +850,20 @@ class RealtimeSpeechSession:
             self._suppress_input_until = 0.0
             self._interrupted_response_pending = True
             self._interrupted_response_at = now
+            item_id = self._current_assistant_item_id
+            audio_end_ms = self._played_audio_ms_locked()
         with self._tool_lock:
             self._pending_calls.clear()
         self._stop_output_playback(output)
         self._truncate_active_assistant_audio()
+        self._trace_voice_event(
+            "voice.interrupt.detected",
+            details={
+                "had_assistant_item": bool(item_id),
+                "audio_end_ms": audio_end_ms,
+                "pending_calls_cleared": True,
+            },
+        )
         return True
 
     def _truncate_active_assistant_audio(self) -> None:
@@ -861,6 +906,204 @@ class RealtimeSpeechSession:
             self._current_audio_started_at = 0.0
             self._current_audio_received_ms = 0
             self._current_audio_played_ms = 0
+
+    def _buffer_or_flush_turn(
+        self,
+        transcript: str,
+        *,
+        interrupted_response: bool = False,
+        instructions: str | None = None,
+    ) -> None:
+        now = time.monotonic()
+        response_instructions: str | None = None
+        should_flush = False
+        with self._turn_buffer_lock:
+            if (
+                self._turn_buffer_segments
+                and now - self._turn_buffer_last_at > self._turn_max_wait_seconds()
+            ):
+                self._turn_buffer_segments = []
+                self._turn_buffer_started_at = 0.0
+                self._turn_buffer_interrupted_response = False
+            self._turn_buffer_segments.append(transcript)
+            self._turn_buffer_started_at = self._turn_buffer_started_at or now
+            self._turn_buffer_last_at = now
+            self._turn_buffer_interrupted_response = (
+                self._turn_buffer_interrupted_response or interrupted_response
+            )
+            combined = _join_turn_segments(self._turn_buffer_segments)
+            segment_count = len(self._turn_buffer_segments)
+            word_count = len(_normalize_wake_text(combined).split())
+            should_flush = self._should_flush_turn_locked(combined, transcript, now)
+            endpoint_reason = self._turn_endpoint_reason_locked(
+                combined,
+                transcript,
+                now,
+                should_flush=should_flush,
+            )
+            if should_flush:
+                response_instructions = self._turn_response_instructions_locked(
+                    combined, instructions
+                )
+                self._cancel_turn_timer_locked()
+                self._reset_turn_buffer_locked()
+            else:
+                self._schedule_turn_flush_locked()
+        if should_flush:
+            self._trace_voice_event(
+                "voice.turn.endpoint_reason",
+                details={
+                    "endpoint_reason": endpoint_reason,
+                    "word_count": word_count,
+                },
+            )
+            self._trace_voice_event(
+                "voice.turn.flushed",
+                details={
+                    "segment_count": segment_count,
+                    "endpoint_reason": endpoint_reason,
+                    "word_count": word_count,
+                },
+            )
+            self._begin_model_response(instructions=response_instructions)
+        else:
+            self._trace_voice_event(
+                "voice.turn.endpoint_reason",
+                details={
+                    "endpoint_reason": endpoint_reason,
+                    "word_count": len(_normalize_wake_text(transcript).split()),
+                },
+            )
+            self._trace_voice_event(
+                "voice.turn.buffered",
+                details={
+                    "endpoint_reason": endpoint_reason,
+                    "word_count": len(_normalize_wake_text(transcript).split()),
+                },
+            )
+
+    def _flush_turn_buffer(self) -> None:
+        response_instructions: str | None = None
+        segment_count = 0
+        word_count = 0
+        with self._turn_buffer_lock:
+            if not self._turn_buffer_segments:
+                return
+            combined = _join_turn_segments(self._turn_buffer_segments)
+            segment_count = len(self._turn_buffer_segments)
+            word_count = len(_normalize_wake_text(combined).split())
+            response_instructions = self._turn_response_instructions_locked(
+                combined,
+                None,
+            )
+            self._cancel_turn_timer_locked()
+            self._reset_turn_buffer_locked()
+        self._trace_voice_event(
+            "voice.turn.endpoint_reason",
+            details={
+                "endpoint_reason": "timeout",
+                "word_count": word_count,
+            },
+        )
+        self._trace_voice_event(
+            "voice.turn.flushed",
+            details={
+                "segment_count": segment_count,
+                "endpoint_reason": "timeout",
+                "word_count": word_count,
+            },
+        )
+        self._begin_model_response(instructions=response_instructions)
+
+    def _clear_turn_buffer(self) -> None:
+        with self._turn_buffer_lock:
+            self._cancel_turn_timer_locked()
+            self._reset_turn_buffer_locked()
+
+    def _should_flush_turn_locked(
+        self,
+        combined: str,
+        latest: str,
+        now: float,
+    ) -> bool:
+        if _is_direct_voice_command(latest):
+            return True
+        if now - self._turn_buffer_started_at >= self._turn_max_wait_seconds():
+            return True
+        if len(self._turn_buffer_segments) > 1 and not _is_partial_turn(combined):
+            return True
+        word_count = len(_normalize_wake_text(combined).split())
+        return (
+            word_count >= self._turn_min_words_for_immediate_response()
+            and not _is_partial_turn(combined)
+        )
+
+    def _turn_endpoint_reason_locked(
+        self,
+        combined: str,
+        latest: str,
+        now: float,
+        *,
+        should_flush: bool,
+    ) -> str:
+        if _is_direct_voice_command(latest):
+            return "direct_command"
+        if now - self._turn_buffer_started_at >= self._turn_max_wait_seconds():
+            return "max_wait"
+        if _is_partial_turn(combined):
+            return "partial_turn"
+        if len(self._turn_buffer_segments) > 1:
+            return "continuation_complete" if should_flush else "continuation_wait"
+        return "complete" if should_flush else "waiting_for_continuation"
+
+    def _turn_response_instructions_locked(
+        self,
+        combined: str,
+        existing: str | None,
+    ) -> str | None:
+        parts: list[str] = []
+        if existing:
+            parts.append(existing)
+        if len(self._turn_buffer_segments) > 1:
+            parts.append(
+                "Treat the user's recent speech fragments as one continuous turn. "
+                "Do not answer earlier fragments separately."
+            )
+        if _is_partial_turn(combined):
+            parts.append(
+                "The user's latest voice turn may be incomplete. If the intent is not "
+                "clear, ask one short clarifying question instead of rewriting or "
+                "finishing their sentence."
+            )
+        if _is_meta_feedback_about_iris(combined):
+            parts.append(
+                "The user is giving feedback about Iris. Acknowledge the product issue "
+                "directly and briefly; do not rewrite their wording unless asked."
+            )
+        return " ".join(parts) if parts else None
+
+    def _schedule_turn_flush_locked(self) -> None:
+        self._cancel_turn_timer_locked()
+        delay = self._turn_continuation_seconds()
+        elapsed = time.monotonic() - self._turn_buffer_started_at
+        remaining = max(0.05, self._turn_max_wait_seconds() - elapsed)
+        self._turn_buffer_timer = threading.Timer(
+            min(delay, remaining),
+            self._flush_turn_buffer,
+        )
+        self._turn_buffer_timer.daemon = True
+        self._turn_buffer_timer.start()
+
+    def _cancel_turn_timer_locked(self) -> None:
+        if self._turn_buffer_timer is not None:
+            self._turn_buffer_timer.cancel()
+            self._turn_buffer_timer = None
+
+    def _reset_turn_buffer_locked(self) -> None:
+        self._turn_buffer_segments = []
+        self._turn_buffer_started_at = 0.0
+        self._turn_buffer_last_at = 0.0
+        self._turn_buffer_interrupted_response = False
 
     def _record_function_call(self, item: dict[str, Any]) -> None:
         name = str(item.get("name") or "")
@@ -1257,6 +1500,45 @@ class RealtimeSpeechSession:
     def _echo_suppression_seconds(self) -> float:
         return max(0, int(getattr(self.config, "echo_suppression_ms", 800))) / 1000.0
 
+    def _turn_buffer_enabled(self) -> bool:
+        return bool(getattr(self.config, "turn_buffer_enabled", True))
+
+    def _turn_continuation_seconds(self) -> float:
+        return max(0, int(getattr(self.config, "turn_continuation_ms", 1200))) / 1000.0
+
+    def _turn_max_wait_seconds(self) -> float:
+        return max(1, int(getattr(self.config, "turn_max_wait_ms", 2500))) / 1000.0
+
+    def _turn_min_words_for_immediate_response(self) -> int:
+        return max(
+            1,
+            int(getattr(self.config, "turn_min_words_for_immediate_response", 4)),
+        )
+
+    def _live_vad_silence_ms(self) -> int:
+        return max(200, int(getattr(self.config, "live_vad_silence_ms", 900)))
+
+    def _trace_voice_event(
+        self,
+        event_name: str,
+        *,
+        status: str = "ok",
+        details: dict[str, Any] | None = None,
+    ) -> None:
+        try:
+            safe_details = _safe_trace_details(details or {})
+            with open_state(self.config) as db:
+                record_trace_event(
+                    db,
+                    run_id=self._voice_trace_run_id,
+                    event_name=event_name,
+                    component="voice",
+                    status=status,
+                    details=safe_details,
+                )
+        except Exception:
+            return
+
     @staticmethod
     def _revision_interrupt_instructions() -> str:
         return (
@@ -1298,7 +1580,7 @@ How you work:
 - You have tools to control this Mac: open and drive apps, browse the web, read the screen, find and open files, play media, manage calendar/reminders, draft email, run shell commands, remember things, and delegate big multi-step jobs with run_deep_task. Call them to actually do what {self.user_profile.preferred_name} asks.
 - When a request needs action, call the right tool rather than describing what you would do. Chain tools when needed. For anything more than a couple of steps (research, multi-app workflows), call run_deep_task with a clear goal.
 - To know what is on screen, prefer fast structured reads first: browser_get_dom for web pages, screen_describe for a quick summary. Only call look_at_screen when you genuinely need to see the pixels (images, layout, a non-text app); you will then be shown the actual screenshot to answer from.
-- When {self.user_profile.preferred_name} states a durable preference or fact ("always...", "from now on...", "I prefer...", "my X is..."), call remember silently. For "what do you know about me", call recall.
+- When {self.user_profile.preferred_name} states a durable preference or fact ("always...", "from now on...", "I prefer...", "my X is..."), call remember silently. For "what do you know about me", call recall or memory_search. For relationship questions, use memory_related; for "why do you think that", use memory_explain. For pending memory approvals, use memory_review_list and memory_confirm or memory_review_decide.
 - After a tool runs, speak only what actually happened from its result. Never invent an outcome (a song that started, a message that sent). If something failed, say so plainly and what you'll try next. Never say a capability is unavailable — just use another tool.
 - Ask before destructive actions, sending messages, deleting files, credentials, purchases, installs, or security/privacy changes; the runtime will also gate these and tell you when approval is needed.
 
@@ -1578,6 +1860,23 @@ def _spoken_runtime_result(text: str) -> str:
     return cleaned
 
 
+def _join_turn_segments(segments: list[str]) -> str:
+    cleaned = [segment.strip(" \t\r\n") for segment in segments if segment.strip()]
+    if not cleaned:
+        return ""
+    return re.sub(r"\s+", " ", " ".join(cleaned)).strip()
+
+
+def _safe_trace_details(details: dict[str, Any]) -> dict[str, Any]:
+    safe: dict[str, Any] = {}
+    for key, value in details.items():
+        if isinstance(value, bool | int | float) or value is None:
+            safe[key] = value
+        elif key.endswith("_reason") or key in {"service", "surface", "action"}:
+            safe[key] = str(value)[:80]
+    return safe
+
+
 def _pcm16_duration_ms(audio: bytes, sample_rate: int) -> int:
     if not audio or sample_rate <= 0:
         return 0
@@ -1782,6 +2081,136 @@ def _is_revision_interrupt(text: str) -> bool:
     return any(
         normalized == prefix or normalized.startswith(f"{prefix} ")
         for prefix in prefixes
+    )
+
+
+def _is_direct_voice_command(text: str) -> bool:
+    normalized = _normalize_wake_text(text)
+    if not normalized:
+        return False
+    if (
+        _is_interrupt_command(normalized)
+        or _is_status_question(normalized)
+        or _is_sleep_command(normalized)
+        or _is_meeting_start(normalized)
+        or _is_meeting_stop(normalized)
+    ):
+        return True
+    direct_prefixes = (
+        "open ",
+        "play ",
+        "pause ",
+        "resume ",
+        "search ",
+        "find ",
+        "click ",
+        "type ",
+        "send ",
+        "create ",
+        "start ",
+        "stop ",
+        "turn ",
+        "set ",
+        "what ",
+        "why ",
+        "how ",
+        "where ",
+        "are you ",
+        "can you ",
+        "could you ",
+        "would you ",
+        "please ",
+    )
+    return normalized.startswith(direct_prefixes) and not _has_trailing_continuation(
+        normalized
+    )
+
+
+def _is_partial_turn(text: str) -> bool:
+    normalized = _normalize_wake_text(text)
+    if not normalized:
+        return True
+    words = normalized.split()
+    if _is_filler_transcript(normalized):
+        return True
+    if len(words) <= 2 and not _is_direct_voice_command(normalized):
+        return True
+    if normalized.startswith(("when i ", "when we ", "if i ", "if we ")):
+        return True
+    if _has_trailing_continuation(normalized):
+        return True
+    if (
+        re.search(
+            r"\b(um|uh|umm|hmm|like|okay so|so um|i mean)\b[^.?!]*$",
+            normalized,
+        )
+        and len(words) < 10
+    ):
+        return True
+    return False
+
+
+def _has_trailing_continuation(normalized: str) -> bool:
+    trailing_phrases = (
+        "there needs to be",
+        "there needs to be a",
+        "i feel like",
+        "i think",
+        "i want to",
+        "i need to",
+        "we need to",
+        "we still need to",
+        "when i",
+        "when we",
+        "if i",
+        "if we",
+        "can you",
+        "could you",
+        "i was going to",
+        "i am trying to",
+    )
+    trailing_words = {
+        "a",
+        "an",
+        "the",
+        "to",
+        "for",
+        "with",
+        "about",
+        "because",
+        "that",
+        "this",
+        "like",
+        "and",
+        "or",
+        "but",
+        "so",
+    }
+    return (
+        normalized.endswith(trailing_phrases)
+        or normalized.split()[-1] in trailing_words
+    )
+
+
+def _is_meta_feedback_about_iris(text: str) -> bool:
+    normalized = _normalize_wake_text(text)
+    if not normalized:
+        return False
+    iris_terms = ("iris", "voice", "wake", "wakeup", "wake up", "detect", "detection")
+    feedback_terms = (
+        "need",
+        "needs",
+        "should",
+        "have to",
+        "has to",
+        "better",
+        "improve",
+        "issue",
+        "problem",
+        "seems like",
+    )
+    return any(term in normalized for term in iris_terms) and any(
+        term in normalized for term in feedback_terms
     )
 
 

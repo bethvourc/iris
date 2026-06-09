@@ -23,12 +23,22 @@ from iris.connectors import (
 from iris.knowledge import (
     format_search_results,
     get_page,
+    graph_all_pages,
+    graph_page,
     ingest_folder,
     list_pages,
     search_pages,
 )
 from iris.meetings import list_meetings, start_silent_meeting, stop_meeting
 from iris.memory import add_memory, edit_memory, forget_memory, list_memories
+from iris.memory_graph import (
+    explain_fact,
+    format_fact_results,
+    related_facts,
+    search_facts,
+)
+from iris.memory_lifecycle import maintain_lifecycle, set_memory_pinned
+from iris.memory_review import decide_review_item, list_review_items
 from iris.plugins import list_plugins, plugin_health, set_plugin_enabled
 from iris.profile import has_user_profile, load_user_profile, save_user_profile
 from iris.providers import ProviderRegistry
@@ -317,7 +327,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     doctor.add_argument(
         "--open",
-        choices=["microphone", "screen", "accessibility", "automation"],
+        choices=["microphone", "screen", "accessibility", "automation", "music"],
         help="Open the matching macOS privacy settings pane",
     )
     doctor.set_defaults(func=cmd_doctor)
@@ -625,6 +635,55 @@ def build_parser() -> argparse.ArgumentParser:
     memory_list = memory_sub.add_parser("list", help="List memory")
     memory_list.add_argument("--category", default=None)
     memory_list.set_defaults(func=cmd_memory_list)
+    memory_search = memory_sub.add_parser("search", help="Search graph-backed memory")
+    memory_search.add_argument("query")
+    memory_search.add_argument("--limit", type=int, default=10)
+    memory_search.add_argument("--include-inactive", action="store_true")
+    memory_search.add_argument("--json", action="store_true")
+    memory_search.set_defaults(func=cmd_memory_search)
+    memory_related = memory_sub.add_parser(
+        "related", help="Show graph memory related to an entity"
+    )
+    memory_related.add_argument("entity")
+    memory_related.add_argument("--limit", type=int, default=10)
+    memory_related.add_argument("--include-inactive", action="store_true")
+    memory_related.add_argument("--json", action="store_true")
+    memory_related.set_defaults(func=cmd_memory_related)
+    memory_explain = memory_sub.add_parser(
+        "explain", help="Explain graph memory evidence"
+    )
+    memory_explain.add_argument("query")
+    memory_explain.set_defaults(func=cmd_memory_explain)
+    memory_sub.add_parser(
+        "maintain", help="Recompute memory decay and lifecycle state"
+    ).set_defaults(func=cmd_memory_maintain)
+    memory_pin = memory_sub.add_parser(
+        "pin", help="Prevent a graph memory from decaying"
+    )
+    memory_pin.add_argument("relation_id")
+    memory_pin.set_defaults(func=cmd_memory_pin)
+    memory_unpin = memory_sub.add_parser("unpin", help="Allow a graph memory to decay")
+    memory_unpin.add_argument("relation_id")
+    memory_unpin.set_defaults(func=cmd_memory_unpin)
+    memory_review = memory_sub.add_parser(
+        "review", help="Review pending memory candidates"
+    )
+    memory_review_sub = memory_review.add_subparsers(
+        dest="memory_review_command", required=True
+    )
+    memory_review_list = memory_review_sub.add_parser(
+        "list", help="List pending memory review items"
+    )
+    memory_review_list.add_argument("--status", default="pending")
+    memory_review_list.add_argument("--limit", type=int, default=50)
+    memory_review_list.set_defaults(func=cmd_memory_review_list)
+    for decision in ("approve", "reject", "supersede"):
+        review_decision = memory_review_sub.add_parser(
+            decision, help=f"{decision.title()} a memory review item"
+        )
+        review_decision.add_argument("review_id")
+        review_decision.add_argument("--notes", default="")
+        review_decision.set_defaults(func=cmd_memory_review_decide, decision=decision)
     memory_edit = memory_sub.add_parser("edit", help="Edit memory")
     memory_edit.add_argument("memory_id")
     memory_edit.add_argument("--content", required=True)
@@ -654,6 +713,24 @@ def build_parser() -> argparse.ArgumentParser:
     knowledge_search.add_argument("--limit", type=int, default=10)
     knowledge_search.add_argument("--json", action="store_true")
     knowledge_search.set_defaults(func=cmd_knowledge_search)
+    knowledge_graph_page = knowledge_sub.add_parser(
+        "graph-page", help="Extract graph relations from a local knowledge page"
+    )
+    knowledge_graph_page.add_argument("page_id")
+    knowledge_graph_page.set_defaults(func=cmd_knowledge_graph_page)
+    knowledge_graph_all = knowledge_sub.add_parser(
+        "graph-all", help="Extract graph relations from local knowledge pages"
+    )
+    knowledge_graph_all.add_argument("--limit", type=int, default=50)
+    knowledge_graph_all.set_defaults(func=cmd_knowledge_graph_all)
+    knowledge_related = knowledge_sub.add_parser(
+        "related", help="Show graph memory related to a knowledge entity"
+    )
+    knowledge_related.add_argument("entity")
+    knowledge_related.add_argument("--limit", type=int, default=10)
+    knowledge_related.add_argument("--include-inactive", action="store_true")
+    knowledge_related.add_argument("--json", action="store_true")
+    knowledge_related.set_defaults(func=cmd_knowledge_related)
     knowledge_list = knowledge_sub.add_parser("list", help="List local knowledge pages")
     knowledge_list.add_argument("--limit", type=int, default=50)
     knowledge_list.set_defaults(func=cmd_knowledge_list)
@@ -1003,6 +1080,7 @@ def cmd_doctor(args: argparse.Namespace) -> int:
         "screen": "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture",
         "accessibility": "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility",
         "automation": "x-apple.systempreferences:com.apple.preference.security?Privacy_Automation",
+        "music": "x-apple.systempreferences:com.apple.preference.security?Privacy_Automation",
     }
     if args.open:
         run_command(["open", settings_urls[args.open]], timeout=5)
@@ -1049,6 +1127,14 @@ def cmd_doctor(args: argparse.Namespace) -> int:
     ):
         print("  CDP setup:")
         print(f"    {report['cdp_setup']}")
+    if not any(
+        item["backend_id"] == "apple_music" and item["available"] for item in backends
+    ):
+        print("  Apple Music setup:")
+        print(
+            "    Allow the terminal app running Iris to control Music in "
+            "System Settings > Privacy & Security > Automation."
+        )
     ready = [item for item in connectors if item.get("health") == "ready"]
     needs_setup = [
         item
@@ -1069,20 +1155,31 @@ def _doctor_ok(report: dict[str, object]) -> bool:
     backends = report.get("control_backends")
     if not isinstance(permissions, list) or not isinstance(backends, list):
         return False
-    required_permissions = {"Microphone", "Screen Recording", "Accessibility"}
+    required_permissions = {
+        "Microphone",
+        "Screen Recording",
+        "Accessibility",
+        "Music Automation",
+    }
     permission_ok = all(
         not isinstance(item, dict)
         or item.get("name") not in required_permissions
         or item.get("status") == "available"
         for item in permissions
     )
-    backend_ok = any(
+    accessibility_ok = any(
         isinstance(item, dict)
         and item.get("backend_id") == "accessibility"
         and item.get("available")
         for item in backends
     )
-    return permission_ok and backend_ok
+    apple_music_ok = any(
+        isinstance(item, dict)
+        and item.get("backend_id") == "apple_music"
+        and item.get("available")
+        for item in backends
+    )
+    return permission_ok and accessibility_ok and apple_music_ok
 
 
 def cmd_test_notify(args: argparse.Namespace) -> int:
@@ -1790,6 +1887,169 @@ def cmd_memory_list(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_memory_search(args: argparse.Namespace) -> int:
+    config = _config(args)
+    with open_state(config) as db:
+        results = search_facts(
+            db,
+            args.query,
+            limit=args.limit,
+            include_inactive=args.include_inactive,
+            config=config,
+        )
+        record_audit(
+            db,
+            actor="user",
+            tool="memory.search",
+            risk=RiskLevel.LOW_RISK,
+            result="ok",
+            input_value={
+                "query": args.query,
+                "limit": args.limit,
+                "include_inactive": args.include_inactive,
+            },
+            output_value={"count": len(results)},
+        )
+    if args.json:
+        _print_json(results)
+    else:
+        print(format_fact_results(results))
+    return 0
+
+
+def cmd_memory_related(args: argparse.Namespace) -> int:
+    config = _config(args)
+    with open_state(config) as db:
+        results = related_facts(
+            db,
+            args.entity,
+            limit=args.limit,
+            include_inactive=args.include_inactive,
+        )
+        record_audit(
+            db,
+            actor="user",
+            tool="memory.related",
+            risk=RiskLevel.LOW_RISK,
+            result="ok",
+            input_value={
+                "entity": args.entity,
+                "limit": args.limit,
+                "include_inactive": args.include_inactive,
+            },
+            output_value={"count": len(results)},
+        )
+    if args.json:
+        _print_json(results)
+    else:
+        print(format_fact_results(results))
+    return 0
+
+
+def cmd_memory_explain(args: argparse.Namespace) -> int:
+    config = _config(args)
+    with open_state(config) as db:
+        result = explain_fact(db, args.query)
+        record_audit(
+            db,
+            actor="user",
+            tool="memory.explain",
+            risk=RiskLevel.LOW_RISK,
+            result="ok" if result else "error",
+            input_value={"query": args.query},
+            output_value={"found": result is not None},
+        )
+    if result is None:
+        print("I did not find evidence for that graph memory.", file=sys.stderr)
+        return 1
+    _print_json(result)
+    return 0
+
+
+def cmd_memory_maintain(args: argparse.Namespace) -> int:
+    config = _config(args)
+    with open_state(config) as db:
+        result = maintain_lifecycle(db)
+        record_audit(
+            db,
+            actor="user",
+            tool="memory.maintain",
+            risk=RiskLevel.LOW_RISK,
+            result="ok",
+            output_value=result.__dict__,
+        )
+    _print_json(result.__dict__)
+    return 0
+
+
+def cmd_memory_pin(args: argparse.Namespace) -> int:
+    return _cmd_memory_set_pinned(args, pinned=True)
+
+
+def cmd_memory_unpin(args: argparse.Namespace) -> int:
+    return _cmd_memory_set_pinned(args, pinned=False)
+
+
+def _cmd_memory_set_pinned(args: argparse.Namespace, *, pinned: bool) -> int:
+    config = _config(args)
+    with open_state(config) as db:
+        ok = set_memory_pinned(db, args.relation_id, pinned)
+        record_audit(
+            db,
+            actor="user",
+            tool="memory.pin" if pinned else "memory.unpin",
+            risk=RiskLevel.LOW_RISK,
+            result="ok" if ok else "error",
+            input_value={"relation_id": args.relation_id, "pinned": pinned},
+        )
+    _print_json({"ok": ok, "relation_id": args.relation_id, "pinned": pinned})
+    return 0 if ok else 1
+
+
+def cmd_memory_review_list(args: argparse.Namespace) -> int:
+    config = _config(args)
+    with open_state(config) as db:
+        items = list_review_items(db, status=args.status, limit=args.limit)
+        record_audit(
+            db,
+            actor="user",
+            tool="memory.review.list",
+            risk=RiskLevel.LOW_RISK,
+            result="ok",
+            input_value={"status": args.status, "limit": args.limit},
+            output_value={"count": len(items)},
+        )
+    _print_json(items)
+    return 0
+
+
+def cmd_memory_review_decide(args: argparse.Namespace) -> int:
+    config = _config(args)
+    with open_state(config) as db:
+        result = decide_review_item(
+            db,
+            review_id=args.review_id,
+            decision=args.decision,
+            actor="user",
+            notes=args.notes,
+        )
+        record_audit(
+            db,
+            actor="user",
+            tool=f"memory.review.{args.decision}",
+            risk=RiskLevel.LOW_RISK,
+            result="ok" if result.ok else "error",
+            input_value={
+                "review_id": args.review_id,
+                "decision": args.decision,
+                "notes": args.notes,
+            },
+            output_value=result.__dict__,
+        )
+    _print_json(result.__dict__)
+    return 0 if result.ok else 1
+
+
 def cmd_memory_edit(args: argparse.Namespace) -> int:
     config = _config(args)
     with open_state(config) as db:
@@ -1875,6 +2135,7 @@ def cmd_knowledge_search(args: argparse.Namespace) -> int:
     config = _config(args)
     with open_state(config) as db:
         results = search_pages(db, args.query, limit=args.limit)
+        graph_results = search_facts(db, args.query, limit=5, config=config)
         record_audit(
             db,
             actor="user",
@@ -1882,12 +2143,77 @@ def cmd_knowledge_search(args: argparse.Namespace) -> int:
             risk=RiskLevel.LOW_RISK,
             result="ok",
             input_value={"query": args.query, "limit": args.limit},
+            output_value={"count": len(results), "graph_count": len(graph_results)},
+        )
+    if args.json:
+        _print_json({"results": results, "graph_results": graph_results})
+    else:
+        print(format_search_results(results))
+        if graph_results:
+            print(format_fact_results(graph_results))
+    return 0
+
+
+def cmd_knowledge_graph_page(args: argparse.Namespace) -> int:
+    config = _config(args)
+    with open_state(config) as db:
+        result = graph_page(db, args.page_id)
+        record_audit(
+            db,
+            actor="user",
+            tool="knowledge.graph_page",
+            risk=RiskLevel.LOW_RISK,
+            result="ok",
+            input_value={"page_id": args.page_id},
+            output_value=result.__dict__,
+        )
+    _print_json(result.__dict__)
+    return 0
+
+
+def cmd_knowledge_graph_all(args: argparse.Namespace) -> int:
+    config = _config(args)
+    with open_state(config) as db:
+        result = graph_all_pages(db, limit=args.limit)
+        record_audit(
+            db,
+            actor="user",
+            tool="knowledge.graph_all",
+            risk=RiskLevel.LOW_RISK,
+            result="ok",
+            input_value={"limit": args.limit},
+            output_value=result.__dict__,
+        )
+    _print_json(result.__dict__)
+    return 0
+
+
+def cmd_knowledge_related(args: argparse.Namespace) -> int:
+    config = _config(args)
+    with open_state(config) as db:
+        results = related_facts(
+            db,
+            args.entity,
+            limit=args.limit,
+            include_inactive=args.include_inactive,
+        )
+        record_audit(
+            db,
+            actor="user",
+            tool="knowledge.related",
+            risk=RiskLevel.LOW_RISK,
+            result="ok",
+            input_value={
+                "entity": args.entity,
+                "limit": args.limit,
+                "include_inactive": args.include_inactive,
+            },
             output_value={"count": len(results)},
         )
     if args.json:
         _print_json(results)
     else:
-        print(format_search_results(results))
+        print(format_fact_results(results))
     return 0
 
 

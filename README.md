@@ -19,7 +19,7 @@ Optional:
 ## Setup
 
 ```bash
-cd /Users/clintonimaro/Documents/Projects/iris
+cd /Users/<username>/Documents/Projects/iris
 uv sync --dev --no-editable
 cp .env.example .env
 ```
@@ -54,7 +54,7 @@ Personalize Iris:
 For non-interactive setup:
 
 ```bash
-./iris setup --name Clinton --pronouns he/him
+./iris setup --name Bethvour --pronouns he/him
 ```
 
 If you use the local HTTP gateway, set a private token first:
@@ -118,7 +118,7 @@ quit
 ./iris status
 ./iris providers
 ./iris profile show
-./iris profile set --name Clinton --pronouns he/him
+./iris profile set --name Bethvour --pronouns he/him
 ./iris setup
 ./iris test-screen
 ./iris test-vision
@@ -149,6 +149,9 @@ Memory and knowledge:
 
 ```bash
 ./iris memory add --category project --content "Iris is local-first."
+./iris memory search "spotify preferences"
+./iris memory related "Iris"
+./iris memory explain "spotify"
 ./iris knowledge ingest-folder ~/Documents/Notes
 ./iris knowledge search "agent runtime"
 ```
@@ -181,7 +184,13 @@ Background runtime:
 ./iris tasks resume <task_id>
 ```
 
-Gateway API routes other than `/health` require:
+Open the visual memory browser after starting the gateway:
+
+```text
+http://127.0.0.1:8765/memory-browser
+```
+
+Gateway API routes other than `/health` and the static `/memory-browser` shell require:
 
 ```text
 Authorization: Bearer <IRIS_GATEWAY_TOKEN>

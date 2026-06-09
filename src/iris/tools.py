@@ -23,6 +23,15 @@ from iris.integrations.google_vision import GoogleVisionClient
 from iris.integrations.openai_client import OpenAIResponsesClient
 from iris.knowledge import format_search_results, search_pages
 from iris.memory import add_memory, list_memories
+from iris.memory_graph import (
+    explain_fact,
+    format_fact_results,
+    memory_context_packet,
+    related_facts,
+    search_facts,
+)
+from iris.memory_llm_extract import enrich_memory_with_llm
+from iris.memory_review import decide_review_item, list_review_items
 from iris.mac_controller import ActionResult, MacController
 from iris.perception import LiveScreenFrame, PerceptionService, ScreenAwarenessService
 from iris.polling import poll_until
@@ -31,6 +40,7 @@ from iris.safety import CancellationToken, SafetyGate, classify_action
 from iris.state import open_state
 from iris import tasks as task_store
 from iris.system import applescript_string, run_command, run_osascript
+from iris.tracing import record_trace_event
 
 
 @dataclass(frozen=True)
@@ -57,6 +67,7 @@ class ToolContext:
     config: IrisConfig | None = None
     approved_tool_call: bool = False
     cancellation_token: CancellationToken | None = None
+    run_id: str = ""
 
     def assert_not_cancelled(self) -> None:
         if self.cancellation_token is not None:
@@ -123,6 +134,12 @@ CANONICAL_REALTIME_TOOLS = {
     "message_send",
     "remember",
     "recall",
+    "memory_search",
+    "memory_related",
+    "memory_explain",
+    "memory_review_list",
+    "memory_review_decide",
+    "memory_confirm",
     "knowledge_search",
     "run_shell",
     "web_research",
@@ -815,6 +832,82 @@ def _default_tools() -> list[ToolSpec]:
             execute=_recall,
         ),
         ToolSpec(
+            name="memory_search",
+            description="Search Iris graph-backed memory for relevant facts, preferences, and relationships.",
+            parameters=_object_schema(
+                {
+                    "query": {"type": "string"},
+                    "limit": {"type": "integer"},
+                    "include_inactive": {"type": "boolean"},
+                },
+                required=["query"],
+            ),
+            risk=RiskLevel.LOW_RISK,
+            execute=_memory_search,
+        ),
+        ToolSpec(
+            name="memory_related",
+            description="Find graph memory facts related to a person, project, app, or concept.",
+            parameters=_object_schema(
+                {
+                    "entity": {"type": "string"},
+                    "limit": {"type": "integer"},
+                    "include_inactive": {"type": "boolean"},
+                },
+                required=["entity"],
+            ),
+            risk=RiskLevel.LOW_RISK,
+            execute=_memory_related,
+        ),
+        ToolSpec(
+            name="memory_explain",
+            description="Explain why Iris believes a graph memory fact, including evidence and provenance.",
+            parameters=_object_schema(
+                {"query": {"type": "string"}}, required=["query"]
+            ),
+            risk=RiskLevel.LOW_RISK,
+            execute=_memory_explain,
+        ),
+        ToolSpec(
+            name="memory_review_list",
+            description="List pending memory candidates that need user review before becoming active memory.",
+            parameters=_object_schema(
+                {
+                    "status": {"type": "string"},
+                    "limit": {"type": "integer"},
+                }
+            ),
+            risk=RiskLevel.LOW_RISK,
+            execute=_memory_review_list,
+        ),
+        ToolSpec(
+            name="memory_review_decide",
+            description="Approve, reject, or supersede a pending memory review item.",
+            parameters=_object_schema(
+                {
+                    "review_id": {"type": "string"},
+                    "decision": {"type": "string"},
+                    "notes": {"type": "string"},
+                },
+                required=["review_id", "decision"],
+            ),
+            risk=RiskLevel.LOW_RISK,
+            execute=_memory_review_decide,
+        ),
+        ToolSpec(
+            name="memory_confirm",
+            description="Confirm a pending memory review item so it becomes active memory.",
+            parameters=_object_schema(
+                {
+                    "review_id": {"type": "string"},
+                    "notes": {"type": "string"},
+                },
+                required=["review_id"],
+            ),
+            risk=RiskLevel.LOW_RISK,
+            execute=_memory_confirm,
+        ),
+        ToolSpec(
             name="machine_context",
             description="Inspect local machine context: installed apps, common project folders, browser profile, and connector health.",
             parameters=_object_schema({}),
@@ -1328,6 +1421,12 @@ def _prefer_cdp(browser: str = "Google Chrome") -> bool:
 def _media_service(value: str) -> str:
     normalized = value.strip().lower().replace(" ", "")
     aliases = {
+        "apple": "apple_music",
+        "applemusic": "apple_music",
+        "applemusic.com": "apple_music",
+        "music": "apple_music",
+        "music.app": "apple_music",
+        "music.apple.com": "apple_music",
         "yt": "youtube",
         "youtube.com": "youtube",
         "youtu.be": "youtube",
@@ -1358,6 +1457,15 @@ def _int_arg(arguments: dict[str, Any], name: str, default: int = 0) -> int:
         return int(arguments.get(name, default))
     except (TypeError, ValueError):
         return default
+
+
+def _bool_arg(arguments: dict[str, Any], name: str, default: bool = False) -> bool:
+    value = arguments.get(name, default)
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        return value.strip().lower() in {"1", "true", "yes", "on"}
+    return bool(value)
 
 
 def _normalize_url(url: str) -> str:
@@ -2258,8 +2366,12 @@ def _change_volume(arguments: dict[str, Any], context: ToolContext) -> ToolResul
 
 
 def _media_control(arguments: dict[str, Any], context: ToolContext) -> ToolResult:
-    service = _string_arg(arguments, "service", "spotify").lower()
+    service = _media_service(_string_arg(arguments, "service", "spotify"))
     action = _string_arg(arguments, "action").lower()
+    if service == "apple_music":
+        if action == "play_pause":
+            return _from_action_result(context.controller.apple_music_play_pause())
+        return ToolResult(False, f"Media control for {service} is not connected yet.")
     if service and service != "spotify":
         return ToolResult(False, f"Media control for {service} is not connected yet.")
     if action == "play_pause":
@@ -2274,16 +2386,27 @@ def _media_control(arguments: dict[str, Any], context: ToolContext) -> ToolResul
 def _media_search(arguments: dict[str, Any], context: ToolContext) -> ToolResult:
     copied = dict(arguments)
     copied["action"] = "search"
-    if _media_service(_string_arg(copied, "service", "spotify")) == "youtube":
+    service = _media_service(_string_arg(copied, "service", "spotify"))
+    if service == "youtube":
         return _youtube_media_play(copied, context)
+    if service == "apple_music":
+        return _apple_music_search_or_play(copied, context)
     return _media_search_or_play(copied, context)
 
 
 def _media_play(arguments: dict[str, Any], context: ToolContext) -> ToolResult:
     copied = dict(arguments)
-    if _media_service(_string_arg(copied, "service", "spotify")) == "youtube":
+    service = _media_service(_string_arg(copied, "service", "spotify"))
+    if service == "youtube":
         copied["action"] = "play"
         return _youtube_media_play(copied, context)
+    if service == "apple_music":
+        copied["action"] = "play" if _string_arg(copied, "query") else ""
+        return (
+            _apple_music_search_or_play(copied, context)
+            if _string_arg(copied, "query")
+            else _media_play_current(copied, context)
+        )
     if _string_arg(copied, "query"):
         copied["action"] = "play"
         return _media_search_or_play(copied, context)
@@ -2715,6 +2838,8 @@ def _media_search_or_play(
     browser = _string_arg(arguments, "browser", "Google Chrome")
     if service == "youtube":
         return _youtube_media_play(arguments, context)
+    if service == "apple_music":
+        return _apple_music_search_or_play(arguments, context)
     if not query:
         return ToolResult(False, "I need something to search or play.")
     if service and service != "spotify":
@@ -2858,6 +2983,78 @@ def _media_search_or_play(
     return _from_action_result(web_result)
 
 
+def _apple_music_search_or_play(
+    arguments: dict[str, Any], context: ToolContext
+) -> ToolResult:
+    query = _string_arg(arguments, "query")
+    action = _string_arg(arguments, "action", "search").lower() or "search"
+    if not query:
+        return ToolResult(False, "I need something to search or play in Apple Music.")
+    event_name = (
+        "media.apple_music.play_attempt"
+        if action == "play"
+        else "media.apple_music.search"
+    )
+    _trace_tool_event(
+        context,
+        event_name,
+        details={
+            "service": "apple_music",
+            "action": action,
+            "query_length": len(query),
+        },
+    )
+    result = (
+        context.controller.apple_music_play(query)
+        if action == "play"
+        else context.controller.apple_music_search(query)
+    )
+    if result.ok:
+        _remember_media(
+            context,
+            service="apple_music",
+            query=query,
+            surface="app",
+            browser="",
+        )
+        payload = result.payload if isinstance(result.payload, dict) else {}
+        verified = bool(payload.get("verified_playback"))
+        if action == "play":
+            _trace_tool_event(
+                context,
+                "media.apple_music.verify",
+                status="ok" if verified else "error",
+                error=None if verified else "playback_not_verified",
+                details={
+                    "service": "apple_music",
+                    "verified_playback": verified,
+                },
+            )
+        return ToolResult(
+            True,
+            result.detail,
+            result.payload,
+            continue_planning=action == "play" and not verified,
+        )
+    if "macOS blocked Iris from controlling Music" in result.detail:
+        _trace_tool_event(
+            context,
+            "media.apple_music.permission_error",
+            status="error",
+            error="music_automation_blocked",
+            details={"service": "apple_music", "action": action},
+        )
+    if action == "play":
+        _trace_tool_event(
+            context,
+            "media.apple_music.verify",
+            status="error",
+            error="playback_not_verified",
+            details={"service": "apple_music", "verified_playback": False},
+        )
+    return _from_action_result(result)
+
+
 def _spotify_web_cdp(
     query: str,
     *,
@@ -2967,6 +3164,11 @@ def _media_play_current(arguments: dict[str, Any], context: ToolContext) -> Tool
             },
             context,
         )
+    if service == "apple_music" or remembered_service == "apple_music":
+        result = context.controller.apple_music_play_pause()
+        if result.ok:
+            return ToolResult(True, "I toggled playback in Music.", result.payload)
+        return _from_action_result(result)
     if service and service != "spotify":
         return ToolResult(False, f"Media playback for {service} is not connected yet.")
     if surface == "browser" or remembered_surface == "browser":
@@ -3013,6 +3215,7 @@ def _knowledge_search(arguments: dict[str, Any], context: ToolContext) -> ToolRe
     limit = max(1, min(_int_arg(arguments, "limit", 8), 20))
     with open_state(context.config) as db:
         results = search_pages(db, query, limit=limit)
+        graph_results = search_facts(db, query, limit=5, config=context.config)
     if context.session_state is not None:
         context.session_state["last_knowledge_query"] = query
         context.session_state["last_knowledge_results"] = [
@@ -3024,9 +3227,13 @@ def _knowledge_search(arguments: dict[str, Any], context: ToolContext) -> ToolRe
             }
             for item in results
         ]
+        context.session_state["last_knowledge_graph_results"] = graph_results
+    message = format_search_results(results)
+    if graph_results:
+        message = message + "\n" + format_fact_results(graph_results)
     return ToolResult(
         True,
-        format_search_results(results),
+        message,
         {
             "query": query,
             "results": [
@@ -3040,6 +3247,7 @@ def _knowledge_search(arguments: dict[str, Any], context: ToolContext) -> ToolRe
                 }
                 for item in results
             ],
+            "graph_results": graph_results,
         },
     )
 
@@ -3071,6 +3279,16 @@ def _remember(arguments: dict[str, Any], context: ToolContext) -> ToolResult:
             user_confirmed=True,
             sensitive=False,
         )
+        enrich_memory_with_llm(
+            db,
+            memory_id=memory_id,
+            category=category,
+            content=content,
+            provenance="conversation",
+            confidence=0.9,
+            openai_client=context.openai_client,
+            config=context.config,
+        )
     return ToolResult(
         True,
         "Got it, I'll remember that.",
@@ -3085,6 +3303,19 @@ def _recall(arguments: dict[str, Any], context: ToolContext) -> ToolResult:
     category = _string_arg(arguments, "category") or None
     limit = max(1, min(_int_arg(arguments, "limit", 20), 50))
     with open_state(context.config) as db:
+        graph_items = memory_context_packet(
+            db,
+            query=category or "",
+            limit=min(limit, 20),
+            config=context.config,
+        )
+        if graph_items:
+            lines = [f"- {item['content']}" for item in graph_items[:limit]]
+            return ToolResult(
+                True,
+                "Here's what I've learned and remembered:\n" + "\n".join(lines),
+                {"memories": graph_items, "source": "graph"},
+            )
         rows = list_memories(db, category)
     items = [
         {"category": row.get("category"), "content": row.get("content")}
@@ -3100,8 +3331,118 @@ def _recall(arguments: dict[str, Any], context: ToolContext) -> ToolResult:
     return ToolResult(
         True,
         "Here's what I've learned and remembered:\n" + "\n".join(lines),
-        {"memories": items},
+        {"memories": items, "source": "flat"},
     )
+
+
+def _memory_search(arguments: dict[str, Any], context: ToolContext) -> ToolResult:
+    query = _string_arg(arguments, "query")
+    if not query:
+        return ToolResult(False, "I need a memory search query.")
+    if context.config is None:
+        return ToolResult(False, "Memory is not connected in this runtime.")
+    limit = max(1, min(_int_arg(arguments, "limit", 8), 20))
+    with open_state(context.config) as db:
+        results = search_facts(
+            db,
+            query,
+            limit=limit,
+            include_inactive=_bool_arg(arguments, "include_inactive"),
+            config=context.config,
+        )
+    return ToolResult(
+        True,
+        format_fact_results(results),
+        {"query": query, "results": results},
+    )
+
+
+def _memory_related(arguments: dict[str, Any], context: ToolContext) -> ToolResult:
+    entity = _string_arg(arguments, "entity")
+    if not entity:
+        return ToolResult(False, "I need an entity to inspect.")
+    if context.config is None:
+        return ToolResult(False, "Memory is not connected in this runtime.")
+    limit = max(1, min(_int_arg(arguments, "limit", 8), 20))
+    with open_state(context.config) as db:
+        results = related_facts(
+            db,
+            entity,
+            limit=limit,
+            include_inactive=_bool_arg(arguments, "include_inactive"),
+        )
+    return ToolResult(
+        True,
+        format_fact_results(results),
+        {"entity": entity, "results": results},
+    )
+
+
+def _memory_explain(arguments: dict[str, Any], context: ToolContext) -> ToolResult:
+    query = _string_arg(arguments, "query")
+    if not query:
+        return ToolResult(False, "I need a memory fact or entity to explain.")
+    if context.config is None:
+        return ToolResult(False, "Memory is not connected in this runtime.")
+    with open_state(context.config) as db:
+        result = explain_fact(db, query)
+    if result is None:
+        return ToolResult(True, "I did not find evidence for that graph memory.", None)
+    status = "active" if result.get("active") else "superseded"
+    evidence = result.get("evidence") or []
+    message = (
+        f"{result['content']} is {status}. "
+        f"I found {len(evidence)} supporting evidence item(s)."
+    )
+    return ToolResult(True, message, result)
+
+
+def _memory_review_list(arguments: dict[str, Any], context: ToolContext) -> ToolResult:
+    if context.config is None:
+        return ToolResult(False, "Memory is not connected in this runtime.")
+    status = _string_arg(arguments, "status", "pending") or "pending"
+    limit = max(1, min(_int_arg(arguments, "limit", 20), 100))
+    with open_state(context.config) as db:
+        items = list_review_items(db, status=status, limit=limit)
+    if not items:
+        return ToolResult(True, "There are no memory review items.", {"items": []})
+    lines = [
+        f"- {item['review_id']}: {item['reason']} — "
+        f"{item.get('candidate', {}).get('predicate')} "
+        f"{item.get('candidate', {}).get('object_value')}"
+        for item in items
+    ]
+    return ToolResult(
+        True,
+        "Pending memory review items:\n" + "\n".join(lines),
+        {"items": items},
+    )
+
+
+def _memory_review_decide(
+    arguments: dict[str, Any], context: ToolContext
+) -> ToolResult:
+    review_id = _string_arg(arguments, "review_id")
+    decision = _string_arg(arguments, "decision")
+    if not review_id or not decision:
+        return ToolResult(False, "I need a review_id and decision.")
+    if context.config is None:
+        return ToolResult(False, "Memory is not connected in this runtime.")
+    with open_state(context.config) as db:
+        result = decide_review_item(
+            db,
+            review_id=review_id,
+            decision=decision,
+            actor="assistant",
+            notes=_string_arg(arguments, "notes"),
+        )
+    return ToolResult(result.ok, result.message, result.__dict__)
+
+
+def _memory_confirm(arguments: dict[str, Any], context: ToolContext) -> ToolResult:
+    copied = dict(arguments)
+    copied["decision"] = "approve"
+    return _memory_review_decide(copied, context)
 
 
 def _file_list_folder(arguments: dict[str, Any], context: ToolContext) -> ToolResult:
@@ -3620,14 +3961,55 @@ def _remember_media(
 ) -> None:
     if context.session_state is None:
         return
+    if service == "apple_music":
+        url = f"music://music.apple.com/search?term={quote_plus(query)}"
+    elif service == "youtube":
+        url = f"https://www.youtube.com/results?search_query={quote_plus(query)}"
+    else:
+        url = f"https://open.spotify.com/search/{quote_plus(query)}"
     context.session_state["last_media"] = {
         "service": service,
         "query": query,
         "surface": surface,
         "browser": browser,
-        "url": f"https://open.spotify.com/search/{quote_plus(query)}",
+        "url": url,
     }
     context.session_state["last_media_target"] = context.session_state["last_media"]
+
+
+def _trace_tool_event(
+    context: ToolContext,
+    event_name: str,
+    *,
+    status: str = "ok",
+    error: str | None = None,
+    details: dict[str, Any] | None = None,
+) -> None:
+    if context.config is None or not context.run_id:
+        return
+    try:
+        with open_state(context.config) as db:
+            record_trace_event(
+                db,
+                run_id=context.run_id,
+                event_name=event_name,
+                component="tool",
+                status=status,
+                error=error,
+                details=_safe_tool_trace_details(details or {}),
+            )
+    except Exception:
+        return
+
+
+def _safe_tool_trace_details(details: dict[str, Any]) -> dict[str, Any]:
+    safe: dict[str, Any] = {}
+    for key, value in details.items():
+        if isinstance(value, bool | int | float) or value is None:
+            safe[key] = value
+        elif key in {"service", "surface", "action"}:
+            safe[key] = str(value)[:80]
+    return safe
 
 
 def _remember_browser(

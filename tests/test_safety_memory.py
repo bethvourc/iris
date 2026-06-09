@@ -4,9 +4,25 @@ from pathlib import Path
 
 from iris.actions import LocalAction, RiskLevel
 from iris.config import IrisConfig
+from iris.knowledge import graph_page, rebuild_links, search_pages, upsert_file_page
+from iris.memory import add_memory
+from iris.memory_graph import related_facts, search_facts
+from iris.memory_lifecycle import maintain_lifecycle, set_memory_pinned
+from iris.memory_llm_extract import parse_rich_extraction
+from iris.memory_review import decide_review_item, list_review_items
+from iris.memory_vectors import semantic_search
 from iris.safety import classify_action
 from iris.state import open_state
-from iris.tools import ToolContext, _recall, _remember
+from iris.tools import (
+    ToolContext,
+    _memory_explain,
+    _memory_related,
+    _memory_review_decide,
+    _memory_review_list,
+    _memory_search,
+    _recall,
+    _remember,
+)
 
 
 def test_readonly_args_do_not_trip_approval() -> None:
@@ -66,16 +82,518 @@ def test_remember_and_recall_round_trip(tmp_path: Path) -> None:
     assert "Use the Spotify app, not the browser" in contents
 
 
-def _memory_context(config: IrisConfig) -> ToolContext:
+def test_remember_writes_graph_memory(tmp_path: Path) -> None:
+    config = _config(tmp_path)
+    context = _memory_context(config)
+
+    saved = _remember({"content": "Use the Spotify app, not the browser"}, context)
+    assert saved.ok
+
+    with open_state(config) as db:
+        results = search_facts(db, "spotify", limit=5)
+
+    assert results
+    assert results[0]["predicate"] == "prefers"
+    assert "Spotify app" in results[0]["object_value"]
+
+
+def test_newer_conflicting_preference_supersedes_older_fact(tmp_path: Path) -> None:
+    config = _config(tmp_path)
+    context = _memory_context(config)
+
+    first = _remember({"content": "Use the Spotify app, not the browser"}, context)
+    second = _remember({"content": "Use the Apple Music app, not the browser"}, context)
+    assert first.ok
+    assert second.ok
+
+    with open_state(config) as db:
+        active = search_facts(db, "app", limit=10)
+        all_results = search_facts(db, "app", limit=10, include_inactive=True)
+
+    assert any("Apple Music app" in item["object_value"] for item in active)
+    assert not any("Spotify app" in item["object_value"] for item in active)
+    spotify = [item for item in all_results if "Spotify app" in item["object_value"]]
+    assert spotify and spotify[0]["active"] is False
+
+
+def test_graph_memory_tools_return_search_related_and_explain(
+    tmp_path: Path,
+) -> None:
+    config = _config(tmp_path)
+    context = _memory_context(config)
+    _remember({"content": "Use the Spotify app, not the browser"}, context)
+
+    searched = _memory_search({"query": "spotify"}, context)
+    related = _memory_related({"entity": "Spotify app"}, context)
+    explained = _memory_explain({"query": "spotify"}, context)
+
+    assert searched.ok
+    assert searched.payload["results"]
+    assert related.ok
+    assert related.payload["results"]
+    assert explained.ok
+    assert explained.payload["evidence"]
+
+
+def test_existing_flat_memories_backfill_into_graph(tmp_path: Path) -> None:
+    config = _config(tmp_path)
+    with open_state(config) as db:
+        memory_id = add_memory(
+            db,
+            category="preferences",
+            content="Use the Spotify app, not the browser",
+        )
+
+    with open_state(config) as db:
+        results = related_facts(db, "Spotify app")
+
+    assert memory_id
+    assert results
+
+
+def test_memory_embeddings_and_retrieval_events_are_recorded(tmp_path: Path) -> None:
+    config = _config(tmp_path)
+    context = _memory_context(config)
+    _remember({"content": "Use the Spotify app, not the browser"}, context)
+
+    with open_state(config) as db:
+        embeddings = [
+            dict(row)
+            for row in db.execute(
+                "SELECT source_type, source_id FROM memory_embeddings"
+            ).fetchall()
+        ]
+        results = search_facts(db, "spotify", config=config)
+        events = db.execute("SELECT * FROM memory_retrieval_events").fetchall()
+
+    source_types = {item["source_type"] for item in embeddings}
+    assert {"memory", "memory_observation", "memory_relation"} <= source_types
+    assert results
+    assert events
+
+
+def test_semantic_search_uses_local_vector_fallback(tmp_path: Path) -> None:
+    config = _config(tmp_path)
+    with open_state(config) as db:
+        memory_id = add_memory(
+            db,
+            category="preferences",
+            content="Use Apple Music app for playback",
+        )
+        results = semantic_search(db, "music playback", source_types={"memory"})
+
+    assert memory_id
+    assert results
+    assert results[0]["source_type"] == "memory"
+
+
+def test_knowledge_page_ingest_creates_embedding(tmp_path: Path) -> None:
+    config = _config(tmp_path)
+    note = tmp_path / "note.md"
+    note.write_text("# Iris Runtime\nLocal-first agent memory notes.", encoding="utf-8")
+
+    with open_state(config) as db:
+        page_id = upsert_file_page(db, note, note.read_text(encoding="utf-8"))
+        rows = db.execute(
+            "SELECT * FROM memory_embeddings WHERE source_type = 'knowledge_page'"
+        ).fetchall()
+
+    assert page_id
+    assert rows
+
+
+def test_llm_rich_extraction_adds_active_graph_relation(tmp_path: Path) -> None:
+    config = _config(tmp_path)
+    context = _memory_context(
+        config,
+        openai_client=_FakeOpenAIClient(
+            config,
+            {
+                "relations": [
+                    {
+                        "subject": "user",
+                        "subject_kind": "person",
+                        "predicate": "works_on",
+                        "object": "Iris",
+                        "object_kind": "project",
+                        "confidence": 0.88,
+                        "sensitive": False,
+                        "ambiguous": False,
+                        "evidence": "working on Iris",
+                    }
+                ]
+            },
+        ),
+    )
+
+    saved = _remember({"content": "I am working on Iris", "category": "facts"}, context)
+
+    with open_state(config) as db:
+        results = search_facts(db, "works Iris", config=config)
+
+    assert saved.ok
+    assert any(
+        item["predicate"] == "works_on" and item["object_value"] == "Iris"
+        for item in results
+    )
+
+
+def test_llm_sensitive_candidate_is_pending_not_active(tmp_path: Path) -> None:
+    config = _config(tmp_path)
+    context = _memory_context(
+        config,
+        openai_client=_FakeOpenAIClient(
+            config,
+            {
+                "relations": [
+                    {
+                        "subject": "user",
+                        "subject_kind": "person",
+                        "predicate": "has_ssn",
+                        "object": "123",
+                        "object_kind": "fact",
+                        "confidence": 0.9,
+                        "sensitive": True,
+                        "ambiguous": False,
+                        "evidence": "my SSN is 123",
+                    }
+                ]
+            },
+        ),
+    )
+
+    saved = _remember(
+        {"content": "Remember my SSN is 123", "category": "facts"},
+        context,
+    )
+
+    with open_state(config) as db:
+        pending = db.execute("SELECT * FROM memory_pending_relations").fetchall()
+        results = search_facts(db, "SSN 123", config=config)
+
+    assert saved.ok
+    assert pending
+    assert not any(item["predicate"] == "has_ssn" for item in results)
+
+
+def test_memory_review_approval_materializes_pending_relation(tmp_path: Path) -> None:
+    config = _config(tmp_path)
+    context = _memory_context(
+        config,
+        openai_client=_FakeOpenAIClient(
+            config,
+            {
+                "relations": [
+                    {
+                        "subject": "user",
+                        "subject_kind": "person",
+                        "predicate": "has_ssn",
+                        "object": "123",
+                        "object_kind": "fact",
+                        "confidence": 0.9,
+                        "sensitive": True,
+                        "ambiguous": False,
+                        "evidence": "my SSN is 123",
+                    }
+                ]
+            },
+        ),
+    )
+    _remember({"content": "Remember my SSN is 123", "category": "facts"}, context)
+
+    with open_state(config) as db:
+        items = list_review_items(db)
+        result = decide_review_item(
+            db,
+            review_id=str(items[0]["review_id"]),
+            decision="approve",
+        )
+        active = search_facts(db, "SSN 123", config=config)
+        decisions = db.execute("SELECT * FROM memory_review_decisions").fetchall()
+
+    assert items
+    assert result.ok
+    assert result.relation_id
+    assert any(item["predicate"] == "has_ssn" for item in active)
+    assert decisions
+
+
+def test_memory_review_rejection_keeps_candidate_inactive(tmp_path: Path) -> None:
+    config = _config(tmp_path)
+    context = _memory_context(
+        config,
+        openai_client=_FakeOpenAIClient(
+            config,
+            {
+                "relations": [
+                    {
+                        "subject": "user",
+                        "subject_kind": "person",
+                        "predicate": "has_private_fact",
+                        "object": "sensitive value",
+                        "object_kind": "fact",
+                        "confidence": 0.9,
+                        "sensitive": True,
+                        "ambiguous": False,
+                        "evidence": "sensitive value",
+                    }
+                ]
+            },
+        ),
+    )
+    _remember({"content": "Remember sensitive value", "category": "facts"}, context)
+
+    with open_state(config) as db:
+        item = list_review_items(db)[0]
+        result = decide_review_item(
+            db,
+            review_id=str(item["review_id"]),
+            decision="reject",
+        )
+        active = search_facts(db, "sensitive value", config=config)
+
+    assert result.ok
+    assert not any(item["predicate"] == "has_private_fact" for item in active)
+
+
+def test_memory_review_tools_list_and_confirm_pending_item(tmp_path: Path) -> None:
+    config = _config(tmp_path)
+    context = _memory_context(
+        config,
+        openai_client=_FakeOpenAIClient(
+            config,
+            {
+                "relations": [
+                    {
+                        "subject": "user",
+                        "subject_kind": "person",
+                        "predicate": "has_private_fact",
+                        "object": "sensitive value",
+                        "object_kind": "fact",
+                        "confidence": 0.9,
+                        "sensitive": True,
+                        "ambiguous": False,
+                        "evidence": "sensitive value",
+                    }
+                ]
+            },
+        ),
+    )
+    _remember({"content": "Remember sensitive value", "category": "facts"}, context)
+
+    listed = _memory_review_list({}, context)
+    review_id = listed.payload["items"][0]["review_id"]
+    decided = _memory_review_decide(
+        {"review_id": review_id, "decision": "approve"},
+        context,
+    )
+
+    assert listed.ok
+    assert decided.ok
+    assert decided.payload["relation_id"]
+
+
+def test_llm_enrichment_failure_does_not_break_remember(
+    tmp_path: Path, monkeypatch
+) -> None:
+    import iris.memory_llm_extract as llm_extract
+
+    config = _config(tmp_path)
+
+    def _raise(*_args, **_kwargs) -> None:
+        raise RuntimeError("graph write failed")
+
+    monkeypatch.setattr(llm_extract, "record_extracted_memory_relations", _raise)
+    context = _memory_context(
+        config,
+        openai_client=_FakeOpenAIClient(
+            config,
+            {
+                "relations": [
+                    {
+                        "subject": "user",
+                        "subject_kind": "person",
+                        "predicate": "works_on",
+                        "object": "Iris",
+                        "object_kind": "project",
+                        "confidence": 0.9,
+                        "sensitive": False,
+                        "ambiguous": False,
+                        "evidence": "working on Iris",
+                    }
+                ]
+            },
+        ),
+    )
+
+    saved = _remember({"content": "I am working on Iris", "category": "facts"}, context)
+
+    with open_state(config) as db:
+        rows = db.execute("SELECT * FROM memories").fetchall()
+
+    assert saved.ok
+    assert rows
+
+
+def test_parse_rich_extraction_rejects_low_confidence_and_malformed() -> None:
+    malformed = parse_rich_extraction("not json", source_text="I prefer Spotify")
+    low_confidence = parse_rich_extraction(
+        '{"relations":[{"subject":"user","predicate":"prefers","object":"Spotify","confidence":0.2}]}',
+        source_text="I prefer Spotify",
+    )
+
+    assert malformed.rejected_count == 1
+    assert not low_confidence.active_relations
+    assert not low_confidence.pending_candidates
+    assert low_confidence.rejected_count == 1
+
+
+def test_knowledge_page_graphs_chunks_and_relations(tmp_path: Path) -> None:
+    config = _config(tmp_path)
+    note = tmp_path / "iris.md"
+    note.write_text(
+        "# Iris\nIris uses SQLite. Iris supports local memory.", encoding="utf-8"
+    )
+
+    with open_state(config) as db:
+        page_id = upsert_file_page(db, note, note.read_text(encoding="utf-8"))
+        result = graph_page(db, page_id)
+        chunks = db.execute("SELECT * FROM knowledge_chunks").fetchall()
+        related = related_facts(db, "Iris")
+
+    assert result.pages == 1
+    assert result.chunks == 1
+    assert result.relations >= 2
+    assert chunks
+    assert any(item["predicate"] == "uses" for item in related)
+
+
+def test_knowledge_regraph_deactivates_stale_chunk_relations(tmp_path: Path) -> None:
+    config = _config(tmp_path)
+    note = tmp_path / "iris.md"
+    note.write_text("# Iris\nIris uses SQLite.", encoding="utf-8")
+
+    with open_state(config) as db:
+        page_id = upsert_file_page(db, note, note.read_text(encoding="utf-8"))
+        graph_page(db, page_id)
+        note.write_text("# Iris\nIris uses Postgres.", encoding="utf-8")
+        upsert_file_page(db, note, note.read_text(encoding="utf-8"))
+        graph_page(db, page_id)
+        active = related_facts(db, "Iris")
+        inactive = related_facts(db, "Iris", include_inactive=True)
+
+    assert any(item["object_value"] == "Postgres" for item in active)
+    assert not any(item["object_value"] == "SQLite" for item in active)
+    assert any(
+        item["object_value"] == "SQLite" and item["active"] is False
+        for item in inactive
+    )
+
+
+def test_knowledge_search_includes_graphed_page_facts(tmp_path: Path) -> None:
+    config = _config(tmp_path)
+    note = tmp_path / "iris.md"
+    note.write_text("# Iris\nIris uses SQLite.", encoding="utf-8")
+
+    with open_state(config) as db:
+        page_id = upsert_file_page(db, note, note.read_text(encoding="utf-8"))
+        rebuild_links(db)
+        graph_page(db, page_id)
+        pages = search_pages(db, "Iris", limit=5)
+        graph = search_facts(db, "SQLite", config=config)
+
+    assert pages
+    assert any(item["object_value"] == "SQLite" for item in graph)
+
+
+def test_memory_lifecycle_records_access_and_decay(tmp_path: Path) -> None:
+    config = _config(tmp_path)
+    context = _memory_context(config)
+    _remember({"content": "Use the Spotify app, not the browser"}, context)
+
+    with open_state(config) as db:
+        first = search_facts(db, "spotify", config=config)
+        relation_id = str(first[0]["relation_id"])
+        accessed = db.execute(
+            "SELECT access_count FROM memory_lifecycle WHERE relation_id = ?",
+            (relation_id,),
+        ).fetchone()
+        db.execute(
+            """
+            UPDATE memory_relations
+            SET updated_at = '2020-01-01T00:00:00+00:00'
+            WHERE relation_id = ?
+            """,
+            (relation_id,),
+        )
+        result = maintain_lifecycle(db)
+        lifecycle = db.execute(
+            "SELECT decay_score, review_status FROM memory_lifecycle WHERE relation_id = ?",
+            (relation_id,),
+        ).fetchone()
+
+    assert accessed["access_count"] >= 1
+    assert result.relations >= 1
+    assert lifecycle["decay_score"] < 1.0
+
+
+def test_pinned_memory_does_not_decay(tmp_path: Path) -> None:
+    config = _config(tmp_path)
+    context = _memory_context(config)
+    _remember({"content": "I am working on Iris", "category": "facts"}, context)
+
+    with open_state(config) as db:
+        relation_id = str(search_facts(db, "Iris", config=config)[0]["relation_id"])
+        assert set_memory_pinned(db, relation_id, True)
+        db.execute(
+            """
+            UPDATE memory_relations
+            SET updated_at = '2020-01-01T00:00:00+00:00'
+            WHERE relation_id = ?
+            """,
+            (relation_id,),
+        )
+        maintain_lifecycle(db)
+        lifecycle = db.execute(
+            "SELECT decay_score, pinned FROM memory_lifecycle WHERE relation_id = ?",
+            (relation_id,),
+        ).fetchone()
+
+    assert lifecycle["pinned"] == 1
+    assert lifecycle["decay_score"] == 1.0
+
+
+def _memory_context(
+    config: IrisConfig, *, openai_client: object | None = None
+) -> ToolContext:
     return ToolContext(
         controller=object(),  # type: ignore[arg-type]
         perception=object(),  # type: ignore[arg-type]
         safety_gate=object(),  # type: ignore[arg-type]
-        openai_client=object(),  # type: ignore[arg-type]
+        openai_client=openai_client or object(),  # type: ignore[arg-type]
         google_vision=object(),  # type: ignore[arg-type]
         session_state={},
         config=config,
     )
+
+
+class _FakeOpenAIClient:
+    def __init__(self, config: IrisConfig, payload: dict[str, object]) -> None:
+        self.config = config
+        self.available = True
+        self.payload = payload
+        self.responses = self
+
+    def _get_client(self) -> "_FakeOpenAIClient":
+        return self
+
+    def create(self, **_kwargs: object) -> str:
+        import json
+
+        return json.dumps(self.payload)
+
+    def output_text(self, response: object) -> str:
+        return str(response)
 
 
 def _config(tmp_path: Path) -> IrisConfig:

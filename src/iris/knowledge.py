@@ -2,12 +2,20 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timezone
+import hashlib
 import json
 from pathlib import Path
 import re
 import sqlite3
 import uuid
 from typing import Any
+
+from iris.memory_extract import ExtractedRelation
+from iris.memory_graph import (
+    deactivate_relations_for_source,
+    record_extracted_relations,
+)
+from iris.memory_vectors import semantic_search, upsert_text_embedding
 
 
 TEXT_EXTENSIONS = {
@@ -30,6 +38,15 @@ class IngestResult:
     ingested: int
     skipped: int
     linked: int
+    errors: list[str]
+
+
+@dataclass(frozen=True)
+class KnowledgeGraphResult:
+    pages: int
+    chunks: int
+    relations: int
+    stale_relations: int
     errors: list[str]
 
 
@@ -167,7 +184,93 @@ def upsert_file_page(db: sqlite3.Connection, path: Path, content: str) -> str:
                 json.dumps(metadata, sort_keys=True),
             ),
         )
+    upsert_text_embedding(
+        db,
+        source_type="knowledge_page",
+        source_id=page_id,
+        text=f"{title}\n{summary or content[:1200]}",
+        metadata={"source_id": source_id, "uri": uri},
+    )
     return page_id
+
+
+def graph_page(db: sqlite3.Connection, page_id: str) -> KnowledgeGraphResult:
+    page = get_page(db, page_id)
+    if page is None:
+        raise KeyError(f"Knowledge page not found: {page_id}")
+    existing_chunk_ids = [
+        str(row["chunk_id"])
+        for row in db.execute(
+            "SELECT chunk_id FROM knowledge_chunks WHERE page_id = ?",
+            (page_id,),
+        ).fetchall()
+    ]
+    chunks = _upsert_chunks(db, page_id, str(page["content"]))
+    stale = 0
+    for chunk_id in existing_chunk_ids or [str(chunk["chunk_id"]) for chunk in chunks]:
+        stale += deactivate_relations_for_source(
+            db,
+            source_table="knowledge_chunks",
+            source_id=chunk_id,
+            reason="knowledge_page_regraph",
+        )
+    link_titles = [str(item["title"]) for item in page.get("outlinks", [])]
+    relation_count = 0
+    for chunk in chunks:
+        relations = _relations_for_chunk(
+            title=str(page["title"]),
+            content=str(chunk["content"]),
+            link_titles=link_titles,
+        )
+        if not relations:
+            continue
+        relation_ids = record_extracted_relations(
+            db,
+            source_type="knowledge_chunk",
+            source_table="knowledge_chunks",
+            source_id=str(chunk["chunk_id"]),
+            category="knowledge",
+            content=str(chunk["content"]),
+            provenance="knowledge_graph",
+            confidence=0.72,
+            relations=relations,
+        )
+        relation_count += len(relation_ids)
+    db.commit()
+    return KnowledgeGraphResult(
+        pages=1,
+        chunks=len(chunks),
+        relations=relation_count,
+        stale_relations=stale,
+        errors=[],
+    )
+
+
+def graph_all_pages(db: sqlite3.Connection, *, limit: int = 50) -> KnowledgeGraphResult:
+    rows = list_pages(db, limit=max(1, min(limit, 500)))
+    total = KnowledgeGraphResult(0, 0, 0, 0, [])
+    pages = 0
+    chunks = 0
+    relations = 0
+    stale = 0
+    errors: list[str] = []
+    for row in rows:
+        page_id = str(row["page_id"])
+        try:
+            result = graph_page(db, page_id)
+            pages += result.pages
+            chunks += result.chunks
+            relations += result.relations
+            stale += result.stale_relations
+        except Exception as exc:
+            errors.append(f"{page_id}: {exc}")
+    return KnowledgeGraphResult(
+        pages=pages or total.pages,
+        chunks=chunks,
+        relations=relations,
+        stale_relations=stale,
+        errors=errors[:20],
+    )
 
 
 def rebuild_links(db: sqlite3.Connection) -> int:
@@ -225,11 +328,12 @@ def search_pages(
             """
         ).fetchall()
     ]
-    scored: list[tuple[int, dict[str, Any]]] = []
+    scored: list[tuple[float, dict[str, Any]]] = []
+    seen_page_ids: set[str] = set()
     for row in rows:
         title = str(row.get("title") or "").lower()
         content = str(row.get("content") or "").lower()
-        score = 0
+        score = 0.0
         for term in terms:
             if term in title:
                 score += 20
@@ -239,6 +343,26 @@ def search_pages(
             row["snippet"] = _snippet(str(row.get("content") or ""), terms)
             row["score"] = score
             scored.append((score, row))
+            seen_page_ids.add(str(row.get("page_id") or ""))
+    if len(scored) < limit:
+        semantic_results = semantic_search(
+            db,
+            query,
+            source_types={"knowledge_page"},
+            limit=max(limit * 2, 10),
+        )
+        semantic_by_page = {
+            str(item["source_id"]): float(item["score"]) for item in semantic_results
+        }
+        for row in rows:
+            page_id = str(row.get("page_id") or "")
+            semantic_score = semantic_by_page.get(page_id, 0.0)
+            if not page_id or page_id in seen_page_ids or semantic_score < 0.05:
+                continue
+            row["snippet"] = _snippet(str(row.get("content") or ""), terms)
+            row["score"] = semantic_score * 10
+            scored.append((semantic_score * 10, row))
+            seen_page_ids.add(page_id)
     scored.sort(
         key=lambda item: (item[0], str(item[1].get("updated_at") or "")), reverse=True
     )
@@ -343,6 +467,158 @@ def _snippet(content: str, terms: list[str], *, radius: int = 160) -> str:
 
 def _clean_space(text: str) -> str:
     return re.sub(r"\s+", " ", text).strip()
+
+
+def _upsert_chunks(
+    db: sqlite3.Connection, page_id: str, content: str
+) -> list[dict[str, Any]]:
+    now = _now()
+    chunks = _chunk_text(content)
+    rows: list[dict[str, Any]] = []
+    for sequence, chunk in enumerate(chunks):
+        content_hash = hashlib.sha256(chunk.encode("utf-8")).hexdigest()
+        summary = _summarize(chunk)
+        existing = db.execute(
+            """
+            SELECT chunk_id
+            FROM knowledge_chunks
+            WHERE page_id = ? AND sequence = ?
+            """,
+            (page_id, sequence),
+        ).fetchone()
+        if existing:
+            chunk_id = str(existing["chunk_id"])
+            db.execute(
+                """
+                UPDATE knowledge_chunks
+                SET content_hash = ?, content = ?, summary = ?, updated_at = ?
+                WHERE chunk_id = ?
+                """,
+                (content_hash, chunk, summary, now, chunk_id),
+            )
+        else:
+            chunk_id = uuid.uuid4().hex
+            db.execute(
+                """
+                INSERT INTO knowledge_chunks
+                (chunk_id, page_id, sequence, content_hash, content, summary, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (chunk_id, page_id, sequence, content_hash, chunk, summary, now, now),
+            )
+        upsert_text_embedding(
+            db,
+            source_type="knowledge_chunk",
+            source_id=chunk_id,
+            text=chunk,
+            metadata={"page_id": page_id, "sequence": sequence},
+        )
+        rows.append(
+            {
+                "chunk_id": chunk_id,
+                "sequence": sequence,
+                "content_hash": content_hash,
+                "content": chunk,
+                "summary": summary,
+            }
+        )
+    db.execute(
+        "DELETE FROM knowledge_chunks WHERE page_id = ? AND sequence >= ?",
+        (page_id, len(chunks)),
+    )
+    return rows
+
+
+def _chunk_text(content: str, *, max_chars: int = 1600) -> list[str]:
+    paragraphs = [
+        item.strip() for item in re.split(r"\n\s*\n", content) if item.strip()
+    ]
+    chunks: list[str] = []
+    current = ""
+    for paragraph in paragraphs or [content]:
+        candidate = f"{current}\n\n{paragraph}".strip() if current else paragraph
+        if len(candidate) <= max_chars:
+            current = candidate
+            continue
+        if current:
+            chunks.append(current)
+        current = paragraph[:max_chars]
+    if current:
+        chunks.append(current)
+    return chunks or [_summarize(content)]
+
+
+def _relations_for_chunk(
+    *,
+    title: str,
+    content: str,
+    link_titles: list[str],
+) -> list[ExtractedRelation]:
+    relations: list[ExtractedRelation] = []
+    seen: set[tuple[str, str, str]] = set()
+    subject = title.strip() or "knowledge page"
+
+    for linked_title in link_titles:
+        _append_relation(
+            relations,
+            seen,
+            ExtractedRelation(
+                subject=subject,
+                subject_kind="concept",
+                predicate="mentions",
+                object_value=linked_title,
+                object_kind="concept",
+                confidence=0.7,
+                metadata={"extraction": "knowledge_link", "evidence": linked_title},
+            ),
+        )
+
+    for sentence in re.split(r"(?<=[.!?])\s+|\n+", content):
+        cleaned = _clean_space(sentence)
+        if not cleaned:
+            continue
+        for predicate, pattern in (
+            ("uses", rf"\b{re.escape(subject)}\s+uses\s+(.+?)(?:\.|$)"),
+            ("depends_on", rf"\b{re.escape(subject)}\s+depends on\s+(.+?)(?:\.|$)"),
+            ("supports", rf"\b{re.escape(subject)}\s+supports\s+(.+?)(?:\.|$)"),
+            ("is", rf"\b{re.escape(subject)}\s+is\s+(.+?)(?:\.|$)"),
+        ):
+            match = re.search(pattern, cleaned, flags=re.IGNORECASE)
+            if not match:
+                continue
+            obj = _clean_space(match.group(1)).strip(" .")
+            if not obj:
+                continue
+            _append_relation(
+                relations,
+                seen,
+                ExtractedRelation(
+                    subject=subject,
+                    subject_kind="concept",
+                    predicate=predicate,
+                    object_value=obj[:180],
+                    object_kind="concept",
+                    confidence=0.76,
+                    metadata={"extraction": "knowledge_pattern", "evidence": cleaned},
+                ),
+            )
+    return relations
+
+
+def _append_relation(
+    relations: list[ExtractedRelation],
+    seen: set[tuple[str, str, str]],
+    relation: ExtractedRelation,
+) -> None:
+    key = (
+        relation.subject.lower(),
+        relation.predicate.lower(),
+        relation.object_value.lower(),
+    )
+    if key in seen:
+        return
+    seen.add(key)
+    relations.append(relation)
 
 
 def _now() -> str:

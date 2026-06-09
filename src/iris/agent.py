@@ -21,6 +21,8 @@ from iris.connectors import connector_health, default_manifest_dirs
 from iris.integrations.google_vision import GoogleVisionClient
 from iris.integrations.openai_client import OpenAIResponsesClient
 from iris.memory import add_memory, list_memories
+from iris.memory_graph import memory_context_packet
+from iris.memory_llm_extract import enrich_memory_with_llm
 from iris.mac_controller import MacController
 from iris.perception import PerceptionService, ScreenAwarenessService
 from iris.recipes import ActionRecipeRegistry
@@ -625,7 +627,7 @@ class AgentExecutor:
                 text = str(fact).strip()
                 if not text or text.lower() in existing:
                     continue
-                add_memory(
+                memory_id = add_memory(
                     db,
                     category="session_summary",
                     content=text,
@@ -633,6 +635,16 @@ class AgentExecutor:
                     confidence=0.6,
                     user_confirmed=False,
                     sensitive=False,
+                )
+                enrich_memory_with_llm(
+                    db,
+                    memory_id=memory_id,
+                    category="session_summary",
+                    content=text,
+                    provenance="session_summary",
+                    confidence=0.6,
+                    openai_client=self.openai_client,
+                    config=self.config,
                 )
                 existing.add(text.lower())
                 saved += 1
@@ -664,6 +676,7 @@ class AgentExecutor:
             config=self.config,
             approved_tool_call=approved,
             cancellation_token=cancellation_token,
+            run_id=run_id,
         )
         started_at = time.monotonic()
         self._set_current_status(
@@ -777,6 +790,18 @@ class AgentExecutor:
             return []
         try:
             with open_state(self.config) as db:
+                graph_rows = memory_context_packet(db, limit=limit, config=self.config)
+                if graph_rows:
+                    return [
+                        {
+                            "category": "graph",
+                            "content": str(row.get("content") or ""),
+                            "confidence": row.get("confidence"),
+                            "active": row.get("active"),
+                        }
+                        for row in graph_rows
+                        if row.get("content")
+                    ][:limit]
                 rows = list_memories(db)
         except Exception:
             return []
@@ -1054,8 +1079,10 @@ Rules:
 - available_connectors tells you which app/service manifests exist, whether they are enabled/configured, and which generic tools they expose.
 - If session_context.state.last_approved_tool_observation exists, treat it as the latest observation from the approved action. Use it to answer or choose a non-duplicate next verification step; do not repeat the same approved read/open tool unless the observation is clearly insufficient.
 - If a connector is disabled or missing credentials, use integration_status or explain the setup instead of pretending it works.
-- Prefer generic tools: browser_ensure_runtime/browser_open/browser_tabs/browser_current_page/browser_get_dom/browser_focus_element/browser_click_element/browser_type_into/browser_submit/browser_extract, app_windows/app_inspect/app_find_element/app_click_element/app_menu_select/app_type_text/app_hotkey, screen_describe/screen_find_element/screen_click_element, audio_current_media/audio_explain_current_song, media_search/media_play/media_pause, app_volume_set, connector_list, integration_status, task_start_background/task_status, calendar_find_event, reminder_create, message_send, gmail_create_draft, knowledge_search/machine_context/file_find/file_open/file_rename/workflow_run/recipe_run.
+- Prefer generic tools: browser_ensure_runtime/browser_open/browser_tabs/browser_current_page/browser_get_dom/browser_focus_element/browser_click_element/browser_type_into/browser_submit/browser_extract, app_windows/app_inspect/app_find_element/app_click_element/app_menu_select/app_type_text/app_hotkey, screen_describe/screen_find_element/screen_click_element, audio_current_media/audio_explain_current_song, media_search/media_play/media_pause, app_volume_set, connector_list, integration_status, task_start_background/task_status, calendar_find_event, reminder_create, message_send, gmail_create_draft, memory_search/memory_related/memory_explain/memory_review_list/memory_review_decide/memory_confirm/knowledge_search/machine_context/file_find/file_open/file_rename/workflow_run/recipe_run.
 - Use live_screen_context as current state, but call describe_screen for current-screen/current-tab questions.
+- Use memory_search for durable facts/preferences Iris has learned, memory_related for relationship questions, and memory_explain when the user asks why Iris believes a memory.
+- Use memory_review_list for pending memory approvals and memory_confirm/memory_review_decide when the user explicitly approves, rejects, or supersedes a pending memory.
 - Use knowledge_search when the user asks what Iris knows/remembers from local notes, docs, project context, prior logs, personal wiki, or ingested files.
 - For media requests such as playing music or playing the current browser video, use media_play/media_search or a matching recipe. Do not use open_app for media playback.
 - For "turn it down in Spotify" or similar per-app volume requests, use app_volume_set before set_volume.
@@ -1082,7 +1109,7 @@ Rules:
 - If a tool fails with a retryable observation, choose a fallback tool instead of giving up.
 - Memory: when the user states a durable preference, fact about themselves, or a standing instruction ("always...", "from now on...", "I prefer...", "remember that...", "my X is..."), silently call remember with a concise content string and a category (preferences, facts, contacts, etc.) as one step of the turn. Do not ask permission and do not announce that you saved it unless asked.
 - Apply remembered context: known_memories in the input holds what you have learned about the user. Honor stored preferences (e.g. "use the Spotify app, not the browser") when choosing tools.
-- For "what do you know about me" or recall questions, use recall (and knowledge_search for ingested notes); answer from known_memories and the user_profile, not from guesses.
+- For "what do you know about me" or recall questions, use recall or memory_search (and knowledge_search for ingested notes); answer from known_memories, graph memory, and the user_profile, not from guesses.
 - Verify actions when possible before claiming completion.
 - Honesty: only state that an action happened or describe a result if it is supported by an observation in this turn. Never invent outcomes (e.g. a song that started, a message that sent). If you have not verified, say what you attempted, not what you assume happened.
 - Do not request destructive, payment, credential, security, or sending actions without approval.

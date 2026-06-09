@@ -88,6 +88,145 @@ CREATE TABLE IF NOT EXISTS memories (
   updated_at TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS memory_entities (
+  entity_id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  normalized_name TEXT NOT NULL UNIQUE,
+  kind TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  metadata_json TEXT NOT NULL DEFAULT '{}'
+);
+
+CREATE TABLE IF NOT EXISTS memory_observations (
+  observation_id TEXT PRIMARY KEY,
+  content TEXT NOT NULL,
+  source_type TEXT NOT NULL,
+  source_id TEXT NOT NULL,
+  category TEXT NOT NULL,
+  confidence REAL NOT NULL,
+  created_at TEXT NOT NULL,
+  metadata_json TEXT NOT NULL DEFAULT '{}',
+  UNIQUE (source_type, source_id, content)
+);
+
+CREATE TABLE IF NOT EXISTS memory_relations (
+  relation_id TEXT PRIMARY KEY,
+  subject_entity_id TEXT NOT NULL,
+  predicate TEXT NOT NULL,
+  object_entity_id TEXT,
+  object_value TEXT NOT NULL,
+  active INTEGER NOT NULL DEFAULT 1,
+  confidence REAL NOT NULL,
+  provenance TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  metadata_json TEXT NOT NULL DEFAULT '{}',
+  FOREIGN KEY (subject_entity_id) REFERENCES memory_entities(entity_id) ON DELETE CASCADE,
+  FOREIGN KEY (object_entity_id) REFERENCES memory_entities(entity_id) ON DELETE SET NULL
+);
+
+CREATE TABLE IF NOT EXISTS memory_evidence (
+  evidence_id TEXT PRIMARY KEY,
+  relation_id TEXT NOT NULL,
+  observation_id TEXT,
+  source_table TEXT NOT NULL,
+  source_id TEXT NOT NULL,
+  quote TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  FOREIGN KEY (relation_id) REFERENCES memory_relations(relation_id) ON DELETE CASCADE,
+  FOREIGN KEY (observation_id) REFERENCES memory_observations(observation_id) ON DELETE SET NULL
+);
+
+CREATE TABLE IF NOT EXISTS memory_pending_relations (
+  pending_id TEXT PRIMARY KEY,
+  observation_id TEXT,
+  source_type TEXT NOT NULL,
+  source_id TEXT NOT NULL,
+  reason TEXT NOT NULL,
+  candidate_json TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  FOREIGN KEY (observation_id) REFERENCES memory_observations(observation_id) ON DELETE SET NULL
+);
+
+CREATE TABLE IF NOT EXISTS memory_review_items (
+  review_id TEXT PRIMARY KEY,
+  pending_id TEXT,
+  status TEXT NOT NULL,
+  reason TEXT NOT NULL,
+  candidate_json TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  FOREIGN KEY (pending_id) REFERENCES memory_pending_relations(pending_id) ON DELETE SET NULL
+);
+
+CREATE TABLE IF NOT EXISTS memory_review_decisions (
+  decision_id TEXT PRIMARY KEY,
+  review_id TEXT NOT NULL,
+  decision TEXT NOT NULL,
+  actor TEXT NOT NULL,
+  relation_id TEXT,
+  created_at TEXT NOT NULL,
+  notes TEXT NOT NULL DEFAULT '',
+  FOREIGN KEY (review_id) REFERENCES memory_review_items(review_id) ON DELETE CASCADE,
+  FOREIGN KEY (relation_id) REFERENCES memory_relations(relation_id) ON DELETE SET NULL
+);
+
+CREATE TABLE IF NOT EXISTS memory_lifecycle (
+  relation_id TEXT PRIMARY KEY,
+  last_accessed_at TEXT,
+  access_count INTEGER NOT NULL DEFAULT 0,
+  decay_score REAL NOT NULL DEFAULT 1.0,
+  expires_at TEXT,
+  pinned INTEGER NOT NULL DEFAULT 0,
+  review_status TEXT NOT NULL DEFAULT 'active',
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  metadata_json TEXT NOT NULL DEFAULT '{}',
+  FOREIGN KEY (relation_id) REFERENCES memory_relations(relation_id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_memory_entities_kind ON memory_entities(kind);
+CREATE INDEX IF NOT EXISTS idx_memory_observations_category ON memory_observations(category);
+CREATE INDEX IF NOT EXISTS idx_memory_relations_subject ON memory_relations(subject_entity_id);
+CREATE INDEX IF NOT EXISTS idx_memory_relations_predicate ON memory_relations(predicate);
+CREATE INDEX IF NOT EXISTS idx_memory_relations_active ON memory_relations(active);
+CREATE INDEX IF NOT EXISTS idx_memory_evidence_relation ON memory_evidence(relation_id);
+CREATE INDEX IF NOT EXISTS idx_memory_pending_relations_source ON memory_pending_relations(source_type, source_id);
+CREATE INDEX IF NOT EXISTS idx_memory_review_items_status ON memory_review_items(status);
+CREATE INDEX IF NOT EXISTS idx_memory_review_items_pending ON memory_review_items(pending_id);
+CREATE INDEX IF NOT EXISTS idx_memory_lifecycle_review ON memory_lifecycle(review_status);
+CREATE INDEX IF NOT EXISTS idx_memory_lifecycle_decay ON memory_lifecycle(decay_score);
+
+CREATE TABLE IF NOT EXISTS memory_embeddings (
+  embedding_id TEXT PRIMARY KEY,
+  source_type TEXT NOT NULL,
+  source_id TEXT NOT NULL,
+  text_hash TEXT NOT NULL,
+  text TEXT NOT NULL,
+  vector_json TEXT NOT NULL,
+  provider TEXT NOT NULL,
+  model TEXT NOT NULL,
+  dimensions INTEGER NOT NULL,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  metadata_json TEXT NOT NULL DEFAULT '{}',
+  UNIQUE (source_type, source_id, provider, model)
+);
+
+CREATE TABLE IF NOT EXISTS memory_retrieval_events (
+  event_id TEXT PRIMARY KEY,
+  query TEXT NOT NULL,
+  source TEXT NOT NULL,
+  selected_json TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  metadata_json TEXT NOT NULL DEFAULT '{}'
+);
+
+CREATE INDEX IF NOT EXISTS idx_memory_embeddings_source ON memory_embeddings(source_type, source_id);
+CREATE INDEX IF NOT EXISTS idx_memory_embeddings_hash ON memory_embeddings(text_hash);
+CREATE INDEX IF NOT EXISTS idx_memory_retrieval_events_created ON memory_retrieval_events(created_at);
+
 CREATE TABLE IF NOT EXISTS meetings (
   meeting_id TEXT PRIMARY KEY,
   title TEXT NOT NULL,
@@ -231,6 +370,20 @@ CREATE TABLE IF NOT EXISTS knowledge_pages (
   FOREIGN KEY (source_id) REFERENCES knowledge_sources(source_id) ON DELETE SET NULL
 );
 
+CREATE TABLE IF NOT EXISTS knowledge_chunks (
+  chunk_id TEXT PRIMARY KEY,
+  page_id TEXT NOT NULL,
+  sequence INTEGER NOT NULL,
+  content_hash TEXT NOT NULL,
+  content TEXT NOT NULL,
+  summary TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  metadata_json TEXT NOT NULL DEFAULT '{}',
+  UNIQUE (page_id, sequence),
+  FOREIGN KEY (page_id) REFERENCES knowledge_pages(page_id) ON DELETE CASCADE
+);
+
 CREATE TABLE IF NOT EXISTS knowledge_links (
   from_page_id TEXT NOT NULL,
   to_page_id TEXT NOT NULL,
@@ -240,6 +393,9 @@ CREATE TABLE IF NOT EXISTS knowledge_links (
   FOREIGN KEY (from_page_id) REFERENCES knowledge_pages(page_id) ON DELETE CASCADE,
   FOREIGN KEY (to_page_id) REFERENCES knowledge_pages(page_id) ON DELETE CASCADE
 );
+
+CREATE INDEX IF NOT EXISTS idx_knowledge_chunks_page ON knowledge_chunks(page_id);
+CREATE INDEX IF NOT EXISTS idx_knowledge_chunks_hash ON knowledge_chunks(content_hash);
 """
 
 
@@ -271,3 +427,10 @@ def connect(path: Path) -> sqlite3.Connection:
 def migrate(db: sqlite3.Connection) -> None:
     db.executescript(SCHEMA)
     db.commit()
+    try:
+        from iris.memory_graph import backfill_memories
+
+        backfill_memories(db)
+    except Exception:
+        # State should remain usable even if graph backfill hits legacy data.
+        pass

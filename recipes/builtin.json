@@ -63,6 +63,37 @@
       }
     },
     {
+      "name": "apple_music_play_song",
+      "description": "Search and play a requested song using the local Music app, then verify playback metadata.",
+      "service": "apple_music",
+      "required_connectors": ["apple-music"],
+      "tools": ["media_play", "audio_current_media", "screen_click_element"],
+      "steps": [
+        {
+          "tool": "media_play",
+          "args": {"service": "apple_music", "surface": "app"},
+          "expected_observation": "Music searches for or starts the requested song."
+        },
+        {
+          "tool": "audio_current_media",
+          "args": {},
+          "expected_observation": "Native media metadata confirms the song or playback state."
+        }
+      ],
+      "fallback_steps": [
+        {
+          "tool": "screen_click_element",
+          "args": {"description": "visible Apple Music play button for the requested result"},
+          "expected_observation": "Music starts playback after the visible play button is clicked."
+        }
+      ],
+      "done_condition": "Music metadata confirms playback or the visible UI has changed to playing.",
+      "verification_tool": "audio_current_media",
+      "metadata": {
+        "failure_message": "I tried Apple Music, but I could not verify playback yet."
+      }
+    },
+    {
       "name": "stripe_revenue_check",
       "description": "Check today's Stripe sales or revenue from the current signed-in dashboard. Never handle credentials; ask the user to sign in manually if needed.",
       "service": "stripe",
