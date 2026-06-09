@@ -998,11 +998,15 @@ def _run_profile_setup(config: IrisConfig, *, interactive: bool) -> None:
         print("Run `./iris setup` to personalize Iris.")
         return
     print("Let's personalize Iris.")
-    preferred_name = _prompt_default("What should I call you?", inferred.preferred_name)
-    full_name = _prompt_default(
-        "Full name? Press Enter to use the detected value.", inferred.full_name
+    preferred_name = _prompt_name(
+        "What should I call you? Type a name, or press Enter to keep",
+        inferred.preferred_name,
     )
-    pronouns = _prompt_optional("Pronouns? Press Enter to skip.")
+    full_name = _prompt_name(
+        "What is your full name? Type it, or press Enter to keep",
+        inferred.full_name,
+    )
+    pronouns = _prompt_optional("Pronouns (e.g. she/her)? Press Enter to skip.")
     result = _save_profile_setup(
         config,
         preferred_name=preferred_name,
@@ -1039,9 +1043,19 @@ def _save_profile_setup(
     return {"memory_id": memory_id, "profile": profile.__dict__}
 
 
-def _prompt_default(question: str, default: str) -> str:
-    value = input(f"{question} [{default}] ").strip()
-    return value or default
+_AFFIRMATIONS = {"yes", "y", "yeah", "yep", "ok", "okay", "sure", "correct", "right"}
+_NEGATIONS = {"no", "n", "nope", "nah", "wrong", "incorrect"}
+
+
+def _prompt_name(question: str, default: str) -> str:
+    while True:
+        value = input(f"{question} [{default}]: ").strip()
+        if not value or value.lower() in _AFFIRMATIONS:
+            return default
+        if value.lower() in _NEGATIONS:
+            print("No problem — type the name you'd like me to use.")
+            continue
+        return value
 
 
 def _prompt_optional(question: str) -> str | None:

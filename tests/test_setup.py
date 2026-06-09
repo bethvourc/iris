@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 from types import SimpleNamespace
 
-from iris.cli import cmd_init, cmd_setup
+from iris.cli import _prompt_name, cmd_init, cmd_setup
 from iris.config import IrisConfig
 from iris.profile import has_user_profile, load_user_profile
 from iris.state import open_state
@@ -76,6 +76,32 @@ def test_init_does_not_prompt_when_non_interactive(
     captured = capsys.readouterr()
 
     assert "Run `./iris setup` to personalize Iris." in captured.out
+
+
+def test_prompt_name_treats_affirmation_as_accepting_default(monkeypatch) -> None:
+    monkeypatch.setattr("builtins.input", lambda _: "yes")
+
+    assert _prompt_name("What is your full name?", "Beth Vour") == "Beth Vour"
+
+
+def test_prompt_name_empty_input_accepts_default(monkeypatch) -> None:
+    monkeypatch.setattr("builtins.input", lambda _: "")
+
+    assert _prompt_name("What is your full name?", "Beth Vour") == "Beth Vour"
+
+
+def test_prompt_name_negation_reprompts_for_a_real_name(monkeypatch, capsys) -> None:
+    answers = iter(["no", "Ada Lovelace"])
+    monkeypatch.setattr("builtins.input", lambda _: next(answers))
+
+    assert _prompt_name("What is your full name?", "Beth Vour") == "Ada Lovelace"
+    assert "type the name" in capsys.readouterr().out
+
+
+def test_prompt_name_keeps_typed_name(monkeypatch) -> None:
+    monkeypatch.setattr("builtins.input", lambda _: "Ada Lovelace")
+
+    assert _prompt_name("What is your full name?", "Beth Vour") == "Ada Lovelace"
 
 
 def _config(tmp_path: Path) -> IrisConfig:
