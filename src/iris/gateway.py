@@ -1,12 +1,20 @@
 from __future__ import annotations
 
+from datetime import datetime, timezone
 import hmac
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
+import logging
+import os
 import queue
 import re
+import signal
+import threading
+import time
 from typing import Any, Callable
 from urllib.parse import parse_qs, urlparse
+
+from iris import __version__
 
 from iris.approvals import list_approvals
 from iris.audit import record_audit
@@ -35,6 +43,9 @@ from iris.tasks import (
 RouterFactory = Callable[[], Any]
 AUTH_EXEMPT_PATHS = {"/health", "/dashboard", "/memory-browser"}
 MAX_BODY_BYTES = 1_000_000
+CONTRACT_VERSION = 1
+
+_LOG = logging.getLogger("iris.gateway")
 
 
 class GatewayService:
@@ -42,6 +53,8 @@ class GatewayService:
         self.config = config
         self.router_factory = router_factory
         self._orchestrator: RunOrchestrator | None = None
+        self._server: ThreadingHTTPServer | None = None
+        self.started_at = datetime.now(timezone.utc)
 
     @property
     def orchestrator(self) -> RunOrchestrator:
@@ -59,7 +72,9 @@ class GatewayService:
             gateway = service
 
         server = ThreadingHTTPServer((host, port), Handler)
-        base_url = f"http://{host}:{port}"
+        self._server = server
+        bound_host, bound_port = server.server_address[:2]
+        base_url = f"http://{bound_host}:{bound_port}"
         print(f"Iris gateway listening on {base_url}")
         print(f"Open {base_url}/dashboard to use the UI")
         if not self.config.gateway_token:
@@ -67,7 +82,37 @@ class GatewayService:
                 "WARNING: IRIS_GATEWAY_TOKEN is not set; all API endpoints will "
                 "return 401. Set it before serving to enable access."
             )
-        server.serve_forever()
+        self._install_signal_handlers()
+        _LOG.info(
+            "gateway.start",
+            extra={"host": bound_host, "port": bound_port, "pid": os.getpid()},
+        )
+        try:
+            server.serve_forever()
+        finally:
+            server.server_close()
+            self._server = None
+            _LOG.info("gateway.stop", extra={"pid": os.getpid()})
+
+    def request_shutdown(self) -> None:
+        """Stop the server. Safe to call from any thread or a signal handler."""
+        server = self._server
+        if server is None:
+            return
+        # shutdown() blocks until serve_forever() exits, so it must never run
+        # on the thread that is inside serve_forever() (e.g. a SIGTERM handler
+        # interrupting the main thread).
+        threading.Thread(target=server.shutdown, daemon=True).start()
+
+    def _install_signal_handlers(self) -> None:
+        if threading.current_thread() is not threading.main_thread():
+            return
+
+        def handle_sigterm(_signum: int, _frame: Any) -> None:
+            _LOG.info("gateway.sigterm")
+            self.request_shutdown()
+
+        signal.signal(signal.SIGTERM, handle_sigterm)
 
     def authorize(self, path: str, authorization_header: str | None) -> bool:
         if path in AUTH_EXEMPT_PATHS:
@@ -83,9 +128,18 @@ class GatewayService:
     def handle_get(
         self, path: str, query: dict[str, list[str]]
     ) -> tuple[int, dict[str, Any]]:
+        if path == "/health":
+            return 200, {
+                "ok": True,
+                "agent": self.config.agent_name,
+                "version": __version__,
+                "contract_version": CONTRACT_VERSION,
+                "pid": os.getpid(),
+                "started_at": self.started_at.isoformat(
+                    timespec="seconds"
+                ).replace("+00:00", "Z"),
+            }
         with open_state(self.config) as db:
-            if path == "/health":
-                return 200, {"ok": True, "agent": self.config.agent_name}
             if path == "/sessions":
                 return 200, {
                     "sessions": list_sessions(db, limit=_int_query(query, "limit", 25))
@@ -349,9 +403,15 @@ class GatewayService:
 
 class _GatewayHandler(BaseHTTPRequestHandler):
     gateway: GatewayService
+    _status_code = 0
 
     def do_GET(self) -> None:  # noqa: N802
-        parsed = urlparse(self.path)
+        self._handle_request("GET", self._dispatch_get)
+
+    def do_POST(self) -> None:  # noqa: N802
+        self._handle_request("POST", self._dispatch_post)
+
+    def _dispatch_get(self, parsed: Any) -> None:
         if parsed.path in ("", "/"):
             self._redirect("/dashboard")
             return
@@ -367,8 +427,7 @@ class _GatewayHandler(BaseHTTPRequestHandler):
         status, payload = self.gateway.handle_get(parsed.path, parse_qs(parsed.query))
         self._write_json(status, payload)
 
-    def do_POST(self) -> None:  # noqa: N802
-        parsed = urlparse(self.path)
+    def _dispatch_post(self, parsed: Any) -> None:
         if not self._authorize(parsed.path):
             return
         try:
@@ -378,6 +437,39 @@ class _GatewayHandler(BaseHTTPRequestHandler):
             return
         status, payload = self.gateway.handle_post(parsed.path, body)
         self._write_json(status, payload)
+
+    def _handle_request(self, method: str, dispatch: Callable[[Any], None]) -> None:
+        started = time.monotonic()
+        parsed = urlparse(self.path)
+        self._status_code = 0
+        try:
+            dispatch(parsed)
+        except Exception:
+            # Log path/status only: request bodies and headers may carry
+            # secrets and must never reach the log.
+            _LOG.exception(
+                "gateway.request_failed",
+                extra={"method": method, "path": parsed.path},
+            )
+            if self._status_code == 0:
+                try:
+                    self._write_json(500, {"error": "internal error"})
+                except Exception:
+                    pass
+        finally:
+            _LOG.info(
+                "gateway.request",
+                extra={
+                    "method": method,
+                    "path": parsed.path,
+                    "status": self._status_code,
+                    "duration_ms": round((time.monotonic() - started) * 1000, 1),
+                },
+            )
+
+    def send_response(self, code: int, message: str | None = None) -> None:
+        self._status_code = code
+        super().send_response(code, message)
 
     def log_message(self, format: str, *args: Any) -> None:
         return

@@ -22,7 +22,7 @@ window for activity, approvals, and settings.
 └───────────────────────────────────┬────────────────────────────────────────────┘
                                     │  HTTP + SSE, 127.0.0.1 only, Bearer token
 ┌───────────────────────────────────▼────────────────────────────────────────────┐
-│  iris daemon (Python) — `iris gateway`                                          │
+│  iris daemon (Python) — `iris serve`                                          │
 │  GatewayService (http.server, threading)                                        │
 │   ├─ VoiceController ── RealtimeSpeechSession ──► OpenAI Realtime (wss)         │
 │   ├─ RunOrchestrator ── agent runs, approvals                                   │
@@ -49,7 +49,7 @@ CLI, the web dashboard (`/dashboard`), and the desktop app as peer clients of on
 | SettingsStore | `src/iris/settings_store.py` (new) | Whitelisted, file-backed mutable settings beneath env overrides. |
 | RunOrchestrator | `src/iris/runtime.py` | Agent runs, run events, approvals (existing, unchanged). |
 
-The daemon runs `iris gateway --json-logs --log-dir ~/Library/Logs/Iris` and is otherwise the
+The daemon runs `iris serve --json-logs --log-dir ~/Library/Logs/Iris` and is otherwise the
 same process that serves the web dashboard today.
 
 ### Swift app
@@ -69,7 +69,7 @@ same process that serves the web dashboard today.
 
 **Who spawns whom.** Iris.app owns the daemon as a child `Process` in release builds. The daemon
 executable is the embedded runtime at `Iris.app/Contents/Resources/iris-runtime/`. In dev mode the
-app resolves `uv run iris gateway` against the repo checkout.
+app resolves `uv run iris serve` against the repo checkout.
 
 **Startup sequence.**
 1. App launches (login item via `SMAppService`, or manually).
@@ -217,7 +217,7 @@ codes in user-facing surfaces; full detail goes to logs and Diagnostics.
 
 ## 10. Deployment shape
 
-- **Dev**: `uv run iris gateway` from the repo (run by the app in dev mode, or adopted from a
+- **Dev**: `uv run iris serve` from the repo (run by the app in dev mode, or adopted from a
   terminal); Swift app run from Xcode.
 - **Release**: `Iris.app` containing the Swift binary plus an embedded relocatable Python runtime
   (`Contents/Resources/iris-runtime/`, built from python-build-standalone + the uv lockfile).

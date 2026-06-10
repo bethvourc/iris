@@ -459,6 +459,16 @@ def build_parser() -> argparse.ArgumentParser:
     serve = subparsers.add_parser("serve", help="Run the local Iris agent gateway")
     serve.add_argument("--host", default="127.0.0.1")
     serve.add_argument("--port", type=int, default=8765)
+    serve.add_argument(
+        "--json-logs",
+        action="store_true",
+        help="Emit structured JSON logs (one object per line)",
+    )
+    serve.add_argument(
+        "--log-dir",
+        default=None,
+        help="Write rotating logs to DIR/daemon.log instead of stderr",
+    )
     serve.set_defaults(func=cmd_serve)
 
     tasks = subparsers.add_parser(
@@ -1424,7 +1434,9 @@ def cmd_start(args: argparse.Namespace) -> int:
 
 def cmd_serve(args: argparse.Namespace) -> int:
     from iris.gateway import GatewayService
+    from iris.logging_setup import configure_logging
 
+    configure_logging(json_logs=args.json_logs, log_dir=args.log_dir)
     config = _config(args)
 
     def router_factory():
