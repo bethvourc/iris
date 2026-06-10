@@ -237,6 +237,7 @@ class RealtimeSpeechSession:
         self._sink: EventSink = event_sink or ConsoleSink()
         self.state = VoiceState.IDLE
         self._end_reason = "stopped"
+        self._output: Any | None = None
         self._stop = threading.Event()
         self._send_lock = threading.Lock()
         self._ws: Any | None = None
@@ -616,6 +617,46 @@ class RealtimeSpeechSession:
             except Exception:
                 pass
 
+    def interrupt(self) -> bool:
+        """Cancel the in-flight assistant response; the session keeps listening.
+
+        Programmatic twin of the barge-in path (`_handle_barge_in_started`),
+        for callers like the gateway that interrupt without speech. Unlike
+        barge-in, the server is not cancelling for us via VAD, so we must send
+        `response.cancel` ourselves. Returns True if a response was cut.
+        """
+        now = time.monotonic()
+        with self._response_state_lock:
+            if not self._assistant_response_active:
+                return False
+            partial_text = "".join(self._current_response_text_chunks).strip()
+            if partial_text:
+                self._last_spoken_text = partial_text
+            self._assistant_response_active = False
+            self._pending_response_text = None
+            self._suppress_input_until = 0.0
+            self._interrupted_response_pending = True
+            self._interrupted_response_at = now
+            played_ms = self._played_audio_ms_locked()
+        with self._tool_lock:
+            self._pending_calls.clear()
+        output = getattr(self, "_output", None)
+        if output is not None:
+            self._stop_output_playback(output)
+        self._truncate_active_assistant_audio()
+        self._send_json({"type": "response.cancel"})
+        self._emit(
+            VoiceEvent(
+                VoiceEventType.INTERRUPTED, {"at_ms": played_ms, "via": "request"}
+            )
+        )
+        self._set_state(VoiceState.LISTENING, via="interrupt")
+        self._trace_voice_event(
+            "voice.interrupt.requested",
+            details={"audio_end_ms": played_ms},
+        )
+        return True
+
     def _receive_loop(self) -> None:
         import sounddevice  # type: ignore
 
@@ -626,6 +667,7 @@ class RealtimeSpeechSession:
                 dtype="int16",
                 blocksize=2400,
             ) as output:
+                self._output = output
                 while not self._stop.is_set() and self._ws is not None:
                     try:
                         raw = self._ws.recv()
@@ -647,6 +689,7 @@ class RealtimeSpeechSession:
                     event = json.loads(raw)
                     self._handle_event(event, output)
         finally:
+            self._output = None
             self._stop.set()
 
     def _handle_event(self, event: dict[str, Any], output) -> None:  # noqa: ANN001
