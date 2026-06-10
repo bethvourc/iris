@@ -53,7 +53,12 @@ class _FakeOutput:
 
 
 def _bare_session() -> tuple[RealtimeSpeechSession, list[dict]]:
+    from iris.voice_events import ConsoleSink, VoiceState
+
     session = object.__new__(RealtimeSpeechSession)
+    session._sink = ConsoleSink()
+    session.state = VoiceState.IDLE
+    session._end_reason = "stopped"
     session._tool_lock = threading.Lock()
     session._pending_calls = []
     session._response_state_lock = threading.Lock()

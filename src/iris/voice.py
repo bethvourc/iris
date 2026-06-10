@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import re
 import queue
 import signal
@@ -28,6 +29,17 @@ from iris.scheduler import SchedulerService
 from iris.state import open_state
 from iris.system import run_command
 from iris.tracing import record_trace_event
+from iris.voice_events import (
+    ConsoleSink,
+    EventSink,
+    VoiceEvent,
+    VoiceEventType,
+    VoiceState,
+    error_event,
+    log_event,
+)
+
+_LOG = logging.getLogger("iris.voice")
 
 
 @dataclass(frozen=True)
@@ -214,6 +226,7 @@ class RealtimeSpeechSession:
         user_profile: UserProfile,
         orchestrator: RunOrchestrator | None = None,
         wake_gated: bool = True,
+        event_sink: EventSink | None = None,
     ) -> None:
         self.config = config
         self.router = router
@@ -221,6 +234,9 @@ class RealtimeSpeechSession:
         self.user_profile = user_profile
         self.wake_gated = wake_gated
         self.awake = not wake_gated
+        self._sink: EventSink = event_sink or ConsoleSink()
+        self.state = VoiceState.IDLE
+        self._end_reason = "stopped"
         self._stop = threading.Event()
         self._send_lock = threading.Lock()
         self._ws: Any | None = None
@@ -272,6 +288,31 @@ class RealtimeSpeechSession:
         )
         self._voice_trace_run_id = f"voice-{uuid.uuid4().hex}"
 
+    def _emit(self, event: VoiceEvent) -> None:
+        _LOG.debug(
+            "voice.event",
+            extra={"voice_event": event.type, "event_data": event.data},
+        )
+        try:
+            self._sink.emit(event)
+        except Exception:
+            # A broken sink must never take down the audio session.
+            _LOG.exception("voice.sink_failed", extra={"voice_event": event.type})
+
+    def _log_line(self, text: str) -> None:
+        self._emit(log_event(text))
+
+    def _set_state(self, state: str, *, via: str | None = None, **extra: Any) -> None:
+        self.state = state
+        data: dict[str, Any] = {
+            "state": state,
+            "meeting_active": self._meeting_active,
+        }
+        if via:
+            data["via"] = via
+        data.update(extra)
+        self._emit(VoiceEvent(VoiceEventType.STATE, data))
+
     def run(self) -> None:
         if not self.config.openai_api_key:
             raise RuntimeError("OPENAI_API_KEY is required for live speech mode.")
@@ -279,7 +320,8 @@ class RealtimeSpeechSession:
         import websocket  # type: ignore
 
         url = f"wss://api.openai.com/v1/realtime?model={self.config.realtime_model}"
-        print(f"iris> connecting realtime model {self.config.realtime_model}...")
+        session_started_at = time.monotonic()
+        self._set_state(VoiceState.CONNECTING, model=self.config.realtime_model)
         self._ws = websocket.create_connection(
             url,
             header=[f"Authorization: Bearer {self.config.openai_api_key}"],
@@ -289,7 +331,7 @@ class RealtimeSpeechSession:
             self._ws.settimeout(None)
         except Exception:
             pass
-        print("iris> websocket connected")
+        self._log_line("iris> websocket connected")
         self._send_json(
             {
                 "type": "session.update",
@@ -330,27 +372,31 @@ class RealtimeSpeechSession:
             }
         )
 
-        print("iris> live speech-to-speech connected")
+        self._log_line("iris> live speech-to-speech connected")
         if self.wake_gated:
-            print(f"iris> say {', '.join(self.config.wake_words)} to wake me")
-        print("iris> say 'go to sleep' to pause, or press Ctrl+C to stop")
+            self._log_line(
+                f"iris> say {', '.join(self.config.wake_words)} to wake me"
+            )
+        self._log_line("iris> say 'go to sleep' to pause, or press Ctrl+C to stop")
 
         receive_thread = threading.Thread(target=self._receive_loop, daemon=True)
         receive_thread.start()
         self.router.set_screen_awareness(self._screen_awareness)
         self._screen_awareness.start()
-        print(
+        self._log_line(
             "iris> live screen awareness enabled "
             f"({self.config.screenshot_interval_seconds:.1f}s sampling)"
         )
         self._scheduler.start()
 
         input_device = _select_input_device(sounddevice)
-        print(f"iris> microphone device: {input_device.index} ({input_device.name})")
+        self._log_line(
+            f"iris> microphone device: {input_device.index} ({input_device.name})"
+        )
 
         def input_callback(indata, frames, time_info, status) -> None:  # noqa: ANN001
             if status:
-                print(f"audio warning: {status}")
+                self._emit(error_event("audio_warning", str(status)))
             if self._stop.is_set() or self._input_should_be_muted():
                 return
             self._send_json(
@@ -381,6 +427,18 @@ class RealtimeSpeechSession:
             self._copilot.stop()
             self._summarize_session_to_memory()
             self.stop()
+            self._emit(
+                VoiceEvent(
+                    VoiceEventType.SESSION_ENDED,
+                    {
+                        "reason": self._end_reason,
+                        "duration_seconds": round(
+                            time.monotonic() - session_started_at, 1
+                        ),
+                    },
+                )
+            )
+            self._set_state(VoiceState.IDLE, via="session_end")
 
     def announce(self, text: str) -> bool:
         if self._stop.is_set() or self._ws is None or not self.awake:
@@ -402,7 +460,12 @@ class RealtimeSpeechSession:
         with self._meeting_lock:
             self._meeting_transcript = []
         self._meeting_active = True
-        print("iris> meeting mode on (silent; say 'stop the meeting' when done)")
+        self._emit(
+            VoiceEvent(
+                VoiceEventType.MEETING,
+                {"active": True, "meeting_id": self._meeting_id},
+            )
+        )
         disclosure = (
             "Starting meeting mode. I'll listen quietly and won't respond. "
             "Just say 'stop the meeting' when you're done and I'll send you a recap."
@@ -413,6 +476,12 @@ class RealtimeSpeechSession:
         self._meeting_active = False
         meeting_id = self._meeting_id
         self._meeting_id = ""
+        self._emit(
+            VoiceEvent(
+                VoiceEventType.MEETING,
+                {"active": False, "meeting_id": meeting_id},
+            )
+        )
         with self._meeting_lock:
             transcript = "\n".join(self._meeting_transcript).strip()
             self._meeting_transcript = []
@@ -455,7 +524,9 @@ class RealtimeSpeechSession:
                 )
                 self._respond_with_text(spoken)
             except Exception as exc:
-                print(f"iris error> meeting recap failed: {exc}")
+                self._emit(
+                    error_event("meeting_recap_failed", f"meeting recap failed: {exc}")
+                )
                 self._respond_with_text(
                     "I saved the meeting but hit a snag building the recap."
                 )
@@ -470,7 +541,7 @@ class RealtimeSpeechSession:
             result = service.send(subject=subject, body=body)
             if result.ok:
                 return
-            print(f"iris> meeting email send failed: {result.detail}")
+            self._emit(error_event("meeting_email_failed", str(result.detail)))
         self.router.agent_executor.run_tool(
             "draft_email", {"subject": subject, "body": body}
         )
@@ -562,7 +633,14 @@ class RealtimeSpeechSession:
                         if _is_realtime_timeout(exc):
                             continue
                         if not self._stop.is_set():
-                            print(f"iris error> realtime receive failed: {exc}")
+                            self._end_reason = "error"
+                            self._emit(
+                                error_event(
+                                    "realtime_receive_failed",
+                                    f"realtime receive failed: {exc}",
+                                    terminal=True,
+                                )
+                            )
                         return
                     if not raw:
                         continue
@@ -574,7 +652,7 @@ class RealtimeSpeechSession:
     def _handle_event(self, event: dict[str, Any], output) -> None:  # noqa: ANN001
         event_type = str(event.get("type", ""))
         if event_type == "session.updated":
-            print("iris> session ready")
+            self._set_state(VoiceState.LISTENING, via="session_ready")
             return
         if event_type == "response.created":
             with self._response_state_lock:
@@ -585,17 +663,22 @@ class RealtimeSpeechSession:
                     self._suppress_input_until,
                     time.monotonic() + 1.0,
                 )
+            self._set_state(VoiceState.SPEAKING)
             return
         if event_type == "input_audio_buffer.speech_started":
+            played_ms = self._current_audio_played_ms
             if self._handle_barge_in_started(output):
-                print("iris> interrupted, listening...")
+                self._emit(
+                    VoiceEvent(VoiceEventType.INTERRUPTED, {"at_ms": played_ms})
+                )
+                self._set_state(VoiceState.USER_SPEAKING, via="barge_in")
             elif not self._input_should_be_muted():
-                print("iris> heard speech...")
+                self._set_state(VoiceState.USER_SPEAKING, via="speech")
             return
         if event_type == "input_audio_buffer.speech_stopped":
             if self._input_should_be_muted():
                 return
-            print("iris> speech stopped, waiting for transcript...")
+            self._set_state(VoiceState.TRANSCRIBING)
             return
         if event_type == "input_audio_buffer.committed":
             return
@@ -613,6 +696,9 @@ class RealtimeSpeechSession:
             if delta:
                 with self._response_state_lock:
                     self._current_response_text_chunks.append(delta)
+                self._emit(
+                    VoiceEvent(VoiceEventType.ASSISTANT_DELTA, {"text": delta})
+                )
             return
         if event_type == "response.output_item.added":
             item = event.get("item")
@@ -630,7 +716,12 @@ class RealtimeSpeechSession:
                     self._note_audio_played(duration_ms)
                 except Exception as exc:
                     if not self._has_interrupted_response_pending():
-                        print(f"iris error> audio playback failed: {exc}")
+                        self._emit(
+                            error_event(
+                                "audio_playback_failed",
+                                f"audio playback failed: {exc}",
+                            )
+                        )
             return
         if event_type in {
             "response.audio_transcript.done",
@@ -639,7 +730,7 @@ class RealtimeSpeechSession:
         }:
             text = str(event.get("transcript") or event.get("text") or "").strip()
             if text and not self._is_duplicate_response_text(text):
-                print(f"iris> {text}")
+                self._emit(VoiceEvent(VoiceEventType.ASSISTANT_DONE, {"text": text}))
                 with self._response_state_lock:
                     self._last_spoken_text = text
                     self._last_printed_response_text = text
@@ -666,13 +757,20 @@ class RealtimeSpeechSession:
             return
         if event_type in {"response.done", "response.cancelled"}:
             if event_type == "response.done" and self._dispatch_pending_calls():
+                self._set_state(VoiceState.THINKING, via="tools")
                 return
             self._mark_response_done()
+            self._set_state(VoiceState.LISTENING, via="response_done")
             return
         if event_type == "error":
-            print(f"iris error> {event.get('error', event)}")
             error = event.get("error", {})
             code = error.get("code") if isinstance(error, dict) else ""
+            self._emit(
+                error_event(
+                    str(code or "realtime_error"),
+                    str(event.get("error", event)),
+                )
+            )
             if code == "conversation_already_has_active_response":
                 with self._response_state_lock:
                     self._assistant_response_active = True
@@ -690,7 +788,12 @@ class RealtimeSpeechSession:
             )
         if self._should_ignore_transcript(transcript):
             return
-        print(f"you> {transcript}")
+        self._emit(
+            VoiceEvent(
+                VoiceEventType.USER_TRANSCRIPT,
+                {"text": transcript, "final": True},
+            )
+        )
         lowered = transcript.lower().strip()
         self._trace_voice_event(
             "voice.turn.segment_received",
@@ -721,6 +824,9 @@ class RealtimeSpeechSession:
         wake_detected = _contains_wake_word(lowered, self.config.wake_words)
         if self.wake_gated and wake_detected:
             self.awake = True
+            self._emit(
+                VoiceEvent(VoiceEventType.WAKE_DETECTED, {"source": "in_session"})
+            )
             command = _strip_wake_words(transcript, self.config.wake_words).strip(
                 " ,.!?"
             )
@@ -783,7 +889,7 @@ class RealtimeSpeechSession:
             self.router.safety_gate.kill()
             with self._tool_lock:
                 self._pending_calls.clear()
-            print("iris> stopping current automation after the active step")
+            self._log_line("iris> stopping current automation after the active step")
             self._respond_with_text("Stopping that.")
             return True
         if word in {"resume", "unpause", "continue", "carry on"}:
@@ -1142,7 +1248,11 @@ class RealtimeSpeechSession:
             name = call["name"]
             call_id = call["call_id"]
             arguments = self._parse_tool_arguments(call.get("arguments"))
-            print(f"iris> · {name}")
+            self._emit(
+                VoiceEvent(
+                    VoiceEventType.TOOL_CALL, {"name": name, "status": "started"}
+                )
+            )
             if name == "look_at_screen":
                 self._inject_screen_image(call_id, arguments)
                 continue
@@ -1151,11 +1261,28 @@ class RealtimeSpeechSession:
                 output = result.message or (
                     "Done." if result.ok else "That didn't work."
                 )
-                if not result.ok:
-                    print(f"iris error> {output}")
+                if result.ok:
+                    self._emit(
+                        VoiceEvent(
+                            VoiceEventType.TOOL_CALL,
+                            {"name": name, "status": "done"},
+                        )
+                    )
+                else:
+                    self._emit(
+                        VoiceEvent(
+                            VoiceEventType.TOOL_CALL,
+                            {"name": name, "status": "failed", "detail": output},
+                        )
+                    )
             except Exception as exc:
                 output = f"The {name} tool failed: {exc}"
-                print(f"iris error> {exc}")
+                self._emit(
+                    VoiceEvent(
+                        VoiceEventType.TOOL_CALL,
+                        {"name": name, "status": "failed", "detail": str(exc)},
+                    )
+                )
             self._send_json(
                 {
                     "type": "conversation.item.create",
@@ -1246,7 +1373,9 @@ class RealtimeSpeechSession:
                     )
                 self.router.safety_gate.kill()
                 self._clear_pending_agent_texts()
-                print("iris> stopping current automation after the active step")
+                self._log_line(
+                    "iris> stopping current automation after the active step"
+                )
                 self._respond_with_text("Stopping that after the current step.")
                 return
             if _is_status_question(lowered):
@@ -1255,25 +1384,44 @@ class RealtimeSpeechSession:
             self._pending_agent_texts.put(transcript)
             now = time.monotonic()
             if now - self._last_busy_notice_at > 4.0:
-                print("iris> queued that after the current request")
+                self._log_line("iris> queued that after the current request")
                 self._last_busy_notice_at = now
             return
 
         def worker() -> None:
             self._active_agent_request = transcript
             try:
-                print("iris> working...")
+                self._set_state(VoiceState.THINKING, via="agent")
                 result = (
                     self.orchestrator.start_run(transcript, channel="voice")
                     if self.orchestrator is not None
                     else self.router.handle_text(transcript)
                 )
-                if not result.ok:
-                    print(f"iris error> {result.message}")
+                self._emit(
+                    VoiceEvent(
+                        VoiceEventType.AGENT_RUN,
+                        {
+                            "run_id": getattr(result, "run_id", None),
+                            "status": "done" if result.ok else "failed",
+                            "summary": result.message,
+                            "detail": None if result.ok else result.message,
+                        },
+                    )
+                )
                 self._respond_with_text(result.message)
             except Exception as exc:
                 message = f"I hit an agent error: {exc}"
-                print(f"iris error> {exc}")
+                self._emit(
+                    VoiceEvent(
+                        VoiceEventType.AGENT_RUN,
+                        {
+                            "run_id": None,
+                            "status": "failed",
+                            "summary": message,
+                            "detail": str(exc),
+                        },
+                    )
+                )
                 self._respond_with_text(message)
             finally:
                 self._active_agent_request = ""
