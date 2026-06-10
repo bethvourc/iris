@@ -1,0 +1,81 @@
+# XcodeGen spec — regenerate Iris.xcodeproj with `xcodegen generate`.
+# The generated project is committed so the app opens without xcodegen,
+# but this file is the source of truth for project structure.
+name: Iris
+options:
+  bundleIdPrefix: com.bethvour
+  deploymentTarget:
+    macOS: "14.0"
+  createIntermediateGroups: true
+
+settings:
+  base:
+    MACOSX_DEPLOYMENT_TARGET: "14.0"
+    SWIFT_VERSION: "6.0"
+    ENABLE_HARDENED_RUNTIME: YES
+    CODE_SIGN_STYLE: Automatic
+    CURRENT_PROJECT_VERSION: 1
+    MARKETING_VERSION: 0.1.0
+
+targets:
+  Iris:
+    type: application
+    platform: macOS
+    sources: [Iris]
+    dependencies:
+      - target: IrisKit
+        embed: true
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.bethvour.iris
+        INFOPLIST_FILE: Iris/Info.plist
+        GENERATE_INFOPLIST_FILE: NO
+        CODE_SIGN_ENTITLEMENTS: Iris/Iris.entitlements
+        # Ad-hoc signing keeps local dev builds working without a team;
+        # release signing is configured by the packaging pipeline (Step 7.2).
+        CODE_SIGN_IDENTITY: "-"
+
+  IrisKit:
+    type: framework
+    platform: macOS
+    sources: [IrisKit]
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.bethvour.iris.kit
+        GENERATE_INFOPLIST_FILE: YES
+
+  IrisTests:
+    type: bundle.unit-test
+    platform: macOS
+    sources: [IrisTests]
+    dependencies:
+      - target: IrisKit
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: YES
+
+  IrisUITests:
+    type: bundle.ui-testing
+    platform: macOS
+    sources: [IrisUITests]
+    dependencies:
+      - target: Iris
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: YES
+
+schemes:
+  Iris:
+    build:
+      targets:
+        Iris: all
+    test:
+      targets:
+        - IrisTests
+  IrisUITests:
+    build:
+      targets:
+        Iris: all
+    test:
+      targets:
+        - IrisUITests

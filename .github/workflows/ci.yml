@@ -1,0 +1,47 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  python:
+    name: Python daemon
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.12"
+      - name: Install dependencies
+        run: uv sync --dev
+      - name: Lint
+        run: uv run ruff check src tests
+      - name: Tests
+        run: uv run pytest -q
+
+  macos-app:
+    name: macOS app
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install tools
+        run: brew install xcodegen swiftlint swiftformat
+      - name: Generate project
+        run: xcodegen generate
+        working-directory: apps/macos
+      - name: SwiftLint
+        run: swiftlint --strict
+        working-directory: apps/macos
+      - name: SwiftFormat (lint only)
+        run: swiftformat --lint .
+        working-directory: apps/macos
+      - name: Build and test
+        run: >
+          xcodebuild test
+          -project Iris.xcodeproj
+          -scheme Iris
+          -destination 'platform=macOS'
+          CODE_SIGNING_ALLOWED=NO
+        working-directory: apps/macos
