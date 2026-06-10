@@ -31,6 +31,12 @@ from iris.memory_lifecycle import maintain_lifecycle, set_memory_pinned
 from iris.memory_review import decide_review_item, list_review_items
 from iris.runtime import RunOrchestrator
 from iris.sessions import get_session, list_sessions
+from iris.settings_store import (
+    EnvManagedSettingError,
+    SettingsError,
+    settings_payload,
+    update_stored_settings,
+)
 from iris.state import open_state
 from iris.supervisor import TaskSupervisor
 from iris.tasks import (
@@ -38,14 +44,29 @@ from iris.tasks import (
     list_tasks,
     resume_task,
 )
+from iris.voice_controller import (
+    UnknownModeError,
+    VoiceAlreadyRunningError,
+    VoiceController,
+    VoiceNotRunningError,
+    VoiceUnavailableError,
+)
 
 
 RouterFactory = Callable[[], Any]
 AUTH_EXEMPT_PATHS = {"/health", "/dashboard", "/memory-browser"}
 MAX_BODY_BYTES = 1_000_000
 CONTRACT_VERSION = 1
+# Paths that use the structured error envelope from the desktop contract
+# (docs/desktop/api-contract.md §1); legacy routes keep flat error strings.
+CONTRACT_PATH_PREFIXES = ("/voice", "/settings", "/activity")
+VOICE_SSE_HEARTBEAT_SECONDS = 15.0
 
 _LOG = logging.getLogger("iris.gateway")
+
+
+def _error_payload(code: str, message: str) -> dict[str, Any]:
+    return {"error": {"code": code, "message": message}}
 
 
 class GatewayService:
@@ -53,6 +74,7 @@ class GatewayService:
         self.config = config
         self.router_factory = router_factory
         self._orchestrator: RunOrchestrator | None = None
+        self._voice_controller: VoiceController | None = None
         self._server: ThreadingHTTPServer | None = None
         self.started_at = datetime.now(timezone.utc)
 
@@ -64,6 +86,35 @@ class GatewayService:
                 router_factory=self.router_factory,
             )
         return self._orchestrator
+
+    @property
+    def voice_controller(self) -> VoiceController:
+        if self._voice_controller is None:
+            self._voice_controller = VoiceController(
+                session_factory=self._build_voice_session
+            )
+        return self._voice_controller
+
+    def _build_voice_session(self, *, event_sink: Any, mode: str) -> Any:
+        # `mode` is validated by the controller; "conversation" is the only
+        # mode today and maps to an un-gated session (the caller's hotkey or
+        # wake word already established intent).
+        del mode
+        if not self.config.openai_api_key:
+            raise RuntimeError("OPENAI_API_KEY is required for live voice sessions")
+        from iris.profile import load_user_profile
+        from iris.voice import RealtimeSpeechSession
+
+        with open_state(self.config) as db:
+            user_profile = load_user_profile(self.config, db)
+        return RealtimeSpeechSession(
+            config=self.config,
+            router=self.router_factory(),
+            user_profile=user_profile,
+            orchestrator=self.orchestrator,
+            wake_gated=False,
+            event_sink=event_sink,
+        )
 
     def serve(self, *, host: str = "127.0.0.1", port: int = 8765) -> None:
         service = self
@@ -139,6 +190,10 @@ class GatewayService:
                     timespec="seconds"
                 ).replace("+00:00", "Z"),
             }
+        if path == "/voice/status":
+            return 200, self.voice_controller.status()
+        if path == "/settings":
+            return 200, settings_payload(self.config)
         with open_state(self.config) as db:
             if path == "/sessions":
                 return 200, {
@@ -275,9 +330,46 @@ class GatewayService:
         finally:
             unsubscribe()
 
+    def handle_put(
+        self, path: str, body: dict[str, Any]
+    ) -> tuple[int, dict[str, Any]]:
+        if path == "/settings":
+            return self._handle_settings_put(body)
+        return 404, {"error": "not found"}
+
+    def _handle_settings_put(self, body: dict[str, Any]) -> tuple[int, dict[str, Any]]:
+        try:
+            update_stored_settings(self.config.state_db_path, body)
+        except EnvManagedSettingError as exc:
+            return 409, _error_payload(exc.code, str(exc))
+        except SettingsError as exc:
+            return 400, _error_payload(exc.code, str(exc))
+        with open_state(self.config) as db:
+            record_audit(
+                db,
+                actor="gateway",
+                tool="settings.update",
+                risk=RiskLevel.LOW_RISK,
+                details={"keys": sorted(body)},
+                result="ok",
+            )
+        # Future reads (and the next voice session) see the new values; a
+        # live session keeps its config until it ends, per the contract.
+        self.config = IrisConfig.from_env(self.config.project_root)
+        return 200, settings_payload(self.config)
+
     def handle_post(
         self, path: str, body: dict[str, Any]
     ) -> tuple[int, dict[str, Any]]:
+        if path == "/voice/start":
+            return self._handle_voice_start(body)
+        if path == "/voice/stop":
+            return 200, {"ok": True, "was_running": self.voice_controller.stop()}
+        if path == "/voice/interrupt":
+            try:
+                return 200, {"ok": self.voice_controller.interrupt()}
+            except VoiceNotRunningError as exc:
+                return 409, _error_payload(exc.code, str(exc))
         if path == "/messages":
             return self._handle_message(body)
         task_cancel = re.fullmatch(r"/tasks/([a-fA-F0-9]+)/cancel", path)
@@ -371,6 +463,22 @@ class GatewayService:
             return 200, result.__dict__
         return 404, {"error": "not found"}
 
+    def _handle_voice_start(self, body: dict[str, Any]) -> tuple[int, dict[str, Any]]:
+        mode = body.get("mode", "conversation")
+        if not isinstance(mode, str):
+            return 400, _error_payload("invalid_request", "mode must be a string")
+        try:
+            session = self.voice_controller.start(mode=mode)
+        except UnknownModeError as exc:
+            return 400, _error_payload(exc.code, str(exc))
+        except VoiceAlreadyRunningError as exc:
+            payload = _error_payload(exc.code, str(exc))
+            payload["session"] = exc.session
+            return 409, payload
+        except VoiceUnavailableError as exc:
+            return 500, _error_payload(exc.code, str(exc))
+        return 202, {"session": session}
+
     def _handle_message(self, body: dict[str, Any]) -> tuple[int, dict[str, Any]]:
         text = str(body.get("message") or body.get("text") or "").strip()
         if not text:
@@ -411,6 +519,20 @@ class _GatewayHandler(BaseHTTPRequestHandler):
     def do_POST(self) -> None:  # noqa: N802
         self._handle_request("POST", self._dispatch_post)
 
+    def do_PUT(self) -> None:  # noqa: N802
+        self._handle_request("PUT", self._dispatch_put)
+
+    def _dispatch_put(self, parsed: Any) -> None:
+        if not self._authorize(parsed.path):
+            return
+        try:
+            body = self._read_body()
+        except ValueError as exc:
+            self._write_json(400, _error_payload("invalid_request", str(exc)))
+            return
+        status, payload = self.gateway.handle_put(parsed.path, body)
+        self._write_json(status, payload)
+
     def _dispatch_get(self, parsed: Any) -> None:
         if parsed.path in ("", "/"):
             self._redirect("/dashboard")
@@ -424,6 +546,9 @@ class _GatewayHandler(BaseHTTPRequestHandler):
         if stream_match:
             self._write_sse(stream_match.group(1))
             return
+        if parsed.path == "/voice/events":
+            self._write_voice_sse()
+            return
         status, payload = self.gateway.handle_get(parsed.path, parse_qs(parsed.query))
         self._write_json(status, payload)
 
@@ -433,7 +558,10 @@ class _GatewayHandler(BaseHTTPRequestHandler):
         try:
             body = self._read_body()
         except ValueError as exc:
-            self._write_json(400, {"error": str(exc)})
+            if parsed.path.startswith(CONTRACT_PATH_PREFIXES):
+                self._write_json(400, _error_payload("invalid_request", str(exc)))
+            else:
+                self._write_json(400, {"error": str(exc)})
             return
         status, payload = self.gateway.handle_post(parsed.path, body)
         self._write_json(status, payload)
@@ -529,6 +657,55 @@ class _GatewayHandler(BaseHTTPRequestHandler):
             self.wfile.flush()
 
         self.gateway.stream_run_events(run_id, write)
+
+    def _write_voice_sse(self) -> None:
+        """Voice event stream per docs/desktop/api-contract.md §4.
+
+        Always opens with a `state` snapshot; heartbeat comments let clients
+        detect stale connections. The stream is not session-scoped — it stays
+        open across sessions until the client disconnects.
+        """
+        controller = self.gateway.voice_controller
+        subscription = controller.subscribe()
+        self.send_response(200)
+        self.send_header("Content-Type", "text/event-stream; charset=utf-8")
+        self.send_header("Cache-Control", "no-cache")
+        self.end_headers()
+        try:
+            self._write_sse_frame("state", self._voice_state_snapshot(controller))
+            while True:
+                try:
+                    event = subscription.events.get(
+                        timeout=VOICE_SSE_HEARTBEAT_SECONDS
+                    )
+                except queue.Empty:
+                    self.wfile.write(b": hb\n\n")
+                    self.wfile.flush()
+                    continue
+                data = event.data
+                if event.type == "state":
+                    # Contract state payloads carry the session descriptor;
+                    # session-emitted events only know their own state.
+                    data = {**data, "session": controller.status()["session"]}
+                self._write_sse_frame(event.type, data)
+        except (BrokenPipeError, ConnectionResetError, OSError):
+            return
+        finally:
+            controller.unsubscribe(subscription)
+
+    @staticmethod
+    def _voice_state_snapshot(controller: VoiceController) -> dict[str, Any]:
+        status = controller.status()
+        return {
+            "state": status["state"],
+            "session": status["session"],
+            "meeting_active": status["meeting_active"],
+        }
+
+    def _write_sse_frame(self, event_type: str, data: dict[str, Any]) -> None:
+        body = json.dumps(data, sort_keys=True, default=str)
+        self.wfile.write(f"event: {event_type}\ndata: {body}\n\n".encode("utf-8"))
+        self.wfile.flush()
 
 
 def _task_status_for_message(message: str) -> str:

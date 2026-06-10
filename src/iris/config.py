@@ -4,6 +4,9 @@ from dataclasses import dataclass
 from pathlib import Path
 import os
 import shlex
+from typing import Any
+
+from iris.settings_store import load_stored_settings
 
 
 def default_project_root() -> Path:
@@ -94,6 +97,7 @@ class IrisConfig:
     wake_words: tuple[str, ...]
     speak_responses: bool
     max_response_chars: int
+    wake_word_enabled: bool = False
     barge_in_enabled: bool = True
     barge_in_grace_ms: int = 250
     echo_suppression_ms: int = 800
@@ -110,16 +114,24 @@ class IrisConfig:
     def from_env(cls, project_root: Path | None = None) -> "IrisConfig":
         root = project_root or default_project_root()
         load_env(root)
+        # Mutable settings layer beneath env: env var > settings.json > default
+        # (docs/desktop/api-contract.md §6).
+        state_db_path = Path(
+            os.getenv("IRIS_STATE_DB", str(root / "build" / "iris.sqlite3"))
+        )
+        stored = load_stored_settings(state_db_path)
         return cls(
             project_root=root,
             openai_api_key=os.getenv("OPENAI_API_KEY") or None,
             google_application_credentials=os.getenv("GOOGLE_APPLICATION_CREDENTIALS")
             or None,
             agent_name=os.getenv("IRIS_AGENT_NAME", "Iris"),
-            voice=os.getenv("IRIS_VOICE", "marin"),
+            voice=_layered_str("IRIS_VOICE", stored, "voice", "marin"),
             toggle_hotkey=os.getenv("IRIS_TOGGLE_HOTKEY", "<ctrl>+<space>"),
             kill_hotkey=os.getenv("IRIS_KILL_HOTKEY", "<ctrl>+<alt>+k"),
-            realtime_model=os.getenv("IRIS_REALTIME_MODEL", "gpt-realtime-2"),
+            realtime_model=_layered_str(
+                "IRIS_REALTIME_MODEL", stored, "realtime_model", "gpt-realtime-2"
+            ),
             chat_model=os.getenv("IRIS_CHAT_MODEL", "gpt-5.5"),
             vision_model=os.getenv("IRIS_VISION_MODEL", "gpt-5.5"),
             computer_use_model=os.getenv(
@@ -138,7 +150,9 @@ class IrisConfig:
                 "IRIS_SCREENSHOT_INTERVAL_SECONDS", 0.5
             ),
             gateway_token=os.getenv("IRIS_GATEWAY_TOKEN") or None,
-            notify_provider=os.getenv("IRIS_NOTIFY_PROVIDER", "pushover"),
+            notify_provider=_layered_str(
+                "IRIS_NOTIFY_PROVIDER", stored, "notify_provider", "pushover"
+            ),
             ntfy_server=os.getenv("IRIS_NTFY_SERVER", "https://ntfy.sh"),
             ntfy_topic=os.getenv("IRIS_NTFY_TOPIC") or None,
             ntfy_token=os.getenv("IRIS_NTFY_TOKEN") or None,
@@ -153,17 +167,18 @@ class IrisConfig:
             resend_api_key=os.getenv("RESEND_API_KEY") or None,
             email_from=os.getenv("IRIS_EMAIL_FROM") or None,
             email_to=os.getenv("IRIS_EMAIL_TO") or None,
-            state_db_path=Path(
-                os.getenv("IRIS_STATE_DB", str(root / "build" / "iris.sqlite3"))
-            ),
+            state_db_path=state_db_path,
             autonomy_level=os.getenv("IRIS_AUTONOMY_LEVEL", "L1"),
             meeting_consent_required=_bool_env("IRIS_MEETING_CONSENT_REQUIRED", True),
             meeting_retention_days=_int_env("IRIS_MEETING_RETENTION_DAYS", 30),
             listen_seconds=_float_env("IRIS_LISTEN_SECONDS", 2.0),
             wake_poll_seconds=_float_env("IRIS_WAKE_POLL_SECONDS", 1.2),
-            wake_words=_csv_env("IRIS_WAKE_WORDS", ("iris", "hey iris")),
+            wake_words=_layered_wake_words(stored),
             speak_responses=_bool_env("IRIS_SPEAK_RESPONSES", False),
             max_response_chars=_int_env("IRIS_MAX_RESPONSE_CHARS", 220),
+            wake_word_enabled=_layered_bool(
+                "IRIS_WAKE_WORD_ENABLED", stored, "wake_word_enabled", False
+            ),
             barge_in_enabled=_bool_env("IRIS_BARGE_IN_ENABLED", True),
             barge_in_grace_ms=_int_env("IRIS_BARGE_IN_GRACE_MS", 250),
             echo_suppression_ms=_int_env("IRIS_ECHO_SUPPRESSION_MS", 800),
@@ -227,3 +242,36 @@ def _csv_env(name: str, default: tuple[str, ...]) -> tuple[str, ...]:
         return default
     items = tuple(item.strip().lower() for item in value.split(",") if item.strip())
     return items or default
+
+
+def _layered_str(
+    env_name: str, stored: dict[str, Any], key: str, default: str
+) -> str:
+    env_value = os.getenv(env_name)
+    if env_value:
+        return env_value
+    stored_value = stored.get(key)
+    if isinstance(stored_value, str) and stored_value:
+        return stored_value
+    return default
+
+
+def _layered_bool(
+    env_name: str, stored: dict[str, Any], key: str, default: bool
+) -> bool:
+    if os.getenv(env_name):
+        return _bool_env(env_name, default)
+    stored_value = stored.get(key)
+    if isinstance(stored_value, bool):
+        return stored_value
+    return default
+
+
+def _layered_wake_words(stored: dict[str, Any]) -> tuple[str, ...]:
+    default = ("iris", "hey iris")
+    if os.getenv("IRIS_WAKE_WORDS"):
+        return _csv_env("IRIS_WAKE_WORDS", default)
+    stored_value = stored.get("wake_words")
+    if isinstance(stored_value, list) and stored_value:
+        return tuple(stored_value)
+    return default
