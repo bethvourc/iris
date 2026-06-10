@@ -16,6 +16,7 @@ from urllib.parse import parse_qs, urlparse
 
 from iris import __version__
 
+from iris.activity import ActivityRequestError, activity_detail, activity_feed
 from iris.approvals import list_approvals
 from iris.audit import record_audit
 from iris.config import IrisConfig
@@ -195,6 +196,25 @@ class GatewayService:
         if path == "/settings":
             return 200, settings_payload(self.config)
         with open_state(self.config) as db:
+            if path == "/activity":
+                try:
+                    return 200, activity_feed(
+                        db,
+                        days=_int_query(query, "days", 7),
+                        limit=_int_query(query, "limit", 50),
+                        cursor=_str_query(query, "cursor"),
+                        tz=_str_query(query, "tz") or "UTC",
+                    )
+                except ActivityRequestError as exc:
+                    return 400, _error_payload("invalid_request", str(exc))
+            activity_match = re.fullmatch(r"/activity/([A-Za-z0-9._:-]+)", path)
+            if activity_match:
+                detail = activity_detail(db, activity_match.group(1))
+                if detail is None:
+                    return 404, _error_payload(
+                        "not_found", "activity item not found"
+                    )
+                return 200, detail
             if path == "/sessions":
                 return 200, {
                     "sessions": list_sessions(db, limit=_int_query(query, "limit", 25))
