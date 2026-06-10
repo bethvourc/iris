@@ -1,6 +1,8 @@
 # SwiftFormat — run `swiftformat .` from apps/macos
 --swiftversion 6.0
 --indent 4
+# SwiftLint forbids trailing commas; keep the tools agreeing.
+--commas inline
 --maxwidth 120
 --wraparguments before-first
 --wrapparameters before-first
