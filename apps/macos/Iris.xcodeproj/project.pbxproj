@@ -7,6 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		0BBDF187DBF60EB42C7FB196 /* TokenStoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5D70DB5CBC94B0FA1EEDA34D /* TokenStoreTests.swift */; };
 		0DD331ADAA7686E029973500 /* Models.swift in Sources */ = {isa = PBXBuildFile; fileRef = 511C19A5D2BC2AA0CF91B476 /* Models.swift */; };
 		1F0AC61B428B4F385796E0D4 /* IrisApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 553E0AFFE0B2EB105BB5FB5F /* IrisApp.swift */; };
 		2D8A0B3A719094CF10CA6928 /* IrisAPIError.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5D0A88C56A8806CDBA9729B9 /* IrisAPIError.swift */; };
@@ -16,9 +17,11 @@
 		81AC7435ABCAFDE54BD13246 /* IrisKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 268F9212891F25E9B2633CCB /* IrisKit.framework */; };
 		8488E88E9886DA18A9D4EE99 /* IrisUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3781B221FA93C526FD3A477A /* IrisUITests.swift */; };
 		9044E40A8AD4D7C679694CD7 /* SSEClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 105E541504E935FF2228B379 /* SSEClient.swift */; };
+		95117CA7158462B1D39122AB /* AppPreferences.swift in Sources */ = {isa = PBXBuildFile; fileRef = 74C7B8112CF837094372ACCF /* AppPreferences.swift */; };
 		9F9D9E55F66223BF3D5D9C77 /* APIClientTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 51758270EE594413BD57364D /* APIClientTests.swift */; };
 		A0C46819A20F164362C99985 /* IrisKit.framework in Embed Frameworks */ = {isa = PBXBuildFile; fileRef = 268F9212891F25E9B2633CCB /* IrisKit.framework */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
 		A1288E007666B7294A1492CB /* IrisKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 268F9212891F25E9B2633CCB /* IrisKit.framework */; };
+		AC2FF2087AF8B0BFEAAFC79D /* TokenStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = E6E21B8ACF374663E4E71D28 /* TokenStore.swift */; };
 		B4EC4A41A52C6B778A168663 /* SSEClientTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 75DA1CEDF48E0A3230A3441D /* SSEClientTests.swift */; };
 		D45BAC6B04BA21D766327748 /* APIClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = CE0E93A44C3951456DD110CA /* APIClient.swift */; };
 /* End PBXBuildFile section */
@@ -84,10 +87,13 @@
 		553E0AFFE0B2EB105BB5FB5F /* IrisApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IrisApp.swift; sourceTree = "<group>"; };
 		5D03425AAB5D21547AC221D2 /* IrisUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = IrisUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		5D0A88C56A8806CDBA9729B9 /* IrisAPIError.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IrisAPIError.swift; sourceTree = "<group>"; };
+		5D70DB5CBC94B0FA1EEDA34D /* TokenStoreTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TokenStoreTests.swift; sourceTree = "<group>"; };
+		74C7B8112CF837094372ACCF /* AppPreferences.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppPreferences.swift; sourceTree = "<group>"; };
 		75DA1CEDF48E0A3230A3441D /* SSEClientTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SSEClientTests.swift; sourceTree = "<group>"; };
 		8646A4D90EA5D7F897967343 /* IrisTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = IrisTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		CE0E93A44C3951456DD110CA /* APIClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = APIClient.swift; sourceTree = "<group>"; };
 		E0B30308D08E575D6B0B7371 /* Iris.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Iris.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		E6E21B8ACF374663E4E71D28 /* TokenStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TokenStore.swift; sourceTree = "<group>"; };
 		FA4B1FE916581CEAA29457C4 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
@@ -115,10 +121,12 @@
 			isa = PBXGroup;
 			children = (
 				CE0E93A44C3951456DD110CA /* APIClient.swift */,
+				74C7B8112CF837094372ACCF /* AppPreferences.swift */,
 				5D0A88C56A8806CDBA9729B9 /* IrisAPIError.swift */,
 				0F8C8BA405048FA4CE7F08F0 /* IrisKit.swift */,
 				511C19A5D2BC2AA0CF91B476 /* Models.swift */,
 				105E541504E935FF2228B379 /* SSEClient.swift */,
+				E6E21B8ACF374663E4E71D28 /* TokenStore.swift */,
 			);
 			path = IrisKit;
 			sourceTree = "<group>";
@@ -148,6 +156,7 @@
 				51758270EE594413BD57364D /* APIClientTests.swift */,
 				1B68D16D51878BB8C8C7CBC8 /* IrisKitScaffoldTests.swift */,
 				75DA1CEDF48E0A3230A3441D /* SSEClientTests.swift */,
+				5D70DB5CBC94B0FA1EEDA34D /* TokenStoreTests.swift */,
 			);
 			path = IrisTests;
 			sourceTree = "<group>";
@@ -303,10 +312,12 @@
 			buildActionMask = 2147483647;
 			files = (
 				D45BAC6B04BA21D766327748 /* APIClient.swift in Sources */,
+				95117CA7158462B1D39122AB /* AppPreferences.swift in Sources */,
 				2D8A0B3A719094CF10CA6928 /* IrisAPIError.swift in Sources */,
 				41507A9AD2A4E283D19103AD /* IrisKit.swift in Sources */,
 				0DD331ADAA7686E029973500 /* Models.swift in Sources */,
 				9044E40A8AD4D7C679694CD7 /* SSEClient.swift in Sources */,
+				AC2FF2087AF8B0BFEAAFC79D /* TokenStore.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -317,6 +328,7 @@
 				9F9D9E55F66223BF3D5D9C77 /* APIClientTests.swift in Sources */,
 				441D5E0004E67A372947651F /* IrisKitScaffoldTests.swift in Sources */,
 				B4EC4A41A52C6B778A168663 /* SSEClientTests.swift in Sources */,
+				0BBDF187DBF60EB42C7FB196 /* TokenStoreTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
