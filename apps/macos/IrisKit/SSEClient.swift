@@ -133,15 +133,7 @@ public struct SSEClient: Sendable {
     }
 
     static func backoff(attempt: Int, minimum: Duration, maximum: Duration) -> Duration {
-        let exponent = min(attempt - 1, 8)
-        let base = Self.seconds(minimum) * pow(2, Double(exponent))
-        let capped = min(base, Self.seconds(maximum))
-        return .seconds(capped * Double.random(in: 0.8 ... 1.2))
-    }
-
-    private static func seconds(_ duration: Duration) -> Double {
-        Double(duration.components.seconds)
-            + Double(duration.components.attoseconds) / 1e18
+        Backoff.duration(attempt: attempt, minimum: minimum, maximum: maximum)
     }
 
     private static func describe(_ error: Error) -> String {
