@@ -1,25 +1,25 @@
 import IrisKit
 import SwiftUI
 
-/// Menu bar glyph per daemon state — status is glanceable, never modal.
+/// Menu bar glyph per daemon state — the SiriNew brand mark, full strength
+/// when healthy, dimmed while not running, dot-badged when something needs
+/// attention. Status is glanceable, never modal.
 struct StatusIcon: View {
     let state: DaemonState
 
     var body: some View {
-        Image(systemName: symbolName)
+        Image(nsImage: SiriNewIcon.image(variant))
             .accessibilityLabel("Iris: \(state.menuDescription)")
     }
 
-    private var symbolName: String {
+    private var variant: SiriNewIcon.Variant {
         switch state {
         case .healthy:
-            "waveform.circle"
-        case .launching, .restarting:
-            "ellipsis.circle"
-        case .stopped:
-            "pause.circle"
+            .normal
+        case .launching, .restarting, .stopped:
+            .dimmed
         case .unhealthy, .crashLooping, .portConflict, .tokenMismatch:
-            "exclamationmark.circle"
+            .badged
         }
     }
 }
