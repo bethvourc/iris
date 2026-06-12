@@ -4,8 +4,8 @@ import SwiftUI
 struct MainWindowPlaceholder: View {
     var body: some View {
         VStack(spacing: 8) {
-            Image(systemName: "waveform.circle")
-                .font(.system(size: 40, weight: .regular))
+            SiriNewMark()
+                .frame(width: 44, height: 44)
                 .foregroundStyle(.secondary)
             Text("Iris")
                 .font(.title2)

@@ -22,12 +22,29 @@ struct IrisApp: App {
         MenuBarExtra {
             MenuBarView(model: model)
         } label: {
-            StatusIcon(state: model.daemonState)
+            MenuBarLabel(model: model)
         }
 
         Window("Iris", id: "main") {
             MainWindowPlaceholder()
         }
+    }
+}
+
+/// The status item view, installed at launch. Also hosts the
+/// `--open-main-window` harness hook used by UI screenshots and tests.
+private struct MenuBarLabel: View {
+    let model: AppModel
+    @Environment(\.openWindow) private var openWindow
+
+    var body: some View {
+        StatusIcon(state: model.daemonState)
+            .task {
+                if ProcessInfo.processInfo.arguments.contains("--open-main-window") {
+                    openWindow(id: "main")
+                    NSApp.activate(ignoringOtherApps: true)
+                }
+            }
     }
 }
 
