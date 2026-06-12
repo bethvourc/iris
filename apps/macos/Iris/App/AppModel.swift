@@ -10,6 +10,7 @@ final class AppModel {
     private(set) var daemonState: DaemonState = .stopped
 
     private(set) var daemonManager: DaemonManager?
+    private(set) var approvalNotifier: ApprovalNotifier?
     let preferences: AppPreferences
     let apiClient: APIClient
     private var observationTask: Task<Void, Never>?
@@ -108,9 +109,24 @@ final class AppModel {
             tokenProvider: { try TokenStore().loadOrCreate() }
         )
         daemonManager = manager
+        let notifier = ApprovalNotifier(
+            source: apiClient,
+            presenter: SystemNotificationPresenter()
+        )
+        approvalNotifier = notifier
+        AppDelegate.approvalResponseHandler = { action, approvalId in
+            await notifier.handleResponse(
+                actionIdentifier: action, approvalId: approvalId
+            )
+        }
         observationTask = Task { [weak self] in
             for await state in await manager.states() {
                 self?.daemonState = state
+                if case .healthy = state {
+                    await notifier.daemonIsHealthy(true)
+                } else {
+                    await notifier.daemonIsHealthy(false)
+                }
             }
         }
         Task { await manager.start() }

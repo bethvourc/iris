@@ -188,6 +188,50 @@ public struct ActivityDetail: Decodable, Equatable, Sendable {
     public let summary: String?
 }
 
+// MARK: - Approvals (legacy endpoint shapes, contract §8)
+
+public struct Approval: Decodable, Equatable, Sendable, Identifiable {
+    public let approvalId: String
+    public let runId: String?
+    public let actionName: String
+    public let risk: String
+    public let status: String
+    public let preview: String
+    // Raw ISO strings: the daemon emits Python isoformat (+00:00 offset,
+    // microseconds), which the shared Date strategy does not guarantee to
+    // parse. The approvals view (5.4) owns display formatting.
+    public let createdAt: String
+    public let expiresAt: String?
+    public let decidedAt: String?
+
+    public var id: String {
+        approvalId
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case risk, status, preview
+        case approvalId = "approval_id"
+        case runId = "run_id"
+        case actionName = "action_name"
+        case createdAt = "created_at"
+        case expiresAt = "expires_at"
+        case decidedAt = "decided_at"
+    }
+}
+
+struct ApprovalsResponse: Decodable {
+    let approvals: [Approval]
+}
+
+public enum ApprovalDecision: String, Sendable {
+    case approve, deny
+}
+
+public struct ApprovalDecisionResponse: Decodable, Equatable, Sendable {
+    public let ok: Bool
+    public let status: String
+}
+
 // MARK: - Settings
 
 public enum SettingSource: String, LenientRawDecodable {

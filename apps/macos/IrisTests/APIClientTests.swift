@@ -162,6 +162,28 @@ final class APIClientTests: XCTestCase {
         )
     }
 
+    func testApprovalsDecodeLegacyShape() async throws {
+        respond(status: 200, json: """
+        {"approvals": [{"approval_id": "ap1", "run_id": "r1",
+          "action_name": "system.run", "risk": "sensitive", "status": "pending",
+          "preview": "Run `rm -rf scratch/`", "created_at": "2026-06-12T00:01:02.123456+00:00",
+          "expires_at": null, "decided_at": null, "details_json": "{}"}]}
+        """)
+        let approvals = try await makeClient().approvals()
+        XCTAssertEqual(approvals.count, 1)
+        XCTAssertEqual(approvals.first?.approvalId, "ap1")
+        XCTAssertEqual(approvals.first?.preview, "Run `rm -rf scratch/`")
+        XCTAssertEqual(approvals.first?.status, "pending")
+    }
+
+    func testDecideApprovalPostsToDecisionPath() async throws {
+        respond(status: 200, json: #"{"ok": true, "status": "denied"}"#)
+        let response = try await makeClient().decideApproval(id: "ap1", decision: .deny)
+        XCTAssertEqual(response, ApprovalDecisionResponse(ok: true, status: "denied"))
+        XCTAssertEqual(MockURLProtocol.lastRequest?.httpMethod, "POST")
+        XCTAssertEqual(MockURLProtocol.lastRequest?.url?.path(), "/approvals/ap1/deny")
+    }
+
     func testUpdateSecretsSendsPutAndDecodesPresenceOnly() async throws {
         respond(status: 200, json: """
         {"settings": {}, "secrets": {"openai_api_key": {"is_set": true}}}

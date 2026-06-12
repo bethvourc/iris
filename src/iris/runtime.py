@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 import json
+import logging
 import sqlite3
 import threading
 import time
@@ -533,22 +534,31 @@ class RunOrchestrator:
             return ok
         status: RunStatus = "running" if ok and decision == "approved" else "blocked"
         event_name = f"approval.{decision}"
-        self._transition_run(
-            run_id,
-            status,
-            event_name,
-            message=f"Approval {decision}.",
-            approval_id=approval_id,
-        )
-        self._emit(
-            RunEvent(
-                run_id=run_id,
-                event_name=event_name,
-                status=status,
+        try:
+            self._transition_run(
+                run_id,
+                status,
+                event_name,
                 message=f"Approval {decision}.",
-                details={"approval_id": approval_id, "ok": ok},
+                approval_id=approval_id,
             )
-        )
+            self._emit(
+                RunEvent(
+                    run_id=run_id,
+                    event_name=event_name,
+                    status=status,
+                    message=f"Approval {decision}.",
+                    details={"approval_id": approval_id, "ok": ok},
+                )
+            )
+        except Exception:
+            # The decision is already recorded; the run transition is
+            # best-effort (the run may be gone, e.g. after a daemon
+            # restart with a pending approval). Never fail the decision.
+            logging.getLogger("iris.runtime").warning(
+                "approval decided but run transition failed",
+                extra={"run_id": run_id, "approval_id": approval_id},
+            )
         return ok
 
     def expire_pending_approvals(self) -> int:

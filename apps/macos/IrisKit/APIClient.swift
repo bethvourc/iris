@@ -75,6 +75,21 @@ public struct APIClient: Sendable {
         try await get("/activity/\(id)")
     }
 
+    // MARK: - Approvals
+
+    /// Pending approvals (the gateway's list is pending-only by default).
+    public func approvals() async throws -> [Approval] {
+        let response: ApprovalsResponse = try await get("/approvals")
+        return response.approvals
+    }
+
+    @discardableResult
+    public func decideApproval(
+        id: String, decision: ApprovalDecision
+    ) async throws -> ApprovalDecisionResponse {
+        try await send("POST", "/approvals/\(id)/\(decision.rawValue)")
+    }
+
     // MARK: - Settings
 
     public func settings() async throws -> SettingsResponse {

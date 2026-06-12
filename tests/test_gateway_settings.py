@@ -129,3 +129,28 @@ def test_put_is_audit_logged_by_key_only(service: GatewayService) -> None:
     serialized = json.dumps(entry)
     assert "voice" in serialized
     assert "cedar" not in serialized  # keys logged, values not
+
+
+def test_deciding_orphaned_approval_succeeds(service: GatewayService) -> None:
+    """An approval whose run is gone (e.g. daemon restart) must still be
+    decidable — notification actions hit this path."""
+    from iris.state import open_state
+
+    with open_state(service.config) as db:
+        db.execute(
+            """
+            INSERT INTO approvals (
+              approval_id, run_id, action_name, risk, status, preview,
+              created_at, expires_at
+            ) VALUES ('abc123def456', 'gone-run', 'system.run', 'sensitive',
+                      'pending', 'Run something', '2026-06-12T00:00:00+00:00',
+                      '2026-06-12T01:00:00+00:00')
+            """
+        )
+        db.commit()
+
+    status, payload = service.handle_post("/approvals/abc123def456/deny", {})
+    assert (status, payload) == (200, {"ok": True, "status": "denied"})
+
+    status, payload = service.handle_get("/approvals", {})
+    assert payload["approvals"] == []

@@ -1,5 +1,6 @@
 import AppKit
 import SwiftUI
+import UserNotifications
 
 /// Menu-bar-only shell (LSUIElement): quiet presence in the menu bar, no
 /// Dock icon. The menu is the always-available escape hatch when other
@@ -58,10 +59,16 @@ private struct MenuBarLabel: View {
 }
 
 /// Ensures every quit path (menu, Cmd-Q, logout) stops the daemon first;
-/// the quit path must leave no orphan Python processes.
+/// the quit path must leave no orphan Python processes. Also routes
+/// notification actions (approve/deny) to the ApprovalNotifier.
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
     static var shutdown: (@MainActor () async -> Void)?
+    static var approvalResponseHandler: (@Sendable (String, String) async -> Void)?
+
+    func applicationDidFinishLaunching(_: Notification) {
+        UNUserNotificationCenter.current().delegate = self
+    }
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         guard let shutdown = Self.shutdown else { return .terminateNow }
@@ -70,5 +77,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             sender.reply(toApplicationShouldTerminate: true)
         }
         return .terminateLater
+    }
+}
+
+extension AppDelegate: UNUserNotificationCenterDelegate {
+    nonisolated func userNotificationCenter(
+        _: UNUserNotificationCenter,
+        didReceive response: UNNotificationResponse
+    ) async {
+        let action = response.actionIdentifier
+        let approvalId = response.notification.request.identifier
+        let handler = await MainActor.run { AppDelegate.approvalResponseHandler }
+        await handler?(action, approvalId)
+    }
+
+    /// Show approval banners even while Iris is frontmost.
+    nonisolated func userNotificationCenter(
+        _: UNUserNotificationCenter,
+        willPresent _: UNNotification
+    ) async -> UNNotificationPresentationOptions {
+        [.banner, .sound]
     }
 }
