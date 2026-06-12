@@ -85,6 +85,15 @@ public struct APIClient: Sendable {
         try await send("PUT", "/settings", body: changes)
     }
 
+    /// Persist secrets via the daemon (contract §6.1). The response only
+    /// ever reflects presence (`is_set`), never values.
+    public func updateSecrets(_ changes: [String: String]) async throws -> SettingsResponse {
+        try await send(
+            "PUT", "/secrets",
+            body: changes.mapValues(JSONValue.string)
+        )
+    }
+
     // MARK: - Transport
 
     private func get<T: Decodable>(_ path: String, query: [URLQueryItem] = []) async throws -> T {

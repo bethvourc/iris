@@ -31,6 +31,11 @@ from iris.memory_graph import (
 from iris.memory_lifecycle import maintain_lifecycle, set_memory_pinned
 from iris.memory_review import decide_review_item, list_review_items
 from iris.runtime import RunOrchestrator
+from iris.secrets_store import (
+    EnvManagedSecretError,
+    SecretsError,
+    update_stored_secrets,
+)
 from iris.sessions import get_session, list_sessions
 from iris.settings_store import (
     EnvManagedSettingError,
@@ -60,7 +65,7 @@ MAX_BODY_BYTES = 1_000_000
 CONTRACT_VERSION = 1
 # Paths that use the structured error envelope from the desktop contract
 # (docs/desktop/api-contract.md §1); legacy routes keep flat error strings.
-CONTRACT_PATH_PREFIXES = ("/voice", "/settings", "/activity")
+CONTRACT_PATH_PREFIXES = ("/voice", "/settings", "/secrets", "/activity")
 VOICE_SSE_HEARTBEAT_SECONDS = 15.0
 
 _LOG = logging.getLogger("iris.gateway")
@@ -355,7 +360,29 @@ class GatewayService:
     ) -> tuple[int, dict[str, Any]]:
         if path == "/settings":
             return self._handle_settings_put(body)
+        if path == "/secrets":
+            return self._handle_secrets_put(body)
         return 404, {"error": "not found"}
+
+    def _handle_secrets_put(self, body: dict[str, Any]) -> tuple[int, dict[str, Any]]:
+        try:
+            update_stored_secrets(self.config.state_db_path, body)
+        except EnvManagedSecretError as exc:
+            return 409, _error_payload(exc.code, str(exc))
+        except SecretsError as exc:
+            return 400, _error_payload(exc.code, str(exc))
+        with open_state(self.config) as db:
+            record_audit(
+                db,
+                actor="gateway",
+                tool="secrets.update",
+                risk=RiskLevel.SENSITIVE,
+                details={"keys": sorted(body)},
+                result="ok",
+            )
+        self.config = IrisConfig.from_env(self.config.project_root)
+        # Same shape as GET /settings: presence only, never values.
+        return 200, settings_payload(self.config)
 
     def _handle_settings_put(self, body: dict[str, Any]) -> tuple[int, dict[str, Any]]:
         try:

@@ -6,6 +6,7 @@ import os
 import shlex
 from typing import Any
 
+from iris.secrets_store import apply_stored_secrets
 from iris.settings_store import load_stored_settings
 
 
@@ -120,6 +121,9 @@ class IrisConfig:
             os.getenv("IRIS_STATE_DB", str(root / "build" / "iris.sqlite3"))
         )
         stored = load_stored_settings(state_db_path)
+        # Stored secrets enter via the environment (beneath real env/.env)
+        # so getenv-based consumers and SDK defaults see them uniformly.
+        apply_stored_secrets(state_db_path)
         return cls(
             project_root=root,
             openai_api_key=os.getenv("OPENAI_API_KEY") or None,

@@ -28,11 +28,16 @@ struct IrisApp: App {
         Window("Iris", id: "main") {
             MainWindowPlaceholder()
         }
+
+        Window("Welcome to Iris", id: "onboarding") {
+            OnboardingView(model: model.makeOnboardingModel())
+        }
+        .windowResizability(.contentSize)
     }
 }
 
-/// The status item view, installed at launch. Also hosts the
-/// `--open-main-window` harness hook used by UI screenshots and tests.
+/// The status item view, installed at launch. Hosts launch-time hooks:
+/// first-run onboarding and the `--open-main-window` screenshot harness.
 private struct MenuBarLabel: View {
     let model: AppModel
     @Environment(\.openWindow) private var openWindow
@@ -40,6 +45,10 @@ private struct MenuBarLabel: View {
     var body: some View {
         StatusIcon(state: model.daemonState)
             .task {
+                if model.shouldShowOnboarding {
+                    openWindow(id: "onboarding")
+                    NSApp.activate(ignoringOtherApps: true)
+                }
                 if ProcessInfo.processInfo.arguments.contains("--open-main-window") {
                     openWindow(id: "main")
                     NSApp.activate(ignoringOtherApps: true)

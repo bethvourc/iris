@@ -162,6 +162,23 @@ final class APIClientTests: XCTestCase {
         )
     }
 
+    func testUpdateSecretsSendsPutAndDecodesPresenceOnly() async throws {
+        respond(status: 200, json: """
+        {"settings": {}, "secrets": {"openai_api_key": {"is_set": true}}}
+        """)
+        let response = try await makeClient().updateSecrets(["openai_api_key": "sk-test"])
+        XCTAssertEqual(response.secrets["openai_api_key"]?.isSet, true)
+
+        let request = MockURLProtocol.lastRequest
+        XCTAssertEqual(request?.httpMethod, "PUT")
+        XCTAssertEqual(request?.url?.path(), "/secrets")
+        let body = try XCTUnwrap(request?.bodyBytes)
+        XCTAssertEqual(
+            try JSONSerialization.jsonObject(with: body) as? [String: String],
+            ["openai_api_key": "sk-test"]
+        )
+    }
+
     // MARK: - Error taxonomy
 
     func testUnauthorizedMapsDistinctly() async {

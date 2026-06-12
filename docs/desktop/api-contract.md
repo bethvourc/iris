@@ -253,6 +253,31 @@ Request — partial update, whitelisted keys only:
 Writes are atomic (temp file + rename). Changes are audit-logged by key name (values omitted for
 sensitive keys). A live voice session picks up changes on its next start, not mid-session.
 
+### 6.1 `PUT /secrets` (additive, contract v1)
+
+Write path for secrets — onboarding and Settings → Account use it. Secrets
+are persisted by the daemon (`secrets.json` next to the state DB, mode 0600)
+and applied to its environment beneath real env/`.env` values, so the CLI
+and all clients see one truth.
+
+Request — whitelisted keys only (`openai_api_key`, `groq_api_key`,
+`pushover_token`, `ntfy_token`, `resend_api_key`):
+
+```json
+{ "openai_api_key": "sk-..." }
+```
+
+- `200` — returns the same shape as `GET /settings`; the new value is
+  reflected only as `is_set: true`. **Values never appear in any response,
+  log line, or audit entry** (audit records key names only).
+- `400 invalid_request` — unknown key, empty/non-string value, control
+  characters, or oversized value.
+- `409 secret_env_managed` — the secret is pinned by a real environment
+  variable (including `.env`); the message names the variable.
+
+The gateway reloads its config after a successful write, so the next voice
+session uses the new key without a daemon restart.
+
 ## 7. Status codes summary (new endpoints)
 
 | Code | Meaning |

@@ -49,6 +49,73 @@ final class IrisUITests: XCTestCase {
         XCTAssertTrue(app.menuItems["Start Iris"].exists)
     }
 
+    // MARK: - Onboarding
+
+    private func launchOnboarding(
+        permissions: String, step: String? = nil
+    ) -> XCUIApplication {
+        let app = XCUIApplication()
+        app.launchArguments = [
+            "--ui-test-state", "stopped",
+            "--ui-test-onboarding",
+            "--ui-test-permissions", permissions
+        ]
+        if let step {
+            app.launchArguments += ["--ui-test-onboarding-step", step]
+        }
+        app.launch()
+        return app
+    }
+
+    func testOnboardingFlowCompletes() throws {
+        let app = launchOnboarding(permissions: "undetermined")
+        let window = app.windows["Welcome to Iris"]
+        guard window.waitForExistence(timeout: 10) else {
+            throw XCTSkip("onboarding window not reachable in this environment")
+        }
+
+        // welcome → key
+        window.buttons["Continue"].click()
+        // daemon is pinned-off, so the key step offers skip
+        XCTAssertTrue(window.buttons["Skip for Now"].waitForExistence(timeout: 5))
+        window.buttons["Skip for Now"].click()
+
+        // microphone: allow flips the scripted permission to granted
+        XCTAssertTrue(window.buttons["Allow Microphone"].waitForExistence(timeout: 5))
+        window.buttons["Allow Microphone"].click()
+        XCTAssertTrue(window.buttons["Continue"].waitForExistence(timeout: 5))
+        window.buttons["Continue"].click()
+
+        // system access: both optional
+        XCTAssertTrue(window.buttons["Skip for Now"].waitForExistence(timeout: 5))
+        window.buttons["Skip for Now"].click()
+
+        // done
+        XCTAssertTrue(window.buttons["Start Using Iris"].waitForExistence(timeout: 5))
+        window.buttons["Start Using Iris"].click()
+        XCTAssertTrue(waitForDisappearance(of: window, timeout: 5))
+    }
+
+    func testOnboardingDeniedMicrophoneOffersSystemSettings() throws {
+        let app = launchOnboarding(permissions: "denied", step: "microphone")
+        let window = app.windows["Welcome to Iris"]
+        guard window.waitForExistence(timeout: 10) else {
+            throw XCTSkip("onboarding window not reachable in this environment")
+        }
+        XCTAssertTrue(
+            window.buttons["Open System Settings"].waitForExistence(timeout: 5)
+        )
+        XCTAssertFalse(window.buttons["Allow Microphone"].exists)
+        // denied is skippable — degraded mode, never a dead end
+        XCTAssertTrue(window.buttons["Skip for Now"].exists)
+    }
+
+    private func waitForDisappearance(of element: XCUIElement, timeout: TimeInterval) -> Bool {
+        let predicate = NSPredicate(format: "exists == false")
+        let expectation = XCTNSPredicateExpectation(predicate: predicate, object: element)
+        return XCTWaiter().wait(for: [expectation], timeout: timeout) == .completed
+    }
+
     func testOpenIrisShowsMainWindow() throws {
         let app = launch(state: "healthy")
         _ = try openMenu(of: app)
