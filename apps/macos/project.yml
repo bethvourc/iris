@@ -14,6 +14,10 @@ settings:
     SWIFT_VERSION: "6.0"
     ENABLE_HARDENED_RUNTIME: YES
     CODE_SIGN_STYLE: Automatic
+    # Local Apple Development signing so app + UI test runner share a Team
+    # ID (XCUITest requires it). CI overrides with CODE_SIGNING_ALLOWED=NO
+    # for unit tests; Developer ID release signing arrives in Step 7.2.
+    DEVELOPMENT_TEAM: 264K2T9HX2
     CURRENT_PROJECT_VERSION: 1
     MARKETING_VERSION: 0.1.0
 
@@ -31,9 +35,6 @@ targets:
         INFOPLIST_FILE: Iris/Info.plist
         GENERATE_INFOPLIST_FILE: NO
         CODE_SIGN_ENTITLEMENTS: Iris/Iris.entitlements
-        # Ad-hoc signing keeps local dev builds working without a team;
-        # release signing is configured by the packaging pipeline (Step 7.2).
-        CODE_SIGN_IDENTITY: "-"
 
   IrisKit:
     type: framework
