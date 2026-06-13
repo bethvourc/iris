@@ -11,6 +11,7 @@
 		0BBDF187DBF60EB42C7FB196 /* TokenStoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5D70DB5CBC94B0FA1EEDA34D /* TokenStoreTests.swift */; };
 		0DD331ADAA7686E029973500 /* Models.swift in Sources */ = {isa = PBXBuildFile; fileRef = 511C19A5D2BC2AA0CF91B476 /* Models.swift */; };
 		1F0AC61B428B4F385796E0D4 /* IrisApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 553E0AFFE0B2EB105BB5FB5F /* IrisApp.swift */; };
+		29940C9C27959CF549B73933 /* OverlayGeometry.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8FE8A629A140897C7727519 /* OverlayGeometry.swift */; };
 		2D8A0B3A719094CF10CA6928 /* IrisAPIError.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5D0A88C56A8806CDBA9729B9 /* IrisAPIError.swift */; };
 		314EE00F9398B9612AD6464C /* DaemonManagerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1CE44248792B4277D555923B /* DaemonManagerTests.swift */; };
 		381C68541379DB50A2F9206C /* Backoff.swift in Sources */ = {isa = PBXBuildFile; fileRef = 59EAF2213EFFB592027EB184 /* Backoff.swift */; };
@@ -19,8 +20,10 @@
 		456CA08BCFFBEE06201DD631 /* IrisKit.framework in Embed Frameworks */ = {isa = PBXBuildFile; fileRef = 268F9212891F25E9B2633CCB /* IrisKit.framework */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
 		4A7557A6F78BEAC4B04B444D /* PermissionChecker.swift in Sources */ = {isa = PBXBuildFile; fileRef = 59CE983BBAE3A6A5036E4663 /* PermissionChecker.swift */; };
 		4E5E8C8AFBB9F1C4B3F3A1B6 /* SiriNewIcon.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6882310BBE5EEEB7EDE09E4F /* SiriNewIcon.swift */; };
+		5F325F43817B3291F3568858 /* OverlayWindowController.swift in Sources */ = {isa = PBXBuildFile; fileRef = F6130DB801FD7258BCC40A45 /* OverlayWindowController.swift */; };
 		628DC94BB75463BDCF3BFDD8 /* HotkeyController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6F3DE91910860EFA8169880E /* HotkeyController.swift */; };
 		65BABB06083882BE353F35FD /* OnboardingWindow.swift in Sources */ = {isa = PBXBuildFile; fileRef = FC67C93B0EF7DB110C39BB26 /* OnboardingWindow.swift */; };
+		7D47E1C6C29516623BC7FE59 /* OverlayRootView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8E99280973645E0190DB0778 /* OverlayRootView.swift */; };
 		7E4A44B1053A7E1550C5C833 /* ApprovalNotifier.swift in Sources */ = {isa = PBXBuildFile; fileRef = C5EE5E09FA40B51A7641C6D5 /* ApprovalNotifier.swift */; };
 		81AC7435ABCAFDE54BD13246 /* IrisKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 268F9212891F25E9B2633CCB /* IrisKit.framework */; };
 		8488E88E9886DA18A9D4EE99 /* IrisUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3781B221FA93C526FD3A477A /* IrisUITests.swift */; };
@@ -40,7 +43,9 @@
 		E045B64A8DA7BF576DEBC6B0 /* MenuBarView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D8968AF18FC7A89DEA1035BD /* MenuBarView.swift */; };
 		E0ADD7B9871987BA2C69A1AE /* MainWindowPlaceholder.swift in Sources */ = {isa = PBXBuildFile; fileRef = 675CDD35594B589C365FC073 /* MainWindowPlaceholder.swift */; };
 		ED4564A26C4B445F73DF5123 /* AppModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = DF4488917C20113D8BEBA033 /* AppModel.swift */; };
+		F72A7D664272B6F549C7BBBB /* OverlayGeometryTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = EBBE6AA6E8A0BB9DF7379426 /* OverlayGeometryTests.swift */; };
 		FB04D42AD7DFEB4F4B837437 /* VoiceActivationToggleTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0A0C281FED6B275E8AB36D7 /* VoiceActivationToggleTests.swift */; };
+		FE2B900E265F6B90D42C6C23 /* OverlayPanel.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2269F03819E7816B27885AE /* OverlayPanel.swift */; };
 		FF1DD15919383F688D8BA757 /* KeyboardShortcuts in Frameworks */ = {isa = PBXBuildFile; productRef = FF8A68DC00E76631326AA038 /* KeyboardShortcuts */; };
 /* End PBXBuildFile section */
 
@@ -119,7 +124,9 @@
 		76895AFFF5DB1B75A66AA1FF /* VoiceActivationToggle.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VoiceActivationToggle.swift; sourceTree = "<group>"; };
 		7D952908038ED94AA69DA9AD /* ApprovalNotifierTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ApprovalNotifierTests.swift; sourceTree = "<group>"; };
 		8646A4D90EA5D7F897967343 /* IrisTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = IrisTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		8E99280973645E0190DB0778 /* OverlayRootView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OverlayRootView.swift; sourceTree = "<group>"; };
 		A90EB0F1E02CB4A9D1A6D939 /* StatusIcon.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StatusIcon.swift; sourceTree = "<group>"; };
+		B8FE8A629A140897C7727519 /* OverlayGeometry.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OverlayGeometry.swift; sourceTree = "<group>"; };
 		C0A0C281FED6B275E8AB36D7 /* VoiceActivationToggleTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VoiceActivationToggleTests.swift; sourceTree = "<group>"; };
 		C5EE5E09FA40B51A7641C6D5 /* ApprovalNotifier.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ApprovalNotifier.swift; sourceTree = "<group>"; };
 		CE0E93A44C3951456DD110CA /* APIClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = APIClient.swift; sourceTree = "<group>"; };
@@ -127,7 +134,10 @@
 		DF4488917C20113D8BEBA033 /* AppModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppModel.swift; sourceTree = "<group>"; };
 		E0B30308D08E575D6B0B7371 /* Iris.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Iris.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		E6E21B8ACF374663E4E71D28 /* TokenStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TokenStore.swift; sourceTree = "<group>"; };
+		EBBE6AA6E8A0BB9DF7379426 /* OverlayGeometryTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OverlayGeometryTests.swift; sourceTree = "<group>"; };
+		F2269F03819E7816B27885AE /* OverlayPanel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OverlayPanel.swift; sourceTree = "<group>"; };
 		F414097BF38E7E342465DC29 /* OnboardingSteps.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OnboardingSteps.swift; sourceTree = "<group>"; };
+		F6130DB801FD7258BCC40A45 /* OverlayWindowController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OverlayWindowController.swift; sourceTree = "<group>"; };
 		FA4B1FE916581CEAA29457C4 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		FC67C93B0EF7DB110C39BB26 /* OnboardingWindow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OnboardingWindow.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
@@ -165,6 +175,7 @@
 				5D0A88C56A8806CDBA9729B9 /* IrisAPIError.swift */,
 				0F8C8BA405048FA4CE7F08F0 /* IrisKit.swift */,
 				511C19A5D2BC2AA0CF91B476 /* Models.swift */,
+				B8FE8A629A140897C7727519 /* OverlayGeometry.swift */,
 				105E541504E935FF2228B379 /* SSEClient.swift */,
 				E6E21B8ACF374663E4E71D28 /* TokenStore.swift */,
 				76895AFFF5DB1B75A66AA1FF /* VoiceActivationToggle.swift */,
@@ -224,6 +235,7 @@
 				7D952908038ED94AA69DA9AD /* ApprovalNotifierTests.swift */,
 				1CE44248792B4277D555923B /* DaemonManagerTests.swift */,
 				1B68D16D51878BB8C8C7CBC8 /* IrisKitScaffoldTests.swift */,
+				EBBE6AA6E8A0BB9DF7379426 /* OverlayGeometryTests.swift */,
 				75DA1CEDF48E0A3230A3441D /* SSEClientTests.swift */,
 				5D70DB5CBC94B0FA1EEDA34D /* TokenStoreTests.swift */,
 				C0A0C281FED6B275E8AB36D7 /* VoiceActivationToggleTests.swift */,
@@ -242,6 +254,7 @@
 				518EAFC5C7A3C90CB2D44790 /* Main */,
 				AE835B6A2B951EAC1D6B3F4B /* MenuBar */,
 				8DEBDD8DD260FB9E0E5AE34B /* Onboarding */,
+				BF661BE4004DE9A0BDA56EB5 /* Overlay */,
 			);
 			path = Iris;
 			sourceTree = "<group>";
@@ -254,6 +267,16 @@
 				A90EB0F1E02CB4A9D1A6D939 /* StatusIcon.swift */,
 			);
 			path = MenuBar;
+			sourceTree = "<group>";
+		};
+		BF661BE4004DE9A0BDA56EB5 /* Overlay */ = {
+			isa = PBXGroup;
+			children = (
+				F2269F03819E7816B27885AE /* OverlayPanel.swift */,
+				8E99280973645E0190DB0778 /* OverlayRootView.swift */,
+				F6130DB801FD7258BCC40A45 /* OverlayWindowController.swift */,
+			);
+			path = Overlay;
 			sourceTree = "<group>";
 		};
 		D2070894243A80683C258643 /* Products */ = {
@@ -421,6 +444,7 @@
 				2D8A0B3A719094CF10CA6928 /* IrisAPIError.swift in Sources */,
 				41507A9AD2A4E283D19103AD /* IrisKit.swift in Sources */,
 				0DD331ADAA7686E029973500 /* Models.swift in Sources */,
+				29940C9C27959CF549B73933 /* OverlayGeometry.swift in Sources */,
 				9044E40A8AD4D7C679694CD7 /* SSEClient.swift in Sources */,
 				AC2FF2087AF8B0BFEAAFC79D /* TokenStore.swift in Sources */,
 				907F2CF9BBF559276040AA30 /* VoiceActivationToggle.swift in Sources */,
@@ -435,6 +459,7 @@
 				01B0B7A0B41CA5F800CE0F48 /* ApprovalNotifierTests.swift in Sources */,
 				314EE00F9398B9612AD6464C /* DaemonManagerTests.swift in Sources */,
 				441D5E0004E67A372947651F /* IrisKitScaffoldTests.swift in Sources */,
+				F72A7D664272B6F549C7BBBB /* OverlayGeometryTests.swift in Sources */,
 				B4EC4A41A52C6B778A168663 /* SSEClientTests.swift in Sources */,
 				0BBDF187DBF60EB42C7FB196 /* TokenStoreTests.swift in Sources */,
 				FB04D42AD7DFEB4F4B837437 /* VoiceActivationToggleTests.swift in Sources */,
@@ -452,6 +477,9 @@
 				E045B64A8DA7BF576DEBC6B0 /* MenuBarView.swift in Sources */,
 				98136165AE83408013CD147E /* OnboardingSteps.swift in Sources */,
 				65BABB06083882BE353F35FD /* OnboardingWindow.swift in Sources */,
+				FE2B900E265F6B90D42C6C23 /* OverlayPanel.swift in Sources */,
+				7D47E1C6C29516623BC7FE59 /* OverlayRootView.swift in Sources */,
+				5F325F43817B3291F3568858 /* OverlayWindowController.swift in Sources */,
 				4A7557A6F78BEAC4B04B444D /* PermissionChecker.swift in Sources */,
 				4E5E8C8AFBB9F1C4B3F3A1B6 /* SiriNewIcon.swift in Sources */,
 				D906FF264EF1A12CFEF7443D /* StatusIcon.swift in Sources */,

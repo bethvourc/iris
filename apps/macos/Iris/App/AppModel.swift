@@ -16,6 +16,24 @@ final class AppModel {
     let apiClient: APIClient
     private var observationTask: Task<Void, Never>?
     private let logger = Logger(subsystem: "com.bethvour.iris", category: "app")
+    @ObservationIgnored
+    private lazy var overlay = OverlayController(
+        onDismiss: { [weak self] in self?.hotkey?.sessionStateChanged(isActive: false) },
+        rootView: { OverlayRootView() }
+    )
+
+    /// `--ui-test-overlay` shows the overlay at launch for screenshots/tests.
+    var shouldShowOverlayAtLaunch: Bool {
+        ProcessInfo.processInfo.arguments.contains("--ui-test-overlay")
+    }
+
+    func showOverlay() {
+        overlay.show()
+    }
+
+    func hideOverlay() {
+        overlay.hide()
+    }
 
     init() {
         // UI-test launches are hermetic: ephemeral defaults and a fixed
@@ -137,13 +155,16 @@ final class AppModel {
         Task { await manager.start() }
     }
 
-    /// The overlay's voice session view model takes these over in Step 4.3.
+    /// Step 4.3 replaces these with the real voice session view model; for
+    /// now activation shows the overlay scaffold and deactivation hides it.
     private func voiceActivationRequested() {
-        logger.info("voice activation requested (overlay lands in 4.3)")
+        logger.info("voice activation: showing overlay")
+        overlay.show()
     }
 
     private func voiceDeactivationRequested() {
-        logger.info("voice deactivation requested (overlay lands in 4.3)")
+        logger.info("voice deactivation: hiding overlay")
+        overlay.hide()
     }
 
     func restartDaemon() {

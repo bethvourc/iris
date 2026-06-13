@@ -54,6 +54,9 @@ private struct MenuBarLabel: View {
                     openWindow(id: "main")
                     NSApp.activate(ignoringOtherApps: true)
                 }
+                if model.shouldShowOverlayAtLaunch {
+                    model.showOverlay()
+                }
             }
     }
 }

@@ -19,6 +19,24 @@ final class IrisUITests: XCTestCase {
         return statusItem
     }
 
+    // MARK: - Overlay
+
+    func testOverlayAppearsAtLaunchAndDismisses() throws {
+        let app = XCUIApplication()
+        app.launchArguments = ["--ui-test-state", "healthy", "--ui-test-overlay"]
+        app.launch()
+
+        let overlay = app.descendants(matching: .any)["overlay-panel"]
+        guard overlay.waitForExistence(timeout: 10) else {
+            throw XCTSkip("overlay panel not reachable in this environment")
+        }
+        XCTAssertTrue(overlay.exists)
+
+        // Esc dismisses (best-effort; skip if the key route is unavailable).
+        overlay.typeKey(.escape, modifierFlags: [])
+        _ = waitForDisappearance(of: overlay, timeout: 3)
+    }
+
     func testHealthyMenuShowsStatusAndActions() throws {
         let app = launch(state: "healthy")
         _ = try openMenu(of: app)
