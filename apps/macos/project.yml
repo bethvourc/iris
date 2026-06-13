@@ -21,6 +21,11 @@ settings:
     CURRENT_PROJECT_VERSION: 1
     MARKETING_VERSION: 0.1.0
 
+packages:
+  KeyboardShortcuts:
+    url: https://github.com/sindresorhus/KeyboardShortcuts
+    from: "2.0.0"
+
 targets:
   Iris:
     type: application
@@ -29,6 +34,7 @@ targets:
     dependencies:
       - target: IrisKit
         embed: true
+      - package: KeyboardShortcuts
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.bethvour.iris

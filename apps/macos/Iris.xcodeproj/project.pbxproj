@@ -19,12 +19,14 @@
 		456CA08BCFFBEE06201DD631 /* IrisKit.framework in Embed Frameworks */ = {isa = PBXBuildFile; fileRef = 268F9212891F25E9B2633CCB /* IrisKit.framework */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
 		4A7557A6F78BEAC4B04B444D /* PermissionChecker.swift in Sources */ = {isa = PBXBuildFile; fileRef = 59CE983BBAE3A6A5036E4663 /* PermissionChecker.swift */; };
 		4E5E8C8AFBB9F1C4B3F3A1B6 /* SiriNewIcon.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6882310BBE5EEEB7EDE09E4F /* SiriNewIcon.swift */; };
+		628DC94BB75463BDCF3BFDD8 /* HotkeyController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6F3DE91910860EFA8169880E /* HotkeyController.swift */; };
 		65BABB06083882BE353F35FD /* OnboardingWindow.swift in Sources */ = {isa = PBXBuildFile; fileRef = FC67C93B0EF7DB110C39BB26 /* OnboardingWindow.swift */; };
 		7E4A44B1053A7E1550C5C833 /* ApprovalNotifier.swift in Sources */ = {isa = PBXBuildFile; fileRef = C5EE5E09FA40B51A7641C6D5 /* ApprovalNotifier.swift */; };
 		81AC7435ABCAFDE54BD13246 /* IrisKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 268F9212891F25E9B2633CCB /* IrisKit.framework */; };
 		8488E88E9886DA18A9D4EE99 /* IrisUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3781B221FA93C526FD3A477A /* IrisUITests.swift */; };
 		8EBC18397BD612DCCB7BBD59 /* DaemonManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5832BB3F2301BAB207502BC3 /* DaemonManager.swift */; };
 		9044E40A8AD4D7C679694CD7 /* SSEClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 105E541504E935FF2228B379 /* SSEClient.swift */; };
+		907F2CF9BBF559276040AA30 /* VoiceActivationToggle.swift in Sources */ = {isa = PBXBuildFile; fileRef = 76895AFFF5DB1B75A66AA1FF /* VoiceActivationToggle.swift */; };
 		95117CA7158462B1D39122AB /* AppPreferences.swift in Sources */ = {isa = PBXBuildFile; fileRef = 74C7B8112CF837094372ACCF /* AppPreferences.swift */; };
 		979273EC3D7ED668E1A3D226 /* DaemonState.swift in Sources */ = {isa = PBXBuildFile; fileRef = 15FE71599F07D9A1CDC9BFF2 /* DaemonState.swift */; };
 		98136165AE83408013CD147E /* OnboardingSteps.swift in Sources */ = {isa = PBXBuildFile; fileRef = F414097BF38E7E342465DC29 /* OnboardingSteps.swift */; };
@@ -38,6 +40,8 @@
 		E045B64A8DA7BF576DEBC6B0 /* MenuBarView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D8968AF18FC7A89DEA1035BD /* MenuBarView.swift */; };
 		E0ADD7B9871987BA2C69A1AE /* MainWindowPlaceholder.swift in Sources */ = {isa = PBXBuildFile; fileRef = 675CDD35594B589C365FC073 /* MainWindowPlaceholder.swift */; };
 		ED4564A26C4B445F73DF5123 /* AppModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = DF4488917C20113D8BEBA033 /* AppModel.swift */; };
+		FB04D42AD7DFEB4F4B837437 /* VoiceActivationToggleTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0A0C281FED6B275E8AB36D7 /* VoiceActivationToggleTests.swift */; };
+		FF1DD15919383F688D8BA757 /* KeyboardShortcuts in Frameworks */ = {isa = PBXBuildFile; productRef = FF8A68DC00E76631326AA038 /* KeyboardShortcuts */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -109,11 +113,14 @@
 		5D70DB5CBC94B0FA1EEDA34D /* TokenStoreTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TokenStoreTests.swift; sourceTree = "<group>"; };
 		675CDD35594B589C365FC073 /* MainWindowPlaceholder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MainWindowPlaceholder.swift; sourceTree = "<group>"; };
 		6882310BBE5EEEB7EDE09E4F /* SiriNewIcon.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SiriNewIcon.swift; sourceTree = "<group>"; };
+		6F3DE91910860EFA8169880E /* HotkeyController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HotkeyController.swift; sourceTree = "<group>"; };
 		74C7B8112CF837094372ACCF /* AppPreferences.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppPreferences.swift; sourceTree = "<group>"; };
 		75DA1CEDF48E0A3230A3441D /* SSEClientTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SSEClientTests.swift; sourceTree = "<group>"; };
+		76895AFFF5DB1B75A66AA1FF /* VoiceActivationToggle.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VoiceActivationToggle.swift; sourceTree = "<group>"; };
 		7D952908038ED94AA69DA9AD /* ApprovalNotifierTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ApprovalNotifierTests.swift; sourceTree = "<group>"; };
 		8646A4D90EA5D7F897967343 /* IrisTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = IrisTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		A90EB0F1E02CB4A9D1A6D939 /* StatusIcon.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StatusIcon.swift; sourceTree = "<group>"; };
+		C0A0C281FED6B275E8AB36D7 /* VoiceActivationToggleTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VoiceActivationToggleTests.swift; sourceTree = "<group>"; };
 		C5EE5E09FA40B51A7641C6D5 /* ApprovalNotifier.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ApprovalNotifier.swift; sourceTree = "<group>"; };
 		CE0E93A44C3951456DD110CA /* APIClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = APIClient.swift; sourceTree = "<group>"; };
 		D8968AF18FC7A89DEA1035BD /* MenuBarView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MenuBarView.swift; sourceTree = "<group>"; };
@@ -139,6 +146,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				A1288E007666B7294A1492CB /* IrisKit.framework in Frameworks */,
+				FF1DD15919383F688D8BA757 /* KeyboardShortcuts in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -159,6 +167,7 @@
 				511C19A5D2BC2AA0CF91B476 /* Models.swift */,
 				105E541504E935FF2228B379 /* SSEClient.swift */,
 				E6E21B8ACF374663E4E71D28 /* TokenStore.swift */,
+				76895AFFF5DB1B75A66AA1FF /* VoiceActivationToggle.swift */,
 			);
 			path = IrisKit;
 			sourceTree = "<group>";
@@ -192,6 +201,14 @@
 			path = Onboarding;
 			sourceTree = "<group>";
 		};
+		A1C3164D938295D749FB7C46 /* Hotkey */ = {
+			isa = PBXGroup;
+			children = (
+				6F3DE91910860EFA8169880E /* HotkeyController.swift */,
+			);
+			path = Hotkey;
+			sourceTree = "<group>";
+		};
 		A5D49765C7BBD467D92E6FA8 /* IrisUITests */ = {
 			isa = PBXGroup;
 			children = (
@@ -209,6 +226,7 @@
 				1B68D16D51878BB8C8C7CBC8 /* IrisKitScaffoldTests.swift */,
 				75DA1CEDF48E0A3230A3441D /* SSEClientTests.swift */,
 				5D70DB5CBC94B0FA1EEDA34D /* TokenStoreTests.swift */,
+				C0A0C281FED6B275E8AB36D7 /* VoiceActivationToggleTests.swift */,
 			);
 			path = IrisTests;
 			sourceTree = "<group>";
@@ -220,6 +238,7 @@
 				527F060CF8C7BE3BF0D545CE /* Iris.entitlements */,
 				553E0AFFE0B2EB105BB5FB5F /* IrisApp.swift */,
 				F1747B5C84028BE908298E5A /* App */,
+				A1C3164D938295D749FB7C46 /* Hotkey */,
 				518EAFC5C7A3C90CB2D44790 /* Main */,
 				AE835B6A2B951EAC1D6B3F4B /* MenuBar */,
 				8DEBDD8DD260FB9E0E5AE34B /* Onboarding */,
@@ -311,6 +330,7 @@
 			);
 			name = Iris;
 			packageProductDependencies = (
+				FF8A68DC00E76631326AA038 /* KeyboardShortcuts */,
 			);
 			productName = Iris;
 			productReference = E0B30308D08E575D6B0B7371 /* Iris.app */;
@@ -371,6 +391,9 @@
 			);
 			mainGroup = 1F94CDDECE10DBA2BC5859A9;
 			minimizedProjectReferenceProxies = 1;
+			packageReferences = (
+				8CB4CEAC9D53F65DF6B572A6 /* XCRemoteSwiftPackageReference "KeyboardShortcuts" */,
+			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = D2070894243A80683C258643 /* Products */;
 			projectDirPath = "";
@@ -400,6 +423,7 @@
 				0DD331ADAA7686E029973500 /* Models.swift in Sources */,
 				9044E40A8AD4D7C679694CD7 /* SSEClient.swift in Sources */,
 				AC2FF2087AF8B0BFEAAFC79D /* TokenStore.swift in Sources */,
+				907F2CF9BBF559276040AA30 /* VoiceActivationToggle.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -413,6 +437,7 @@
 				441D5E0004E67A372947651F /* IrisKitScaffoldTests.swift in Sources */,
 				B4EC4A41A52C6B778A168663 /* SSEClientTests.swift in Sources */,
 				0BBDF187DBF60EB42C7FB196 /* TokenStoreTests.swift in Sources */,
+				FB04D42AD7DFEB4F4B837437 /* VoiceActivationToggleTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -421,6 +446,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				ED4564A26C4B445F73DF5123 /* AppModel.swift in Sources */,
+				628DC94BB75463BDCF3BFDD8 /* HotkeyController.swift in Sources */,
 				1F0AC61B428B4F385796E0D4 /* IrisApp.swift in Sources */,
 				E0ADD7B9871987BA2C69A1AE /* MainWindowPlaceholder.swift in Sources */,
 				E045B64A8DA7BF576DEBC6B0 /* MenuBarView.swift in Sources */,
@@ -785,6 +811,25 @@
 			defaultConfigurationName = Debug;
 		};
 /* End XCConfigurationList section */
+
+/* Begin XCRemoteSwiftPackageReference section */
+		8CB4CEAC9D53F65DF6B572A6 /* XCRemoteSwiftPackageReference "KeyboardShortcuts" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/sindresorhus/KeyboardShortcuts";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 2.0.0;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		FF8A68DC00E76631326AA038 /* KeyboardShortcuts */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 8CB4CEAC9D53F65DF6B572A6 /* XCRemoteSwiftPackageReference "KeyboardShortcuts" */;
+			productName = KeyboardShortcuts;
+		};
+/* End XCSwiftPackageProductDependency section */
 	};
 	rootObject = 231FCB8ADBE0C54741F35D8A /* Project object */;
 }

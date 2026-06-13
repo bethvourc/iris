@@ -11,6 +11,7 @@ final class AppModel {
 
     private(set) var daemonManager: DaemonManager?
     private(set) var approvalNotifier: ApprovalNotifier?
+    private(set) var hotkey: HotkeyController?
     let preferences: AppPreferences
     let apiClient: APIClient
     private var observationTask: Task<Void, Never>?
@@ -129,7 +130,20 @@ final class AppModel {
                 }
             }
         }
+        hotkey = HotkeyController(
+            onActivate: { [weak self] in self?.voiceActivationRequested() },
+            onDeactivate: { [weak self] in self?.voiceDeactivationRequested() }
+        )
         Task { await manager.start() }
+    }
+
+    /// The overlay's voice session view model takes these over in Step 4.3.
+    private func voiceActivationRequested() {
+        logger.info("voice activation requested (overlay lands in 4.3)")
+    }
+
+    private func voiceDeactivationRequested() {
+        logger.info("voice deactivation requested (overlay lands in 4.3)")
     }
 
     func restartDaemon() {
