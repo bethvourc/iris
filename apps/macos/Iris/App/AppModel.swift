@@ -14,24 +14,42 @@ final class AppModel {
     private(set) var hotkey: HotkeyController?
     let preferences: AppPreferences
     let apiClient: APIClient
+    let voiceModel: VoiceSessionViewModel
     private var observationTask: Task<Void, Never>?
     private let logger = Logger(subsystem: "com.bethvour.iris", category: "app")
     @ObservationIgnored
-    private lazy var overlay = OverlayController(
-        onDismiss: { [weak self] in self?.hotkey?.cancel() },
-        rootView: { OverlayRootView() }
-    )
+    private lazy var overlay: OverlayController = {
+        let model = voiceModel
+        return OverlayController(
+            onDismiss: { [weak self] in
+                self?.voiceModel.end()
+                self?.hotkey?.cancel()
+            },
+            rootView: { OverlayRootView(model: model) }
+        )
+    }()
 
     /// `--ui-test-overlay` shows the overlay at launch for screenshots/tests.
     var shouldShowOverlayAtLaunch: Bool {
         ProcessInfo.processInfo.arguments.contains("--ui-test-overlay")
     }
 
+    /// At launch, pin a forced overlay state for screenshots/UI tests so no
+    /// daemon is needed; otherwise begin a real session.
     func showOverlay() {
+        if let forced = Self.forcedOverlayState() {
+            voiceModel.forceState(
+                forced.state, userText: forced.userText,
+                assistantText: forced.assistantText, statusLine: forced.statusLine
+            )
+        } else {
+            voiceModel.begin()
+        }
         overlay.show()
     }
 
     func hideOverlay() {
+        voiceModel.end()
         overlay.hide()
     }
 
@@ -39,24 +57,27 @@ final class AppModel {
         // UI-test launches are hermetic: ephemeral defaults and a fixed
         // fake token, so tests never touch the real preferences or trigger
         // keychain ACL prompts.
+        let tokenProvider: @Sendable () -> String?
         if Self.isUITestRun {
             preferences = AppPreferences(
                 defaults: UserDefaults(suiteName: "iris-ui-tests-\(UUID().uuidString)")!
             )
-            apiClient = APIClient(
-                baseURL: preferences.gatewayBaseURL,
-                token: { "ui-test-token" }
-            )
+            tokenProvider = { "ui-test-token" }
         } else {
             preferences = AppPreferences()
-            apiClient = APIClient(
-                baseURL: preferences.gatewayBaseURL,
-                token: {
-                    guard let token = try? TokenStore().load() else { return nil }
-                    return token
-                }
-            )
+            tokenProvider = {
+                guard let token = try? TokenStore().load() else { return nil }
+                return token
+            }
         }
+        let baseURL = preferences.gatewayBaseURL
+        apiClient = APIClient(baseURL: baseURL, token: tokenProvider)
+        let eventsURL = baseURL.appending(path: "voice/events")
+        let sse = SSEClient(url: eventsURL, token: tokenProvider)
+        voiceModel = VoiceSessionViewModel(
+            voiceControl: apiClient,
+            eventStream: { sse.events() }
+        )
     }
 
     /// Whether the onboarding window should open at launch.
@@ -152,18 +173,30 @@ final class AppModel {
             onActivate: { [weak self] in self?.voiceActivationRequested() },
             onDeactivate: { [weak self] in self?.voiceDeactivationRequested() }
         )
+        // Session truth from the SSE stream reconciles the activation toggle;
+        // a session ending on its own dismisses the overlay.
+        voiceModel.onSessionActiveChanged = { [weak self] active in
+            self?.hotkey?.sessionStateChanged(isActive: active)
+        }
+        voiceModel.onShouldDismiss = { [weak self] in
+            self?.overlay.hide()
+            self?.hotkey?.cancel()
+        }
+        voiceModel.onActivationFailed = { [weak self] in
+            self?.hotkey?.activationFailed()
+        }
         Task { await manager.start() }
     }
 
-    /// Step 4.3 replaces these with the real voice session view model; for
-    /// now activation shows the overlay scaffold and deactivation hides it.
     private func voiceActivationRequested() {
-        logger.info("voice activation: showing overlay")
+        logger.info("voice activation: starting session")
+        voiceModel.begin()
         overlay.show()
     }
 
     private func voiceDeactivationRequested() {
-        logger.info("voice deactivation: hiding overlay")
+        logger.info("voice deactivation: ending session")
+        voiceModel.end()
         overlay.hide()
     }
 
@@ -230,5 +263,41 @@ final class AppModel {
         guard let flagIndex = arguments.firstIndex(of: "--ui-test-state"),
               arguments.indices.contains(flagIndex + 1) else { return nil }
         return pinnableStates[arguments[flagIndex + 1]]
+    }
+
+    /// `--ui-test-overlay-state <name>` pins a rendered overlay state with
+    /// sample content, so each state is screenshottable without a daemon.
+    private struct ForcedOverlay {
+        let state: VoiceSessionViewModel.DisplayState
+        var userText = ""
+        var assistantText = ""
+        var statusLine: String?
+    }
+
+    private static func forcedOverlayState() -> ForcedOverlay? {
+        guard let name = argumentValue(after: "--ui-test-overlay-state") else { return nil }
+        switch name {
+        case "connecting":
+            return ForcedOverlay(state: .connecting)
+        case "listening":
+            return ForcedOverlay(state: .listening, userText: "What's on my calendar today?")
+        case "thinking":
+            return ForcedOverlay(state: .thinking, statusLine: "Checking your calendar…")
+        case "speaking":
+            return ForcedOverlay(
+                state: .speaking,
+                userText: "What's on my calendar today?",
+                assistantText: "You have three things: a 10 a.m. design review, "
+                    + "lunch with Sam at noon, and a 3 p.m. one-on-one."
+            )
+        case "ended":
+            return ForcedOverlay(state: .ended(summary: "Set a reminder for 3 p.m."))
+        case "error":
+            return ForcedOverlay(
+                state: .error(message: "Couldn't reach OpenAI.", retryable: true)
+            )
+        default:
+            return nil
+        }
     }
 }

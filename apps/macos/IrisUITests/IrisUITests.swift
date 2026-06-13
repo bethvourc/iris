@@ -23,7 +23,11 @@ final class IrisUITests: XCTestCase {
 
     func testOverlayAppearsAtLaunchAndDismisses() throws {
         let app = XCUIApplication()
-        app.launchArguments = ["--ui-test-state", "healthy", "--ui-test-overlay"]
+        app.launchArguments = [
+            "--ui-test-state", "healthy",
+            "--ui-test-overlay",
+            "--ui-test-overlay-state", "listening"
+        ]
         app.launch()
 
         let overlay = app.descendants(matching: .any)["overlay-panel"]

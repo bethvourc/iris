@@ -10,6 +10,8 @@
 		01B0B7A0B41CA5F800CE0F48 /* ApprovalNotifierTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7D952908038ED94AA69DA9AD /* ApprovalNotifierTests.swift */; };
 		0BBDF187DBF60EB42C7FB196 /* TokenStoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5D70DB5CBC94B0FA1EEDA34D /* TokenStoreTests.swift */; };
 		0DD331ADAA7686E029973500 /* Models.swift in Sources */ = {isa = PBXBuildFile; fileRef = 511C19A5D2BC2AA0CF91B476 /* Models.swift */; };
+		0DE66B6D2339D64A49B83F8E /* OverlayStateViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = CE5A459361D3431B124FD2DD /* OverlayStateViews.swift */; };
+		128F6A2A541DF3C4DE7F8E45 /* TranscriptView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9D2934055E5D59F4035580AA /* TranscriptView.swift */; };
 		1F0AC61B428B4F385796E0D4 /* IrisApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 553E0AFFE0B2EB105BB5FB5F /* IrisApp.swift */; };
 		29940C9C27959CF549B73933 /* OverlayGeometry.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8FE8A629A140897C7727519 /* OverlayGeometry.swift */; };
 		2D8A0B3A719094CF10CA6928 /* IrisAPIError.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5D0A88C56A8806CDBA9729B9 /* IrisAPIError.swift */; };
@@ -23,6 +25,8 @@
 		5F325F43817B3291F3568858 /* OverlayWindowController.swift in Sources */ = {isa = PBXBuildFile; fileRef = F6130DB801FD7258BCC40A45 /* OverlayWindowController.swift */; };
 		628DC94BB75463BDCF3BFDD8 /* HotkeyController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6F3DE91910860EFA8169880E /* HotkeyController.swift */; };
 		65BABB06083882BE353F35FD /* OnboardingWindow.swift in Sources */ = {isa = PBXBuildFile; fileRef = FC67C93B0EF7DB110C39BB26 /* OnboardingWindow.swift */; };
+		6743E1E8470926FAC0A5DFF1 /* VoiceSessionViewModelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 368C51815336D9BEB886FE19 /* VoiceSessionViewModelTests.swift */; };
+		6F2D153EF85A82BB284DA2ED /* VoiceSessionViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 45A4FB759EE9D30AF4C2B570 /* VoiceSessionViewModel.swift */; };
 		7D47E1C6C29516623BC7FE59 /* OverlayRootView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8E99280973645E0190DB0778 /* OverlayRootView.swift */; };
 		7E4A44B1053A7E1550C5C833 /* ApprovalNotifier.swift in Sources */ = {isa = PBXBuildFile; fileRef = C5EE5E09FA40B51A7641C6D5 /* ApprovalNotifier.swift */; };
 		81AC7435ABCAFDE54BD13246 /* IrisKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 268F9212891F25E9B2633CCB /* IrisKit.framework */; };
@@ -105,7 +109,9 @@
 		1B68D16D51878BB8C8C7CBC8 /* IrisKitScaffoldTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IrisKitScaffoldTests.swift; sourceTree = "<group>"; };
 		1CE44248792B4277D555923B /* DaemonManagerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DaemonManagerTests.swift; sourceTree = "<group>"; };
 		268F9212891F25E9B2633CCB /* IrisKit.framework */ = {isa = PBXFileReference; explicitFileType = wrapper.framework; includeInIndex = 0; path = IrisKit.framework; sourceTree = BUILT_PRODUCTS_DIR; };
+		368C51815336D9BEB886FE19 /* VoiceSessionViewModelTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VoiceSessionViewModelTests.swift; sourceTree = "<group>"; };
 		3781B221FA93C526FD3A477A /* IrisUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IrisUITests.swift; sourceTree = "<group>"; };
+		45A4FB759EE9D30AF4C2B570 /* VoiceSessionViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VoiceSessionViewModel.swift; sourceTree = "<group>"; };
 		511C19A5D2BC2AA0CF91B476 /* Models.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models.swift; sourceTree = "<group>"; };
 		51758270EE594413BD57364D /* APIClientTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = APIClientTests.swift; sourceTree = "<group>"; };
 		527F060CF8C7BE3BF0D545CE /* Iris.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = Iris.entitlements; sourceTree = "<group>"; };
@@ -125,11 +131,13 @@
 		7D952908038ED94AA69DA9AD /* ApprovalNotifierTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ApprovalNotifierTests.swift; sourceTree = "<group>"; };
 		8646A4D90EA5D7F897967343 /* IrisTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = IrisTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		8E99280973645E0190DB0778 /* OverlayRootView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OverlayRootView.swift; sourceTree = "<group>"; };
+		9D2934055E5D59F4035580AA /* TranscriptView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TranscriptView.swift; sourceTree = "<group>"; };
 		A90EB0F1E02CB4A9D1A6D939 /* StatusIcon.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StatusIcon.swift; sourceTree = "<group>"; };
 		B8FE8A629A140897C7727519 /* OverlayGeometry.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OverlayGeometry.swift; sourceTree = "<group>"; };
 		C0A0C281FED6B275E8AB36D7 /* VoiceActivationToggleTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VoiceActivationToggleTests.swift; sourceTree = "<group>"; };
 		C5EE5E09FA40B51A7641C6D5 /* ApprovalNotifier.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ApprovalNotifier.swift; sourceTree = "<group>"; };
 		CE0E93A44C3951456DD110CA /* APIClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = APIClient.swift; sourceTree = "<group>"; };
+		CE5A459361D3431B124FD2DD /* OverlayStateViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OverlayStateViews.swift; sourceTree = "<group>"; };
 		D8968AF18FC7A89DEA1035BD /* MenuBarView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MenuBarView.swift; sourceTree = "<group>"; };
 		DF4488917C20113D8BEBA033 /* AppModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppModel.swift; sourceTree = "<group>"; };
 		E0B30308D08E575D6B0B7371 /* Iris.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Iris.app; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -179,6 +187,7 @@
 				105E541504E935FF2228B379 /* SSEClient.swift */,
 				E6E21B8ACF374663E4E71D28 /* TokenStore.swift */,
 				76895AFFF5DB1B75A66AA1FF /* VoiceActivationToggle.swift */,
+				45A4FB759EE9D30AF4C2B570 /* VoiceSessionViewModel.swift */,
 			);
 			path = IrisKit;
 			sourceTree = "<group>";
@@ -239,6 +248,7 @@
 				75DA1CEDF48E0A3230A3441D /* SSEClientTests.swift */,
 				5D70DB5CBC94B0FA1EEDA34D /* TokenStoreTests.swift */,
 				C0A0C281FED6B275E8AB36D7 /* VoiceActivationToggleTests.swift */,
+				368C51815336D9BEB886FE19 /* VoiceSessionViewModelTests.swift */,
 			);
 			path = IrisTests;
 			sourceTree = "<group>";
@@ -274,7 +284,9 @@
 			children = (
 				F2269F03819E7816B27885AE /* OverlayPanel.swift */,
 				8E99280973645E0190DB0778 /* OverlayRootView.swift */,
+				CE5A459361D3431B124FD2DD /* OverlayStateViews.swift */,
 				F6130DB801FD7258BCC40A45 /* OverlayWindowController.swift */,
+				9D2934055E5D59F4035580AA /* TranscriptView.swift */,
 			);
 			path = Overlay;
 			sourceTree = "<group>";
@@ -448,6 +460,7 @@
 				9044E40A8AD4D7C679694CD7 /* SSEClient.swift in Sources */,
 				AC2FF2087AF8B0BFEAAFC79D /* TokenStore.swift in Sources */,
 				907F2CF9BBF559276040AA30 /* VoiceActivationToggle.swift in Sources */,
+				6F2D153EF85A82BB284DA2ED /* VoiceSessionViewModel.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -463,6 +476,7 @@
 				B4EC4A41A52C6B778A168663 /* SSEClientTests.swift in Sources */,
 				0BBDF187DBF60EB42C7FB196 /* TokenStoreTests.swift in Sources */,
 				FB04D42AD7DFEB4F4B837437 /* VoiceActivationToggleTests.swift in Sources */,
+				6743E1E8470926FAC0A5DFF1 /* VoiceSessionViewModelTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -479,10 +493,12 @@
 				65BABB06083882BE353F35FD /* OnboardingWindow.swift in Sources */,
 				FE2B900E265F6B90D42C6C23 /* OverlayPanel.swift in Sources */,
 				7D47E1C6C29516623BC7FE59 /* OverlayRootView.swift in Sources */,
+				0DE66B6D2339D64A49B83F8E /* OverlayStateViews.swift in Sources */,
 				5F325F43817B3291F3568858 /* OverlayWindowController.swift in Sources */,
 				4A7557A6F78BEAC4B04B444D /* PermissionChecker.swift in Sources */,
 				4E5E8C8AFBB9F1C4B3F3A1B6 /* SiriNewIcon.swift in Sources */,
 				D906FF264EF1A12CFEF7443D /* StatusIcon.swift in Sources */,
+				128F6A2A541DF3C4DE7F8E45 /* TranscriptView.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
