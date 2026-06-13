@@ -18,7 +18,7 @@ final class AppModel {
     private let logger = Logger(subsystem: "com.bethvour.iris", category: "app")
     @ObservationIgnored
     private lazy var overlay = OverlayController(
-        onDismiss: { [weak self] in self?.hotkey?.sessionStateChanged(isActive: false) },
+        onDismiss: { [weak self] in self?.hotkey?.cancel() },
         rootView: { OverlayRootView() }
     )
 

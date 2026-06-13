@@ -43,6 +43,12 @@ final class HotkeyController {
         toggle.activationFailed()
     }
 
+    /// Explicit dismissal (Esc, programmatic): reset to idle so the next
+    /// press activates again rather than being treated as a deactivate.
+    func cancel() {
+        toggle.cancel()
+    }
+
     private func pressed() {
         switch toggle.press() {
         case .activate:

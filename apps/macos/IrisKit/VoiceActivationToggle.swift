@@ -54,4 +54,11 @@ public final class VoiceActivationToggle {
             phase = .idle
         }
     }
+
+    /// Explicit teardown (Esc, programmatic dismiss): forget any session
+    /// from any phase. Distinct from `update(sessionActive: false)`, which
+    /// is SSE reconciliation and deliberately preserves `.pending`.
+    public func cancel() {
+        phase = .idle
+    }
 }

@@ -49,6 +49,27 @@ final class VoiceActivationToggleTests: XCTestCase {
         XCTAssertEqual(toggle.press(), .activate)
     }
 
+    func testCancelFromPendingReturnsToIdleSoNextPressActivates() {
+        // Esc dismissal after the first press, before any session confirms:
+        // a plain update(false) would leave .pending and make the next press
+        // a deactivate. cancel() must restore .idle.
+        let toggle = VoiceActivationToggle()
+        _ = toggle.press()
+        XCTAssertEqual(toggle.phase, .pending)
+        toggle.cancel()
+        XCTAssertEqual(toggle.phase, .idle)
+        XCTAssertEqual(toggle.press(), .activate)
+    }
+
+    func testCancelFromActiveReturnsToIdle() {
+        let toggle = VoiceActivationToggle()
+        _ = toggle.press()
+        toggle.update(sessionActive: true)
+        toggle.cancel()
+        XCTAssertEqual(toggle.phase, .idle)
+        XCTAssertEqual(toggle.press(), .activate)
+    }
+
     func testFailedStopIsReconciledBySessionTruth() {
         let toggle = VoiceActivationToggle()
         _ = toggle.press()

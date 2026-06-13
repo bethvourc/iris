@@ -17,6 +17,9 @@ final class OverlayController {
     private var escMonitors: [Any] = []
     private let bottomMargin: CGFloat = 140
     private let animationDuration: TimeInterval = 0.18
+    /// Bumped on every show; a hide's fade-out completion only orders the
+    /// panel out if no show has happened since (guards rapid re-toggling).
+    private var showEpoch = 0
 
     private(set) var isVisible = false
 
@@ -30,6 +33,7 @@ final class OverlayController {
         self.panel = panel
         guard !isVisible else { return }
         isVisible = true
+        showEpoch &+= 1
 
         let size = panel.contentView?.fittingSize ?? panel.frame.size
         panel.setContentSize(size)
@@ -61,6 +65,7 @@ final class OverlayController {
         guard isVisible, let panel else { return }
         isVisible = false
         removeEscMonitors()
+        let epoch = showEpoch
 
         guard !reduceMotion else {
             panel.orderOut(nil)
@@ -72,7 +77,10 @@ final class OverlayController {
             context.timingFunction = CAMediaTimingFunction(name: .easeIn)
             panel.animator().alphaValue = 0
             panel.animator().setFrameOrigin(NSPoint(x: origin.x, y: origin.y - 12))
-        } completionHandler: { [weak panel] in
+        } completionHandler: { [weak self, weak panel] in
+            // A show() during the fade bumps showEpoch; skip the stale
+            // orderOut so a quick re-toggle doesn't hide the live overlay.
+            guard let self, showEpoch == epoch else { return }
             panel?.orderOut(nil)
         }
     }
