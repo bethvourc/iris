@@ -29,8 +29,14 @@ struct OverlayContent: View {
             StatusRow(systemActivity: false, label: "In a meeting — listening quietly")
         case let .ended(summary):
             EndedView(summary: summary)
-        case let .error(message, retryable):
-            ErrorView(message: message, retryable: retryable, onRetry: { model.retry() })
+        case let .error(error):
+            OverlayErrorView(
+                error: error,
+                onRestart: { model.onRequestDaemonRestart() },
+                onOpenDiagnostics: { model.onOpenDiagnostics() },
+                onOpenMicrophoneSettings: { model.onOpenMicrophoneSettings() },
+                onRetry: { model.retry() }
+            )
         }
     }
 }
@@ -127,32 +133,6 @@ private struct EndedView: View {
         }
         .accessibilityElement(children: .combine)
         .accessibilityLabel("Session ended")
-    }
-}
-
-private struct ErrorView: View {
-    let message: String
-    let retryable: Bool
-    let onRetry: () -> Void
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(spacing: 12) {
-                Image(systemName: "exclamationmark.circle.fill")
-                    .foregroundStyle(.orange)
-                Text(message)
-                    .font(.system(size: 14))
-                    .lineLimit(3)
-                    .fixedSize(horizontal: false, vertical: true)
-                Spacer(minLength: 0)
-            }
-            if retryable {
-                Button("Try Again", action: onRetry)
-                    .controlSize(.small)
-            }
-        }
-        .accessibilityElement(children: .combine)
-        .accessibilityLabel("Iris error: \(message)")
     }
 }
 

@@ -46,6 +46,7 @@ private struct MenuBarLabel: View {
     var body: some View {
         StatusIcon(state: model.daemonState)
             .task {
+                model.openWindowAction = { openWindow(id: $0) }
                 if model.shouldShowOnboarding {
                     openWindow(id: "onboarding")
                     NSApp.activate(ignoringOtherApps: true)

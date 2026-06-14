@@ -30,6 +30,12 @@ protocol PermissionChecking {
 
 @MainActor
 struct SystemPermissionChecker: PermissionChecking {
+    /// Thread-safe mic check for the voice model's `@Sendable` pre-check
+    /// (`AVCaptureDevice.authorizationStatus` is callable from any actor).
+    nonisolated static func microphoneIsAuthorized() -> Bool {
+        AVCaptureDevice.authorizationStatus(for: .audio) == .authorized
+    }
+
     func microphoneState() -> PermissionState {
         switch AVCaptureDevice.authorizationStatus(for: .audio) {
         case .authorized: .granted

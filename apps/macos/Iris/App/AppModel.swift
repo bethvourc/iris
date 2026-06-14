@@ -15,6 +15,9 @@ final class AppModel {
     let preferences: AppPreferences
     let apiClient: APIClient
     let voiceModel: VoiceSessionViewModel
+    /// Bridge so non-View code (recovery actions) can open SwiftUI windows;
+    /// set once from the menu bar label's view context.
+    @ObservationIgnored var openWindowAction: ((String) -> Void)?
     private var observationTask: Task<Void, Never>?
     private let logger = Logger(subsystem: "com.bethvour.iris", category: "app")
     @ObservationIgnored
@@ -74,8 +77,15 @@ final class AppModel {
         apiClient = APIClient(baseURL: baseURL, token: tokenProvider)
         let eventsURL = baseURL.appending(path: "voice/events")
         let sse = SSEClient(url: eventsURL, token: tokenProvider)
+        // Hermetic UI-test runs assume mic access; real runs check TCC.
+        let micCheck: @Sendable () -> Bool = if Self.isUITestRun {
+            { true }
+        } else {
+            { SystemPermissionChecker.microphoneIsAuthorized() }
+        }
         voiceModel = VoiceSessionViewModel(
             voiceControl: apiClient,
+            micAuthorized: micCheck,
             eventStream: { sse.events() }
         )
     }
@@ -185,19 +195,38 @@ final class AppModel {
         voiceModel.onActivationFailed = { [weak self] in
             self?.hotkey?.activationFailed()
         }
+        voiceModel.onRequestDaemonRestart = { [weak self] in self?.restartDaemon() }
+        voiceModel.onOpenDiagnostics = { [weak self] in self?.openDiagnostics() }
+        voiceModel.onOpenMicrophoneSettings = {
+            SystemPermissionChecker().openSystemSettings(.microphone)
+        }
         Task { await manager.start() }
     }
 
     private func voiceActivationRequested() {
         logger.info("voice activation: starting session")
-        voiceModel.begin()
         overlay.show()
+        // A terminal daemon state can't be fixed by a start attempt; each
+        // maps to its own recovery (crash-loop → diagnostics, port/token →
+        // re-probe). Otherwise begin a real session.
+        if let error = VoiceSessionViewModel.OverlayError.forDaemonState(daemonState) {
+            voiceModel.presentError(error)
+        } else {
+            voiceModel.begin()
+        }
     }
 
     private func voiceDeactivationRequested() {
         logger.info("voice deactivation: ending session")
         voiceModel.end()
         overlay.hide()
+    }
+
+    private func openDiagnostics() {
+        // Real Advanced/diagnostics pane lands in Step 5.5; for now, surface
+        // the main window.
+        openWindowAction?("main")
+        NSApp.activate(ignoringOtherApps: true)
     }
 
     func restartDaemon() {
@@ -274,30 +303,27 @@ final class AppModel {
         var statusLine: String?
     }
 
+    private static let forcedOverlayStates: [String: ForcedOverlay] = [
+        "connecting": ForcedOverlay(state: .connecting),
+        "listening": ForcedOverlay(state: .listening, userText: "What's on my calendar today?"),
+        "thinking": ForcedOverlay(state: .thinking, statusLine: "Checking your calendar…"),
+        "speaking": ForcedOverlay(
+            state: .speaking,
+            userText: "What's on my calendar today?",
+            assistantText: "You have three things: a 10 a.m. design review, "
+                + "lunch with Sam at noon, and a 3 p.m. one-on-one."
+        ),
+        "ended": ForcedOverlay(state: .ended(summary: "Set a reminder for 3 p.m.")),
+        "error-daemon": ForcedOverlay(state: .error(.daemonNotRunning)),
+        "error-crash": ForcedOverlay(state: .error(.daemonFailing)),
+        "error-port": ForcedOverlay(state: .error(.portConflict)),
+        "error-token": ForcedOverlay(state: .error(.tokenMismatch)),
+        "error-mic": ForcedOverlay(state: .error(.microphoneOff)),
+        "error": ForcedOverlay(state: .error(.generic(message: "Couldn't reach OpenAI.")))
+    ]
+
     private static func forcedOverlayState() -> ForcedOverlay? {
         guard let name = argumentValue(after: "--ui-test-overlay-state") else { return nil }
-        switch name {
-        case "connecting":
-            return ForcedOverlay(state: .connecting)
-        case "listening":
-            return ForcedOverlay(state: .listening, userText: "What's on my calendar today?")
-        case "thinking":
-            return ForcedOverlay(state: .thinking, statusLine: "Checking your calendar…")
-        case "speaking":
-            return ForcedOverlay(
-                state: .speaking,
-                userText: "What's on my calendar today?",
-                assistantText: "You have three things: a 10 a.m. design review, "
-                    + "lunch with Sam at noon, and a 3 p.m. one-on-one."
-            )
-        case "ended":
-            return ForcedOverlay(state: .ended(summary: "Set a reminder for 3 p.m."))
-        case "error":
-            return ForcedOverlay(
-                state: .error(message: "Couldn't reach OpenAI.", retryable: true)
-            )
-        default:
-            return nil
-        }
+        return forcedOverlayStates[name]
     }
 }

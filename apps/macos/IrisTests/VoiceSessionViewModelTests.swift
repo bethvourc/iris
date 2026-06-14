@@ -4,49 +4,6 @@ import XCTest
 
 @MainActor
 final class VoiceSessionViewModelTests: XCTestCase {
-    // MARK: - Fakes
-
-    final class FakeVoiceControl: VoiceControlling, @unchecked Sendable {
-        nonisolated(unsafe) var startError: IrisAPIError?
-        nonisolated(unsafe) var starts = 0
-        nonisolated(unsafe) var stops = 0
-        nonisolated(unsafe) var interrupts = 0
-        /// When set, startVoice blocks until `releaseStart()` — simulates an
-        /// in-flight POST so the cancel race can be tested deterministically.
-        nonisolated(unsafe) var blockStart = false
-        private nonisolated(unsafe) var startGate: CheckedContinuation<Void, Never>?
-        private let lock = NSLock()
-
-        func releaseStart() {
-            lock.withLock { startGate }?.resume()
-            lock.withLock { startGate = nil }
-        }
-
-        func startVoice(mode _: String) async throws -> VoiceSessionDescriptor {
-            lock.withLock { starts += 1 }
-            if let startError { throw startError }
-            if blockStart {
-                await withCheckedContinuation { continuation in
-                    lock.withLock { startGate = continuation }
-                }
-            }
-            return try IrisJSON.decoder().decode(
-                VoiceSessionDescriptor.self,
-                from: Data(#"{"id":"v1","mode":"conversation","started_at":"2026-06-13T00:00:00Z"}"#.utf8)
-            )
-        }
-
-        func stopVoice() async throws -> VoiceStopResponse {
-            lock.withLock { stops += 1 }
-            return VoiceStopResponse(ok: true, wasRunning: true)
-        }
-
-        func interruptVoice() async throws -> Bool {
-            lock.withLock { interrupts += 1 }
-            return true
-        }
-    }
-
     /// A stream the test feeds events into via its continuation.
     private func makeStream() -> (
         @Sendable () -> AsyncStream<SSEClientEvent>, AsyncStream<SSEClientEvent>.Continuation
@@ -177,7 +134,7 @@ final class VoiceSessionViewModelTests: XCTestCase {
 
     // MARK: - Errors
 
-    func testTerminalErrorEventShowsRetryableError() async {
+    func testTerminalErrorEventShowsGenericError() async {
         let (factory, continuation) = makeStream()
         let model = makeModel(stream: factory)
         model.begin()
@@ -185,7 +142,7 @@ final class VoiceSessionViewModelTests: XCTestCase {
         continuation.yield(event(
             "error", #"{"code":"realtime","message":"OpenAI is down","terminal":true}"#
         ))
-        await waitUntil { model.displayState == .error(message: "OpenAI is down", retryable: true) }
+        await waitUntil { model.displayState == .error(.generic(message: "OpenAI is down")) }
     }
 
     func testNonTerminalErrorDoesNotChangeState() async {
@@ -203,21 +160,112 @@ final class VoiceSessionViewModelTests: XCTestCase {
         XCTAssertEqual(model.displayState, .listening)
     }
 
-    func testStartFailureSurfacesErrorState() async {
+    func testDaemonUnreachableStartFailureMapsToDaemonNotRunning() async {
         let (factory, _) = makeStream()
         let control = FakeVoiceControl()
         control.startError = .daemonUnreachable(detail: "refused")
         let model = makeModel(control: control, stream: factory)
         model.begin()
 
+        await waitUntil { model.displayState == .error(.daemonNotRunning) }
+    }
+
+    func testGenericStartFailureMapsToGenericError() async {
+        let (factory, _) = makeStream()
+        let control = FakeVoiceControl()
+        control.startError = .server(code: "boom", message: "kaboom", status: 500)
+        let model = makeModel(control: control, stream: factory)
+        model.begin()
+
         await waitUntil {
-            if case .error = model.displayState { return true }
+            if case .error(.generic) = model.displayState { return true }
             return false
         }
-        guard case let .error(_, retryable) = model.displayState else {
-            return XCTFail("expected error state")
+    }
+
+    func testMicrophoneDeniedSkipsStartAndShowsMicError() async {
+        let (factory, _) = makeStream()
+        let control = FakeVoiceControl()
+        let model = VoiceSessionViewModel(
+            voiceControl: control,
+            endedDismissDelay: .milliseconds(40),
+            micAuthorized: { false },
+            eventStream: factory
+        )
+        model.begin()
+
+        XCTAssertEqual(model.displayState, .error(.microphoneOff))
+        // Give any (incorrect) start task a beat — none should have fired.
+        try? await Task.sleep(for: .milliseconds(30))
+        XCTAssertEqual(control.starts, 0)
+    }
+
+    func testReconnectingChipReflectsConnectionState() async {
+        let (factory, continuation) = makeStream()
+        let model = makeModel(stream: factory)
+        model.begin()
+
+        continuation.yield(event("state", #"{"state":"speaking"}"#))
+        await waitUntil { model.displayState == .speaking }
+        XCTAssertEqual(model.connectionState, .live)
+
+        continuation.yield(.disconnected(reason: "dropped"))
+        await waitUntil { model.connectionState == .reconnecting }
+        // The session state is preserved while reconnecting.
+        XCTAssertEqual(model.displayState, .speaking)
+        XCTAssertTrue(model.displayState.isActiveSession)
+
+        continuation.yield(.connected)
+        await waitUntil { model.connectionState == .live }
+    }
+
+    func testOverlayErrorForDaemonStateMapping() {
+        typealias Mapped = VoiceSessionViewModel.OverlayError
+        XCTAssertEqual(Mapped.forDaemonState(.crashLooping(stderrTail: "x")), .daemonFailing)
+        XCTAssertEqual(Mapped.forDaemonState(.portConflict(reason: "x")), .portConflict)
+        XCTAssertEqual(Mapped.forDaemonState(.tokenMismatch), .tokenMismatch)
+        XCTAssertNil(Mapped.forDaemonState(.healthy(adopted: false)))
+        XCTAssertNil(Mapped.forDaemonState(.stopped))
+        XCTAssertNil(Mapped.forDaemonState(.launching))
+    }
+
+    func testPresentErrorCancelsPendingAutoDismiss() async {
+        let (factory, continuation) = makeStream()
+        var dismissed = false
+        // Long dismiss delay so the cancel-before-fire is deterministic.
+        let model = VoiceSessionViewModel(
+            voiceControl: FakeVoiceControl(),
+            endedDismissDelay: .milliseconds(300),
+            eventStream: factory
+        )
+        model.onShouldDismiss = { dismissed = true }
+        model.begin()
+
+        continuation.yield(event("session_ended", #"{"reason":"stopped"}"#))
+        await waitUntil {
+            if case .ended = model.displayState { return true }
+            return false
         }
-        XCTAssertTrue(retryable)
+        // Re-activation revokes-then-errors before the auto-dismiss fires.
+        model.presentError(.microphoneOff)
+        XCTAssertEqual(model.displayState, .error(.microphoneOff))
+
+        // Past the original dismiss delay: it must not have fired.
+        try? await Task.sleep(for: .milliseconds(400))
+        XCTAssertFalse(dismissed)
+        XCTAssertEqual(model.displayState, .error(.microphoneOff))
+    }
+
+    func testPresentErrorResetsToggleAndShowsError() {
+        let (factory, _) = makeStream()
+        var activationFailed = false
+        let model = makeModel(stream: factory)
+        model.onActivationFailed = { activationFailed = true }
+
+        model.presentError(.daemonFailing)
+
+        XCTAssertEqual(model.displayState, .error(.daemonFailing))
+        XCTAssertTrue(activationFailed)
     }
 
     func testStartFailureResetsActivationToggle() async {

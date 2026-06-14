@@ -31,10 +31,51 @@ public final class VoiceSessionViewModel {
         case interrupted
         case meeting
         case ended(summary: String?)
-        case error(message: String, retryable: Bool)
+        case error(OverlayError)
+
+        /// A state where Iris is mid-session (vs. ended/error). The
+        /// reconnecting chip only shows over these.
+        public var isActiveSession: Bool {
+            switch self {
+            case .connecting, .listening, .userSpeaking, .thinking, .speaking, .meeting:
+                true
+            case .interrupted, .ended, .error:
+                false
+            }
+        }
+    }
+
+    /// Each failure maps to exactly one recovery action; the views render
+    /// the label/icon and the app wires the action (docs/desktop §8). Raw
+    /// error codes never reach the panel.
+    public enum OverlayError: Equatable, Sendable {
+        case daemonNotRunning // recover: Restart Iris
+        case daemonFailing // recover: Open Diagnostics (crash loop — terminal)
+        case portConflict // recover: Try Again (re-probe after freeing port)
+        case tokenMismatch // recover: Try Again (re-probe after quitting other Iris)
+        case microphoneOff // recover: Open System Settings
+        case generic(message: String) // recover: Try Again
+
+        /// Maps a terminal daemon state to its overlay error, or nil if the
+        /// state isn't a terminal failure (so a normal start should proceed).
+        public static func forDaemonState(_ state: DaemonState) -> Self? {
+            switch state {
+            case .crashLooping: .daemonFailing
+            case .portConflict: .portConflict
+            case .tokenMismatch: .tokenMismatch
+            default: nil
+            }
+        }
+    }
+
+    /// SSE liveness, rendered as a "reconnecting…" chip over the session.
+    public enum ConnectionDisplay: Equatable, Sendable {
+        case live
+        case reconnecting
     }
 
     public private(set) var displayState: DisplayState = .connecting
+    public private(set) var connectionState: ConnectionDisplay = .live
     public private(set) var userText = ""
     public private(set) var assistantText = ""
     /// Secondary line for tool/agent activity during `thinking`.
@@ -48,9 +89,15 @@ public final class VoiceSessionViewModel {
     /// activation toggle to idle (distinct from `onSessionActiveChanged`,
     /// whose `false` deliberately preserves `.pending`).
     public var onActivationFailed: @MainActor () -> Void = {}
+    /// Recovery actions wired by the app layer (which owns DaemonManager,
+    /// TCC, and windows — the view model stays decoupled from all three).
+    public var onRequestDaemonRestart: @MainActor () -> Void = {}
+    public var onOpenDiagnostics: @MainActor () -> Void = {}
+    public var onOpenMicrophoneSettings: @MainActor () -> Void = {}
 
     private let voiceControl: any VoiceControlling
     private let eventStream: @Sendable () -> AsyncStream<SSEClientEvent>
+    private let micAuthorized: @Sendable () -> Bool
     private let endedDismissDelay: Duration
     private var streamTask: Task<Void, Never>?
     private var dismissTask: Task<Void, Never>?
@@ -63,10 +110,12 @@ public final class VoiceSessionViewModel {
     public init(
         voiceControl: any VoiceControlling,
         endedDismissDelay: Duration = .seconds(2),
+        micAuthorized: @escaping @Sendable () -> Bool = { true },
         eventStream: @escaping @Sendable () -> AsyncStream<SSEClientEvent>
     ) {
         self.voiceControl = voiceControl
         self.endedDismissDelay = endedDismissDelay
+        self.micAuthorized = micAuthorized
         self.eventStream = eventStream
     }
 
@@ -75,10 +124,17 @@ public final class VoiceSessionViewModel {
     /// Begin a session: open the event stream, then request a start. Stream
     /// first so the snapshot and early events are never missed.
     public func begin() {
+        // Mic is granted to the app bundle; without it the daemon's capture
+        // would fail — surface it up front instead of after a failed start.
+        guard micAuthorized() else {
+            presentError(.microphoneOff)
+            return
+        }
         dismissTask?.cancel()
         dismissTask = nil
         resetTurn()
         wantsSession = true
+        connectionState = .live
         displayState = .connecting
         if streamTask == nil {
             streamTask = Task { [weak self] in await self?.consume() }
@@ -93,10 +149,23 @@ public final class VoiceSessionViewModel {
         streamTask = nil
         dismissTask?.cancel()
         dismissTask = nil
+        connectionState = .live
         setSessionActive(false)
         // Idempotent: also covers a start still in flight — that start's
         // completion will issue its own stop once it knows it's unwanted.
         Task { [voiceControl] in _ = try? await voiceControl.stopVoice() }
+    }
+
+    /// Present a failure directly (app-layer pre-checks: terminal daemon
+    /// state, etc.). Resets the activation toggle so the next press retries.
+    public func presentError(_ error: OverlayError) {
+        // Cancel any pending .ended auto-dismiss; otherwise a stale dismiss
+        // from a just-ended session would hide this recovery UI.
+        dismissTask?.cancel()
+        dismissTask = nil
+        displayState = .error(error)
+        setSessionActive(false)
+        onActivationFailed()
     }
 
     /// Barge-in without speech (tap-to-interrupt). Voice barge-in is handled
@@ -143,11 +212,13 @@ public final class VoiceSessionViewModel {
     }
 
     private func presentStartError(_ error: Error) {
-        let message = (error as? IrisAPIError)?.errorDescription
-            ?? "Couldn't start Iris."
-        displayState = .error(message: message, retryable: true)
-        setSessionActive(false)
-        onActivationFailed() // reset the toggle from .pending to .idle
+        if case IrisAPIError.daemonUnreachable = error {
+            presentError(.daemonNotRunning) // "Iris isn't running" + Restart
+        } else if let apiError = error as? IrisAPIError {
+            presentError(.generic(message: apiError.errorDescription ?? "Couldn't start Iris."))
+        } else {
+            presentError(.generic(message: "Couldn't start Iris."))
+        }
     }
 
     // MARK: - Event consumption
@@ -158,8 +229,13 @@ public final class VoiceSessionViewModel {
             switch clientEvent {
             case let .event(event):
                 handle(event)
-            case .connected, .disconnected, .heartbeat:
-                break // Step 4.4 renders reconnecting/staleness.
+            case .connected:
+                // Reconnected; the snapshot frame re-syncs displayState.
+                connectionState = .live
+            case .disconnected:
+                connectionState = .reconnecting
+            case .heartbeat:
+                break
             }
         }
     }
@@ -244,7 +320,7 @@ public final class VoiceSessionViewModel {
     private func applyError(_ event: SSEEvent) {
         guard let payload = try? event.decode(ErrorPayload.self), payload.terminal
         else { return }
-        displayState = .error(message: payload.message, retryable: true)
+        displayState = .error(.generic(message: payload.message))
         setSessionActive(false)
     }
 

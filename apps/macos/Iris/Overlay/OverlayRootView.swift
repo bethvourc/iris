@@ -17,7 +17,15 @@ struct OverlayRootView: View {
                 RoundedRectangle(cornerRadius: 18)
                     .strokeBorder(.separator, lineWidth: 1)
             )
+            .overlay(alignment: .topTrailing) {
+                if model.connectionState == .reconnecting, model.displayState.isActiveSession {
+                    ReconnectingChip()
+                        .padding(8)
+                        .transition(.opacity)
+                }
+            }
             .animation(.easeOut(duration: 0.15), value: model.displayState)
+            .animation(.easeOut(duration: 0.15), value: model.connectionState)
             .accessibilityIdentifier("overlay-panel")
     }
 }
