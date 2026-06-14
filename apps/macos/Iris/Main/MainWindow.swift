@@ -10,17 +10,23 @@ import SwiftUI
 struct MainWindowView: View {
     /// Held for the section view models wired up in Steps 5.3–5.5.
     let model: AppModel
-    @State private var selection: MainSection = .home
+    @State private var selection: MainSection
     /// Pin the sidebar open: this is a persistent two-pane console, not a
     /// collapsible inspector, so the rail should never auto-hide.
     @State private var columnVisibility = NavigationSplitViewVisibility.all
     /// Created once so navigating away and back doesn't drop loaded Home data.
     @State private var home: HomeViewModel
+    /// Likewise persisted so list scroll position and selection survive section
+    /// switches.
+    @State private var activity: ActivityViewModel
 
     @MainActor
     init(model: AppModel) {
         self.model = model
         _home = State(initialValue: model.makeHomeModel())
+        _activity = State(initialValue: model.makeActivityModel())
+        // `--ui-test-section <name>` opens straight to a section for screenshots.
+        _selection = State(initialValue: MainSection.launchSection ?? .home)
     }
 
     var body: some View {
@@ -44,6 +50,8 @@ struct MainWindowView: View {
         switch section {
         case .home:
             HomeView(model: home) { selection = .activity }
+        case .activity:
+            ActivityView(model: activity)
         default:
             SectionPlaceholder(section: section)
         }

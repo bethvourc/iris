@@ -139,6 +139,23 @@ final class AppModel {
         return HomeViewModel(client: apiClient)
     }
 
+    /// Build the Activity section's view model. `--ui-test-activity <scenario>`
+    /// (loading/empty/populated/error) swaps in a scripted service so the list,
+    /// pagination, and a populated detail are screenshottable without a daemon.
+    func makeActivityModel() -> ActivityViewModel {
+        guard let scenario = Self.argumentValue(after: "--ui-test-activity") else {
+            return ActivityViewModel(client: apiClient)
+        }
+        let model = ActivityViewModel(client: ScriptedActivityService(scenario: scenario))
+        // The detail pane is a collapsible inspector that's closed by default;
+        // the "detail" scenario preselects an item so the open pane is
+        // screenshottable.
+        if scenario == "detail" {
+            model.selection = "1"
+        }
+        return model
+    }
+
     private static func argumentValue(after flag: String) -> String? {
         let arguments = ProcessInfo.processInfo.arguments
         guard let index = arguments.firstIndex(of: flag),

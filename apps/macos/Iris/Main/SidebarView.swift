@@ -38,6 +38,15 @@ enum MainSection: String, CaseIterable, Identifiable, Hashable {
         case .settings: "Voice, account, and advanced preferences."
         }
     }
+
+    /// `--ui-test-section <name>` selects the section the main window opens to,
+    /// so screenshots can land directly on Activity/Approvals/Settings.
+    static var launchSection: MainSection? {
+        let arguments = ProcessInfo.processInfo.arguments
+        guard let index = arguments.firstIndex(of: "--ui-test-section"),
+              arguments.indices.contains(index + 1) else { return nil }
+        return MainSection(rawValue: arguments[index + 1])
+    }
 }
 
 /// The persistent left rail. Selection drives the detail column. Daemon health
