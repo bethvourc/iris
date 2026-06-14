@@ -1,6 +1,20 @@
 import IrisKit
 import SwiftUI
 
+/// Shared metrics that keep the two columns visually locked together.
+enum ActivityMetrics {
+    /// Height of the top band in both columns (the list's day header and the
+    /// detail's toolbar), so their hairline dividers land on the same line.
+    static let headerHeight: CGFloat = 38
+    /// The collapsible inspector's open/close slide duration — quick but still
+    /// readable as a slide.
+    static let slideDuration: Double = 0.28
+    /// The List sits ~8.5pt below the detail's plain VStack (it respects a
+    /// title-bar content inset the VStack doesn't), so the detail column gets
+    /// this matching top inset to line the two header dividers up.
+    static let columnTopInset: CGFloat = 8.5
+}
+
 /// The Activity section: a day-grouped master list on the left and a detail
 /// pane on the right, both driven by one `ActivityViewModel`. This is the "see
 /// everything Iris did" surface, so it leans on the same restrained tokens as
@@ -8,6 +22,9 @@ import SwiftUI
 struct ActivityView: View {
     @State private var model: ActivityViewModel
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    /// Gates the detail's contents so they fade in only after the drawer has
+    /// finished sliding — otherwise the text rides in mid-animation.
+    @State private var detailRevealed = false
 
     init(model: ActivityViewModel) {
         _model = State(initialValue: model)
@@ -17,21 +34,46 @@ struct ActivityView: View {
     /// until an item is selected, then the detail slides in alongside it.
     private var isDetailShown: Bool { model.selection != nil }
 
+    private var revealAnimation: Animation {
+        .easeInOut(duration: ActivityMetrics.slideDuration)
+    }
+
     var body: some View {
         HStack(spacing: 0) {
             ActivityListView(model: model)
                 .frame(maxWidth: isDetailShown ? 360 : .infinity)
             if isDetailShown {
                 Divider().overlay(DesignSystem.Colors.border)
-                ActivityDetailView(model: model)
+                ActivityDetailView(model: model, reveal: detailRevealed)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .transition(.move(edge: .trailing).combined(with: .opacity))
+                    .transition(.move(edge: .trailing))
             }
         }
-        .animation(reduceMotion ? nil : .easeInOut(duration: 0.2), value: isDetailShown)
+        .animation(reduceMotion ? nil : revealAnimation, value: isDetailShown)
         .background(DesignSystem.Colors.canvas)
+        .clipped()
         .accessibilityIdentifier("section-activity")
         .task { await model.load() }
+        // An item already selected at first appearance (e.g. screenshots) has
+        // no slide to wait on, so reveal immediately.
+        .onAppear { detailRevealed = isDetailShown }
+        .onChange(of: isDetailShown) { _, shown in
+            guard shown else {
+                detailRevealed = false
+                return
+            }
+            if reduceMotion {
+                detailRevealed = true
+                return
+            }
+            detailRevealed = false
+            Task {
+                try? await Task.sleep(for: .seconds(ActivityMetrics.slideDuration))
+                // Only reveal if the pane is still open (user didn't close it
+                // mid-slide).
+                if isDetailShown { detailRevealed = true }
+            }
+        }
     }
 }
 
@@ -72,19 +114,38 @@ struct ActivityListView: View {
                         ActivityRow(item: item)
                             .tag(item.id)
                             .listRowSeparator(.hidden)
+                            .listRowInsets(Self.rowInsets)
                     }
                 } header: {
-                    SectionLabel(dayTitle(day))
-                        .padding(.top, DesignSystem.Spacing.xs)
+                    dayHeader(dayTitle(day))
                 }
             }
 
             ActivityListFooter(model: model)
                 .listRowSeparator(.hidden)
         }
-        .listStyle(.inset)
+        .listStyle(.plain)
         .scrollContentBackground(.hidden)
         .environment(\.defaultMinListRowHeight, 1)
+        // Hide the List's automatic section separator so the only hairline is
+        // the one the day header draws itself (otherwise we get a double line).
+        .listSectionSeparator(.hidden)
+    }
+
+    /// A day section header rendered as a fixed-height band with its own bottom
+    /// divider, so its leading edge lines up with the rows and its divider lines
+    /// up with the detail pane's toolbar divider.
+    private func dayHeader(_ title: String) -> some View {
+        VStack(spacing: 0) {
+            SectionLabel(title)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, DesignSystem.Spacing.lg)
+                .frame(height: ActivityMetrics.headerHeight)
+            Divider().overlay(DesignSystem.Colors.border)
+        }
+        .background(DesignSystem.Colors.surfaceSecondary)
+        .listRowInsets(EdgeInsets())
+        .listRowSeparator(.hidden)
     }
 
     /// Prefer the server's friendly label ("Today"), falling back to the date.
@@ -92,6 +153,13 @@ struct ActivityListView: View {
         if let label = day.label, !label.isEmpty { return label }
         return day.date
     }
+
+    /// Shared insets so every row shares one consistent leading and trailing
+    /// margin — and the day-header label (padded to `lg`) lines up with them.
+    static let rowInsets = EdgeInsets(
+        top: DesignSystem.Spacing.sm, leading: DesignSystem.Spacing.lg,
+        bottom: DesignSystem.Spacing.sm, trailing: DesignSystem.Spacing.md
+    )
 }
 
 // MARK: - Row
@@ -104,7 +172,7 @@ private struct ActivityRow: View {
             Image(systemName: item.kind.symbol)
                 .font(.system(size: 13))
                 .foregroundStyle(DesignSystem.Colors.textSecondary)
-                .frame(width: 18)
+                .frame(width: 20, alignment: .center)
 
             VStack(alignment: .leading, spacing: 2) {
                 Text(item.title)
@@ -121,12 +189,14 @@ private struct ActivityRow: View {
 
             Spacer(minLength: DesignSystem.Spacing.sm)
 
+            // Fixed-width, right-aligned time keeps the trailing status dots in
+            // a single straight column regardless of "9:45 AM" vs "12:00 AM".
             Text(item.time.formatted(date: .omitted, time: .shortened))
                 .font(DesignSystem.Typography.data)
                 .foregroundStyle(DesignSystem.Colors.textTertiary)
+                .frame(width: 62, alignment: .trailing)
             StatusDot(kind: item.status.dotKind, diameter: 7)
         }
-        .padding(.vertical, DesignSystem.Spacing.xs)
         .contentShape(Rectangle())
         .accessibilityElement(children: .combine)
         .accessibilityLabel("\(item.title), \(item.status.rawValue)")

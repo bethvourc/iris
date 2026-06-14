@@ -8,6 +8,9 @@ import SwiftUI
 /// summary and linked run id.
 struct ActivityDetailView: View {
     @Bindable var model: ActivityViewModel
+    /// When false, the body content is held hidden — used so the contents fade
+    /// in only after the drawer finishes sliding open.
+    var reveal = true
 
     var body: some View {
         VStack(spacing: 0) {
@@ -15,7 +18,12 @@ struct ActivityDetailView: View {
             Divider().overlay(DesignSystem.Colors.border)
             content
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .opacity(reveal ? 1 : 0)
+                .animation(.easeIn(duration: 0.3), value: reveal)
         }
+        // Match the List's title-bar inset so the toolbar divider lines up with
+        // the list's first day-header divider.
+        .padding(.top, ActivityMetrics.columnTopInset)
         .background(DesignSystem.Colors.canvas)
     }
 
@@ -37,7 +45,7 @@ struct ActivityDetailView: View {
             .accessibilityLabel("Close details")
         }
         .padding(.horizontal, DesignSystem.Spacing.lg)
-        .frame(height: 38)
+        .frame(height: ActivityMetrics.headerHeight)
     }
 
     @ViewBuilder
