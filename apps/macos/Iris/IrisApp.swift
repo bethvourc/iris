@@ -27,8 +27,9 @@ struct IrisApp: App {
         }
 
         Window("Iris", id: "main") {
-            MainWindowPlaceholder()
+            MainWindowView(model: model)
         }
+        .defaultSize(width: 960, height: 640)
 
         Window("Welcome to Iris", id: "onboarding") {
             OnboardingView(model: model.makeOnboardingModel())

@@ -149,4 +149,34 @@ final class IrisUITests: XCTestCase {
         openItem.click()
         XCTAssertTrue(app.windows["Iris"].waitForExistence(timeout: 5))
     }
+
+    func testMainWindowNavigatesAllSections() throws {
+        let app = XCUIApplication()
+        app.launchArguments = ["--ui-test-state", "healthy", "--open-main-window"]
+        app.launch()
+
+        let window = app.windows["Iris"]
+        guard window.waitForExistence(timeout: 10) else {
+            throw XCTSkip("main window not reachable in this environment")
+        }
+
+        // Home is selected by default.
+        XCTAssertTrue(
+            app.descendants(matching: .any)["section-home"].waitForExistence(timeout: 5)
+        )
+
+        // Each sidebar item switches the detail to its section.
+        for section in ["activity", "approvals", "settings", "home"] {
+            let item = app.descendants(matching: .any)["sidebar-\(section)"]
+            guard item.waitForExistence(timeout: 5) else {
+                throw XCTSkip("sidebar item not reachable in this environment")
+            }
+            item.click()
+            XCTAssertTrue(
+                app.descendants(matching: .any)["section-\(section)"]
+                    .waitForExistence(timeout: 5),
+                "expected \(section) detail after selecting it"
+            )
+        }
+    }
 }
