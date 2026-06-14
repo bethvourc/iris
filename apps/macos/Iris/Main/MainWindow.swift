@@ -8,18 +8,26 @@ import SwiftUI
 /// and closes back to the menu bar — it never quits the app (handled by the
 /// menu-bar-only `IrisApp` scene).
 struct MainWindowView: View {
-    /// Held for the section view models wired up in Steps 5.2–5.5.
+    /// Held for the section view models wired up in Steps 5.3–5.5.
     let model: AppModel
     @State private var selection: MainSection = .home
     /// Pin the sidebar open: this is a persistent two-pane console, not a
     /// collapsible inspector, so the rail should never auto-hide.
     @State private var columnVisibility = NavigationSplitViewVisibility.all
+    /// Created once so navigating away and back doesn't drop loaded Home data.
+    @State private var home: HomeViewModel
+
+    @MainActor
+    init(model: AppModel) {
+        self.model = model
+        _home = State(initialValue: model.makeHomeModel())
+    }
 
     var body: some View {
         NavigationSplitView(columnVisibility: $columnVisibility) {
             SidebarView(selection: $selection)
         } detail: {
-            SectionPlaceholder(section: selection)
+            detail(for: selection)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .background(DesignSystem.Colors.canvas)
         }
@@ -29,6 +37,16 @@ struct MainWindowView: View {
         .navigationTitle(selection.title)
         .frame(minWidth: 720, minHeight: 480)
         .tint(DesignSystem.Colors.accent)
+    }
+
+    @ViewBuilder
+    private func detail(for section: MainSection) -> some View {
+        switch section {
+        case .home:
+            HomeView(model: home) { selection = .activity }
+        default:
+            SectionPlaceholder(section: section)
+        }
     }
 }
 

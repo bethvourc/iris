@@ -126,6 +126,19 @@ final class AppModel {
         )
     }
 
+    /// Build the Home screen's view model. `--ui-test-home <scenario>`
+    /// (loading/empty/populated/error) swaps in a scripted fetcher so each
+    /// state is screenshottable without a daemon.
+    func makeHomeModel() -> HomeViewModel {
+        if let scenario = Self.argumentValue(after: "--ui-test-home") {
+            return HomeViewModel(
+                client: ScriptedActivityFetcher(scenario: scenario),
+                greetingName: "Bethvour"
+            )
+        }
+        return HomeViewModel(client: apiClient)
+    }
+
     private static func argumentValue(after flag: String) -> String? {
         let arguments = ProcessInfo.processInfo.arguments
         guard let index = arguments.firstIndex(of: flag),
