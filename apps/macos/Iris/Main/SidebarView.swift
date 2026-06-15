@@ -61,12 +61,12 @@ struct SidebarRail: View {
             VStack(spacing: 2) {
                 ForEach(MainSection.primary) { item($0) }
             }
-            .padding(.top, DesignSystem.Spacing.xl)
+            .padding(.top, DesignSystem.Spacing.lg)
             Spacer(minLength: DesignSystem.Spacing.sm)
             item(.settings)
         }
         .padding(.horizontal, DesignSystem.Spacing.sm)
-        .padding(.top, 58)
+        .padding(.top, DesignSystem.Spacing.md)
         .padding(.bottom, DesignSystem.Spacing.md)
         .frame(width: expanded ? Self.expandedWidth : Self.collapsedWidth)
         .frame(maxHeight: .infinity)
@@ -77,16 +77,17 @@ struct SidebarRail: View {
     private var header: some View {
         HStack(spacing: DesignSystem.Spacing.sm) {
             SiriNewMark()
-                .frame(width: 22, height: 22)
+                .frame(width: 20, height: 20)
             if expanded {
                 Text("Iris")
-                    .font(.system(size: 25, weight: .semibold))
+                    .font(.system(size: 19, weight: .semibold))
                     .foregroundStyle(DesignSystem.Colors.textPrimary)
+                Spacer(minLength: 0)
             }
         }
-        .frame(height: 38)
-        .frame(maxWidth: expanded ? .infinity : 40, alignment: .center)
-        .padding(.bottom, DesignSystem.Spacing.xl)
+        .frame(height: 28)
+        .frame(maxWidth: expanded ? .infinity : 40, alignment: expanded ? .leading : .center)
+        .padding(.leading, expanded ? DesignSystem.Spacing.xs : 0)
     }
 
     private func item(_ section: MainSection) -> some View {

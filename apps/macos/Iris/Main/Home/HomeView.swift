@@ -45,6 +45,7 @@ struct HomeView: View {
             .frame(minHeight: 280)
         case let .loaded(stats, recent):
             StatsRow(stats: stats)
+            Divider().overlay(DesignSystem.Colors.border)
             RecentActivitySection(items: recent, onSeeAll: onSeeAll)
         case let .failed(message):
             HomeErrorView(message: message) {
@@ -70,14 +71,12 @@ private struct RecentActivitySection: View {
                     .font(DesignSystem.Typography.callout)
             }
 
-            Card(padding: 0) {
-                VStack(spacing: 0) {
-                    ForEach(Array(items.enumerated()), id: \.element.id) { index, item in
-                        if index > 0 {
-                            Divider().overlay(DesignSystem.Colors.border)
-                        }
-                        ActivityPreviewRow(item: item)
+            VStack(spacing: 0) {
+                ForEach(Array(items.enumerated()), id: \.element.id) { index, item in
+                    if index > 0 {
+                        Divider().overlay(DesignSystem.Colors.border)
                     }
+                    ActivityPreviewRow(item: item)
                 }
             }
         }
@@ -114,7 +113,6 @@ private struct ActivityPreviewRow: View {
                 .foregroundStyle(DesignSystem.Colors.textTertiary)
             StatusDot(kind: item.status.dotKind, diameter: 7)
         }
-        .padding(.horizontal, DesignSystem.Spacing.md)
         .padding(.vertical, DesignSystem.Spacing.md)
         .contentShape(Rectangle())
         .accessibilityElement(children: .combine)

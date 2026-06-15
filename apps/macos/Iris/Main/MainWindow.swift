@@ -33,26 +33,33 @@ struct MainWindowView: View {
     }
 
     var body: some View {
-        ZStack(alignment: .topLeading) {
-            HStack(spacing: 0) {
-                SidebarRail(
-                    selection: $selection,
-                    expanded: $sidebarExpanded,
-                    approvalCount: model.pendingApprovalCount
-                )
-                Divider().overlay(DesignSystem.Colors.border)
-                detail(for: selection)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .background(DesignSystem.Colors.canvas)
-            }
-
-            SidebarToggleButton(expanded: sidebarExpanded) {
-                sidebarExpanded.toggle()
-            }
-            .offset(x: sidebarExpanded ? 91 : 14, y: 12)
+        HStack(spacing: 0) {
+            SidebarRail(
+                selection: $selection,
+                expanded: $sidebarExpanded,
+                approvalCount: model.pendingApprovalCount
+            )
+            Divider().overlay(DesignSystem.Colors.border)
+            detail(for: selection)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .background(DesignSystem.Colors.canvas)
         }
         .frame(minWidth: 720, minHeight: 480)
         .tint(DesignSystem.Colors.accent)
+        // The sidebar toggle is a native titlebar control (next to the traffic
+        // lights, like Finder/Mail/Linear): correctly positioned, responsive,
+        // and a hover highlight with no persistent chrome.
+        .toolbar {
+            ToolbarItem(placement: .navigation) {
+                Button {
+                    sidebarExpanded.toggle()
+                } label: {
+                    Image(systemName: "sidebar.left")
+                }
+                .help(sidebarExpanded ? "Collapse sidebar" : "Expand sidebar")
+                .accessibilityLabel(sidebarExpanded ? "Collapse sidebar" : "Expand sidebar")
+            }
+        }
         // Drop the titlebar hairline and the redundant window title (the brand
         // lives in the sidebar) so the rail and content read as one surface.
         .background(WindowConfigurator {
@@ -73,25 +80,6 @@ struct MainWindowView: View {
         case .settings:
             SettingsView(model: model)
         }
-    }
-}
-
-/// Borderless sidebar toggle positioned over the rail, outside row layout.
-private struct SidebarToggleButton: View {
-    let expanded: Bool
-    let action: () -> Void
-
-    var body: some View {
-        Button(action: action) {
-            Image(systemName: "sidebar.left")
-                .font(.system(size: 16, weight: .medium))
-                .foregroundStyle(DesignSystem.Colors.textSecondary)
-                .frame(width: 28, height: 28)
-                .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .help(expanded ? "Collapse sidebar" : "Expand sidebar")
-        .accessibilityLabel(expanded ? "Collapse sidebar" : "Expand sidebar")
     }
 }
 

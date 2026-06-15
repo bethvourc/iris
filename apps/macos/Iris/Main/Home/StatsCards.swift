@@ -1,55 +1,56 @@
 import IrisKit
 import SwiftUI
 
-/// The Home stats strip: four at-a-glance numbers from `ActivityStats`. Values
-/// use the tabular data font so digits stay aligned and don't jitter as they
-/// update.
+/// The Home stats strip: four at-a-glance numbers from `ActivityStats`,
+/// presented as a clean, borderless row (value over a quiet label) divided by
+/// hairlines — no boxed "dashboard" cards. Values use tabular digits so they
+/// don't jitter as they update.
 struct StatsRow: View {
     let stats: ActivityStats
 
     var body: some View {
-        HStack(spacing: DesignSystem.Spacing.md) {
-            StatCard(title: "Sessions this week", value: "\(stats.sessionsThisWeek)")
-            StatCard(title: "Runs completed", value: "\(stats.runsCompleted)")
-            StatCard(
-                title: "Runs failed",
-                value: "\(stats.runsFailed)",
-                valueColor: stats.runsFailed > 0 ? DesignSystem.Colors.rust : nil
+        HStack(alignment: .center, spacing: 0) {
+            stat("\(stats.sessionsThisWeek)", "Sessions this week")
+            divider
+            stat("\(stats.runsCompleted)", "Runs completed")
+            divider
+            stat(
+                "\(stats.runsFailed)", "Runs failed",
+                color: stats.runsFailed > 0 ? DesignSystem.Colors.rust : nil
             )
-            StatCard(title: "Last active", value: Self.lastActive(stats.lastActiveAt))
+            divider
+            stat(Self.lastActive(stats.lastActiveAt), "Last active")
         }
         .accessibilityElement(children: .contain)
+    }
+
+    private func stat(_ value: String, _ label: String, color: Color? = nil) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(value)
+                .font(.system(size: 22, weight: .semibold).monospacedDigit())
+                .foregroundStyle(color ?? DesignSystem.Colors.textPrimary)
+                .lineLimit(1)
+                .minimumScaleFactor(0.6)
+            Text(label)
+                .font(DesignSystem.Typography.caption)
+                .foregroundStyle(DesignSystem.Colors.textSecondary)
+                .lineLimit(1)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("\(label): \(value)")
+    }
+
+    private var divider: some View {
+        Rectangle()
+            .fill(DesignSystem.Colors.border)
+            .frame(width: DesignSystem.hairline, height: 30)
+            .padding(.horizontal, DesignSystem.Spacing.lg)
     }
 
     /// Relative phrasing ("2 hours ago"), or an em dash when never active.
     static func lastActive(_ date: Date?) -> String {
         guard let date else { return "—" }
         return date.formatted(.relative(presentation: .named))
-    }
-}
-
-/// One stat: a large value over a quiet caption, in a hairline-bordered card.
-struct StatCard: View {
-    let title: String
-    let value: String
-    var valueColor: Color?
-
-    var body: some View {
-        Card(padding: DesignSystem.Spacing.md) {
-            VStack(alignment: .leading, spacing: DesignSystem.Spacing.xs) {
-                Text(value)
-                    .font(DesignSystem.Typography.dataLarge)
-                    .foregroundStyle(valueColor ?? DesignSystem.Colors.textPrimary)
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.6)
-                Text(title)
-                    .font(DesignSystem.Typography.caption)
-                    .foregroundStyle(DesignSystem.Colors.textSecondary)
-                    .lineLimit(1)
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-        }
-        .accessibilityElement(children: .combine)
-        .accessibilityLabel("\(title): \(value)")
     }
 }
