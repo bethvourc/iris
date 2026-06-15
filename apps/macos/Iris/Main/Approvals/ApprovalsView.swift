@@ -42,8 +42,7 @@ struct ApprovalsView: View {
                 EmptyStateView(
                     title: "You're all caught up",
                     message: "Nothing needs your approval right now. Actions Iris "
-                        + "wants to take will appear here first.",
-                    systemImage: "checkmark.shield"
+                        + "wants to take will appear here first."
                 )
                 .frame(minHeight: 300)
             } else {
@@ -117,7 +116,7 @@ private struct PendingApprovalCard: View {
                         .font(DesignSystem.Typography.heading)
                         .foregroundStyle(DesignSystem.Colors.textPrimary)
                     Spacer()
-                    RiskPill(risk: approval.risk)
+                    RiskLabel(risk: approval.risk)
                 }
 
                 if !approval.preview.isEmpty, approval.preview != approval.actionName {
@@ -142,26 +141,24 @@ private struct PendingApprovalCard: View {
     }
 
     private var metaRow: some View {
-        HStack(spacing: DesignSystem.Spacing.sm) {
+        HStack(spacing: DesignSystem.Spacing.xs) {
             if let run = approval.runId, !run.isEmpty {
-                Label("Run \(run)", systemImage: "bolt")
-                    .labelStyle(.titleAndIcon)
+                Text("Run \(run)")
             }
             if let age = age {
-                if approval.runId != nil { Text("·").foregroundStyle(DesignSystem.Colors.textTertiary) }
+                if approval.runId != nil { Text("·") }
                 Text(age)
             }
         }
-        .font(DesignSystem.Typography.data)
+        .font(DesignSystem.Typography.caption)
         .foregroundStyle(DesignSystem.Colors.textTertiary)
     }
 
-    /// Equal-weight Approve/Deny. Neither uses the prominent (filled) style, so
-    /// the layout never pushes the user toward granting.
+    /// Equal-weight Approve/Deny. Neither is the prominent (filled) style and
+    /// neither is tinted, so the layout never pushes the user toward granting.
     private var actionRow: some View {
         HStack(spacing: DesignSystem.Spacing.sm) {
             Button("Deny", action: onDeny)
-                .tint(DesignSystem.Colors.rust)
             Button("Approve", action: onApprove)
             if isDeciding {
                 ProgressView().controlSize(.small)
@@ -170,29 +167,27 @@ private struct PendingApprovalCard: View {
             Spacer()
         }
         .buttonStyle(.bordered)
-        .controlSize(.large)
         .disabled(isDeciding)
     }
 
     /// The destructive confirm step. Deny stays available; approving is the
-    /// step that gets the extra friction.
+    /// step that gets the extra friction. The native destructive role supplies
+    /// the only color here.
     private var confirmRow: some View {
         VStack(alignment: .leading, spacing: DesignSystem.Spacing.sm) {
-            Label("This is a high-risk action.", systemImage: "exclamationmark.triangle")
+            Text("This action is high-risk and can't be undone. Approve anyway?")
                 .font(DesignSystem.Typography.callout)
-                .foregroundStyle(DesignSystem.Colors.rust)
+                .foregroundStyle(DesignSystem.Colors.textSecondary)
+                .fixedSize(horizontal: false, vertical: true)
             HStack(spacing: DesignSystem.Spacing.sm) {
                 Button("Cancel", action: onCancelConfirm)
-                    .buttonStyle(.bordered)
-                Button("Approve anyway", action: onConfirm)
-                    .buttonStyle(.borderedProminent)
-                    .tint(DesignSystem.Colors.rust)
+                Button("Approve anyway", role: .destructive, action: onConfirm)
                 if isDeciding {
                     ProgressView().controlSize(.small)
                 }
                 Spacer()
             }
-            .controlSize(.large)
+            .buttonStyle(.bordered)
             .disabled(isDeciding)
         }
     }
@@ -203,22 +198,22 @@ private struct PendingApprovalCard: View {
     }
 }
 
-// MARK: - Risk pill
+// MARK: - Risk label
 
-private struct RiskPill: View {
+/// Risk shown as a plain uppercase label — no colored capsule. Color is spent
+/// only on genuinely high-risk actions; everything else stays muted.
+private struct RiskLabel: View {
     let risk: String
 
     var body: some View {
         Text(label)
             .font(DesignSystem.Typography.sectionLabel)
             .tracking(0.5)
-            .foregroundStyle(tint)
-            .padding(.vertical, 2)
-            .padding(.horizontal, DesignSystem.Spacing.sm)
-            .background(tint.opacity(0.14))
-            .clipShape(Capsule())
+            .foregroundStyle(isHighRisk ? DesignSystem.Colors.rust : DesignSystem.Colors.textTertiary)
             .accessibilityLabel("Risk: \(label)")
     }
+
+    private var isHighRisk: Bool { risk.lowercased() == "blocked" }
 
     private var label: String {
         switch risk.lowercased() {
@@ -226,14 +221,6 @@ private struct RiskPill: View {
         case "sensitive": "SENSITIVE"
         case "blocked": "HIGH RISK"
         default: risk.uppercased()
-        }
-    }
-
-    private var tint: Color {
-        switch risk.lowercased() {
-        case "blocked": DesignSystem.Colors.rust
-        case "sensitive": DesignSystem.Colors.amber
-        default: DesignSystem.Colors.textTertiary
         }
     }
 }
@@ -257,21 +244,15 @@ private struct HistoryRow: View {
                 }
             }
             Spacer(minLength: DesignSystem.Spacing.sm)
-            decisionBadge
+            Text(decisionText.uppercased())
+                .font(DesignSystem.Typography.sectionLabel)
+                .tracking(0.5)
+                .foregroundStyle(DesignSystem.Colors.textTertiary)
         }
         .padding(.horizontal, DesignSystem.Spacing.md)
         .padding(.vertical, DesignSystem.Spacing.md)
         .accessibilityElement(children: .combine)
         .accessibilityLabel("\(resolved.approval.actionName), \(decisionText)")
-    }
-
-    private var decisionBadge: some View {
-        HStack(spacing: DesignSystem.Spacing.xs) {
-            StatusDot(kind: resolved.decision == .approve ? .good : .bad, diameter: 7)
-            Text(decisionText)
-                .font(DesignSystem.Typography.caption)
-                .foregroundStyle(DesignSystem.Colors.textSecondary)
-        }
     }
 
     private var decisionText: String {
@@ -287,19 +268,13 @@ private struct ActionErrorBanner: View {
 
     var body: some View {
         HStack(spacing: DesignSystem.Spacing.sm) {
-            Image(systemName: "exclamationmark.triangle")
-                .foregroundStyle(DesignSystem.Colors.amber)
             Text(message)
                 .font(DesignSystem.Typography.body)
                 .foregroundStyle(DesignSystem.Colors.textPrimary)
             Spacer()
-            Button {
-                onDismiss()
-            } label: {
-                Image(systemName: "xmark").font(.system(size: 11, weight: .medium))
-            }
-            .buttonStyle(.borderless)
-            .accessibilityLabel("Dismiss")
+            Button("Dismiss", action: onDismiss)
+                .buttonStyle(.borderless)
+                .font(DesignSystem.Typography.callout)
         }
         .padding(DesignSystem.Spacing.md)
         .background(DesignSystem.Colors.surfaceSecondary)
