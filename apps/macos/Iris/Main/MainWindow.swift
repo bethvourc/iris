@@ -20,19 +20,21 @@ struct MainWindowView: View {
     /// Likewise persisted so list scroll position and selection survive section
     /// switches.
     @State private var activity: ActivityViewModel
+    @State private var approvals: ApprovalsViewModel
 
     @MainActor
     init(model: AppModel) {
         self.model = model
         _home = State(initialValue: model.makeHomeModel())
         _activity = State(initialValue: model.makeActivityModel())
+        _approvals = State(initialValue: model.makeApprovalsModel())
         // `--ui-test-section <name>` opens straight to a section for screenshots.
         _selection = State(initialValue: MainSection.launchSection ?? .home)
     }
 
     var body: some View {
         NavigationSplitView(columnVisibility: $columnVisibility) {
-            SidebarView(selection: $selection)
+            SidebarView(selection: $selection, approvalCount: model.pendingApprovalCount)
         } detail: {
             detail(for: selection)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -56,6 +58,8 @@ struct MainWindowView: View {
             HomeView(model: home) { selection = .activity }
         case .activity:
             ActivityView(model: activity)
+        case .approvals:
+            ApprovalsView(model: approvals)
         default:
             SectionPlaceholder(section: section)
         }

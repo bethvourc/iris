@@ -8,6 +8,9 @@ import os
 @Observable
 final class AppModel {
     private(set) var daemonState: DaemonState = .stopped
+    /// Pending approvals awaiting a decision — drives the sidebar and menu-bar
+    /// badges. Fed by the always-running `ApprovalNotifier` poll.
+    private(set) var pendingApprovalCount = 0
 
     private(set) var daemonManager: DaemonManager?
     private(set) var approvalNotifier: ApprovalNotifier?
@@ -156,6 +159,33 @@ final class AppModel {
         return model
     }
 
+    /// Build the Approvals section's view model. `--ui-test-approvals <scenario>`
+    /// (pending/empty/error) swaps in a scripted source so each state — and the
+    /// badge — is screenshottable without a daemon.
+    func makeApprovalsModel() -> ApprovalsViewModel {
+        guard let scenario = Self.argumentValue(after: "--ui-test-approvals") else {
+            return ApprovalsViewModel(source: apiClient)
+        }
+        if scenario != "empty", scenario != "error" {
+            pendingApprovalCount = ScriptedApprovalSource.pendingCount
+        }
+        let model = ApprovalsViewModel(source: ScriptedApprovalSource(scenario: scenario))
+        if scenario == "confirm" {
+            // Arm the destructive confirm step once the list has loaded, so the
+            // confirm UI is screenshottable.
+            Task { @MainActor in
+                for _ in 0 ..< 60 {
+                    if let blocked = model.pending.first(where: ApprovalsViewModel.isDestructive) {
+                        await model.approve(blocked)
+                        return
+                    }
+                    try? await Task.sleep(for: .milliseconds(50))
+                }
+            }
+        }
+        return model
+    }
+
     private static func argumentValue(after flag: String) -> String? {
         let arguments = ProcessInfo.processInfo.arguments
         guard let index = arguments.firstIndex(of: flag),
@@ -191,7 +221,10 @@ final class AppModel {
         daemonManager = manager
         let notifier = ApprovalNotifier(
             source: apiClient,
-            presenter: SystemNotificationPresenter()
+            presenter: SystemNotificationPresenter(),
+            onPendingCount: { [weak self] count in
+                Task { @MainActor in self?.pendingApprovalCount = count }
+            }
         )
         approvalNotifier = notifier
         AppDelegate.approvalResponseHandler = { action, approvalId in

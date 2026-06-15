@@ -6,10 +6,29 @@ import SwiftUI
 /// attention. Status is glanceable, never modal.
 struct StatusIcon: View {
     let state: DaemonState
+    /// Pending approvals — shown as a small count badge on the glyph.
+    var approvalCount = 0
 
     var body: some View {
         Image(nsImage: SiriNewIcon.image(variant))
-            .accessibilityLabel("Iris: \(state.menuDescription)")
+            .overlay(alignment: .topTrailing) {
+                if approvalCount > 0 {
+                    Text(approvalCount > 9 ? "9+" : "\(approvalCount)")
+                        .font(.system(size: 8, weight: .bold))
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 3)
+                        .frame(minWidth: 12, minHeight: 12)
+                        .background(Capsule().fill(DesignSystem.Colors.accent))
+                        .offset(x: 5, y: -4)
+                }
+            }
+            .accessibilityLabel(accessibilityLabel)
+    }
+
+    private var accessibilityLabel: String {
+        approvalCount > 0
+            ? "Iris: \(state.menuDescription), \(approvalCount) approvals pending"
+            : "Iris: \(state.menuDescription)"
     }
 
     private var variant: SiriNewIcon.Variant {

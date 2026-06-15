@@ -53,14 +53,22 @@ enum MainSection: String, CaseIterable, Identifiable, Hashable {
 /// already lives in the menu bar, so it deliberately isn't duplicated here.
 struct SidebarView: View {
     @Binding var selection: MainSection
+    /// Pending approvals — badges the Approvals row when nonzero.
+    var approvalCount = 0
 
     var body: some View {
         List(MainSection.allCases, selection: $selection) { section in
             Label(section.title, systemImage: section.systemImage)
                 .tag(section)
+                .badge(badge(for: section))
                 .accessibilityIdentifier("sidebar-\(section.rawValue)")
         }
         .listStyle(.sidebar)
         .navigationSplitViewColumnWidth(min: 180, ideal: 200, max: 240)
+    }
+
+    /// Only Approvals carries a badge, and only when something is pending.
+    private func badge(for section: MainSection) -> Int {
+        section == .approvals ? approvalCount : 0
     }
 }

@@ -44,6 +44,9 @@ public actor ApprovalNotifier {
     private let source: any ApprovalSource
     private let presenter: any NotificationPresenting
     private let pollInterval: Duration
+    /// Reports the current pending count after each poll so the app can badge
+    /// the sidebar and menu bar icon.
+    private let onPendingCount: (@Sendable (Int) -> Void)?
     private var pollTask: Task<Void, Never>?
     private var notifiedIds: Set<String> = []
     private var presenterConfigured = false
@@ -52,11 +55,13 @@ public actor ApprovalNotifier {
     public init(
         source: any ApprovalSource,
         presenter: any NotificationPresenting,
-        pollInterval: Duration = .seconds(10)
+        pollInterval: Duration = .seconds(10),
+        onPendingCount: (@Sendable (Int) -> Void)? = nil
     ) {
         self.source = source
         self.presenter = presenter
         self.pollInterval = pollInterval
+        self.onPendingCount = onPendingCount
     }
 
     /// Drive from the daemon state stream: polls only while healthy.
@@ -95,6 +100,7 @@ public actor ApprovalNotifier {
         } catch {
             return // daemon hiccup; never block or alarm
         }
+        onPendingCount?(pending.count)
         for approval in pending where !notifiedIds.contains(approval.approvalId) {
             notifiedIds.insert(approval.approvalId)
             logger.info("approval pending: \(approval.approvalId, privacy: .public)")

@@ -45,7 +45,7 @@ private struct MenuBarLabel: View {
     @Environment(\.openWindow) private var openWindow
 
     var body: some View {
-        StatusIcon(state: model.daemonState)
+        StatusIcon(state: model.daemonState, approvalCount: model.pendingApprovalCount)
             .task {
                 model.openWindowAction = { openWindow(id: $0) }
                 if model.shouldShowOnboarding {
