@@ -28,17 +28,6 @@ enum MainSection: String, CaseIterable, Identifiable, Hashable {
         }
     }
 
-    /// One-line description shown in each section's placeholder until the real
-    /// view (Steps 5.2–5.5) replaces it.
-    var summary: String {
-        switch self {
-        case .home: "Your greeting, recent activity, and stats."
-        case .activity: "Everything Iris has done, grouped by day."
-        case .approvals: "Actions waiting on your decision."
-        case .settings: "Voice, account, and advanced preferences."
-        }
-    }
-
     /// `--ui-test-section <name>` selects the section the main window opens to,
     /// so screenshots can land directly on Activity/Approvals/Settings.
     static var launchSection: MainSection? {

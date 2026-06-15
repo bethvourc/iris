@@ -186,6 +186,29 @@ final class AppModel {
         return model
     }
 
+    /// Build the Settings view model. `--ui-test-settings <scenario>`
+    /// (loaded/error/fielderror) swaps in a scripted provider so each pane —
+    /// including an env-managed field and an inline error — is screenshottable.
+    func makeSettingsModel() -> SettingsViewModel {
+        guard let scenario = Self.argumentValue(after: "--ui-test-settings") else {
+            return SettingsViewModel(provider: apiClient)
+        }
+        let model = SettingsViewModel(provider: ScriptedSettingsProvider(scenario: scenario))
+        if scenario == "fielderror" {
+            // Drive one failed save after load so the inline field error shows.
+            Task { @MainActor in
+                for _ in 0 ..< 60 {
+                    if model.state == .loaded {
+                        await model.saveVoice("nope")
+                        return
+                    }
+                    try? await Task.sleep(for: .milliseconds(50))
+                }
+            }
+        }
+        return model
+    }
+
     private static func argumentValue(after flag: String) -> String? {
         let arguments = ProcessInfo.processInfo.arguments
         guard let index = arguments.firstIndex(of: flag),
@@ -286,10 +309,22 @@ final class AppModel {
     }
 
     private func openDiagnostics() {
-        // Real Advanced/diagnostics pane lands in Step 5.5; for now, surface
-        // the main window.
         openWindowAction?("main")
         NSApp.activate(ignoringOtherApps: true)
+    }
+
+    /// Rotate the gateway token (Settings → Account) and restart the daemon so
+    /// it comes up holding the new token. No-op in hermetic UI-test runs.
+    func rotateGatewayToken() {
+        guard !Self.isUITestRun else { return }
+        do {
+            _ = try TokenStore().rotate()
+            logger.info("gateway token rotated")
+        } catch {
+            logger.error("token rotation failed: \(error.localizedDescription)")
+            return
+        }
+        restartDaemon()
     }
 
     func restartDaemon() {

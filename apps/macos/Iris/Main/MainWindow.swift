@@ -60,39 +60,9 @@ struct MainWindowView: View {
             ActivityView(model: activity)
         case .approvals:
             ApprovalsView(model: approvals)
-        default:
-            SectionPlaceholder(section: section)
+        case .settings:
+            SettingsView(model: model)
         }
-    }
-}
-
-/// Temporary detail content for a section: a restrained, centered placeholder
-/// until the real view lands in a later step. Carries a stable accessibility
-/// identifier so navigation tests can assert which section is showing.
-private struct SectionPlaceholder: View {
-    let section: MainSection
-
-    var body: some View {
-        VStack(spacing: DesignSystem.Spacing.md) {
-            Image(systemName: section.systemImage)
-                .font(.system(size: 24, weight: .light))
-                .foregroundStyle(DesignSystem.Colors.textTertiary)
-
-            Text(section.summary)
-                .font(DesignSystem.Typography.body)
-                .foregroundStyle(DesignSystem.Colors.textSecondary)
-                .multilineTextAlignment(.center)
-
-            if section == .home {
-                Text("Press ⌥Space to start a conversation")
-                    .font(DesignSystem.Typography.caption)
-                    .foregroundStyle(DesignSystem.Colors.textTertiary)
-                    .padding(.top, DesignSystem.Spacing.xs)
-            }
-        }
-        .frame(maxWidth: 360)
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .accessibilityIdentifier("section-\(section.rawValue)")
     }
 }
 
