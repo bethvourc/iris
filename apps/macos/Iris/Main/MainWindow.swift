@@ -1,3 +1,4 @@
+import AppKit
 import IrisKit
 import SwiftUI
 
@@ -43,6 +44,9 @@ struct MainWindowView: View {
         .navigationTitle(selection.title)
         .frame(minWidth: 720, minHeight: 480)
         .tint(DesignSystem.Colors.accent)
+        // Drop the hairline the system draws under the titlebar so the title
+        // band reads as one continuous surface with the content below it.
+        .background(WindowConfigurator { $0.titlebarSeparatorStyle = .none })
     }
 
     @ViewBuilder
@@ -85,5 +89,21 @@ private struct SectionPlaceholder: View {
         .frame(maxWidth: 360)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .accessibilityIdentifier("section-\(section.rawValue)")
+    }
+}
+
+/// Reaches the hosting `NSWindow` to apply window-level tweaks SwiftUI doesn't
+/// expose (here: the titlebar separator style). Renders nothing.
+private struct WindowConfigurator: NSViewRepresentable {
+    let configure: (NSWindow) -> Void
+
+    func makeNSView(context _: Context) -> NSView {
+        let view = NSView()
+        DispatchQueue.main.async { if let window = view.window { configure(window) } }
+        return view
+    }
+
+    func updateNSView(_ nsView: NSView, context _: Context) {
+        DispatchQueue.main.async { if let window = nsView.window { configure(window) } }
     }
 }
