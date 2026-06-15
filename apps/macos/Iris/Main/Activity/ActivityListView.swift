@@ -109,15 +109,13 @@ struct ActivityListView: View {
     private var list: some View {
         List(selection: $model.selection) {
             ForEach(model.days, id: \.date) { day in
-                Section {
-                    ForEach(day.items) { item in
-                        ActivityRow(item: item)
-                            .tag(item.id)
-                            .listRowSeparator(.hidden)
-                            .listRowInsets(Self.rowInsets)
-                    }
-                } header: {
-                    dayHeader(dayTitle(day))
+                dayHeader(dayTitle(day))
+
+                ForEach(day.items) { item in
+                    ActivityRow(item: item)
+                        .tag(item.id)
+                        .listRowSeparator(.hidden)
+                        .listRowInsets(Self.rowInsets)
                 }
             }
 
@@ -127,14 +125,11 @@ struct ActivityListView: View {
         .listStyle(.plain)
         .scrollContentBackground(.hidden)
         .environment(\.defaultMinListRowHeight, 1)
-        // Hide the List's automatic section separator so the only hairline is
-        // the one the day header draws itself (otherwise we get a double line).
-        .listSectionSeparator(.hidden)
     }
 
     /// A day section header rendered as a fixed-height band with its own bottom
-    /// divider, so its leading edge lines up with the rows and its divider lines
-    /// up with the detail pane's toolbar divider.
+    /// divider. This is a regular list row rather than a `Section` header so
+    /// SwiftUI doesn't add a second automatic rule.
     private func dayHeader(_ title: String) -> some View {
         VStack(spacing: 0) {
             SectionLabel(title)

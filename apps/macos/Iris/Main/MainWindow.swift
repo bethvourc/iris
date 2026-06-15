@@ -50,13 +50,7 @@ struct MainWindowView: View {
         // matching a Flow/Linear-style collapsible sidebar.
         .toolbar {
             ToolbarItem(placement: .navigation) {
-                Button {
-                    sidebarExpanded.toggle()
-                } label: {
-                    Image(systemName: "sidebar.left")
-                }
-                .help(sidebarExpanded ? "Collapse sidebar" : "Expand sidebar")
-                .accessibilityLabel(sidebarExpanded ? "Collapse sidebar" : "Expand sidebar")
+                SidebarToggleButton(expanded: sidebarExpanded) { sidebarExpanded.toggle() }
             }
         }
         // Drop the titlebar hairline and the redundant window title (the brand
@@ -79,6 +73,23 @@ struct MainWindowView: View {
         case .settings:
             SettingsView(model: model)
         }
+    }
+}
+
+/// Titlebar control for collapsing the sidebar rail.
+private struct SidebarToggleButton: View {
+    let expanded: Bool
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: "sidebar.left")
+                .frame(width: 20, height: 20)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help(expanded ? "Collapse sidebar" : "Expand sidebar")
+        .accessibilityLabel(expanded ? "Collapse sidebar" : "Expand sidebar")
     }
 }
 
