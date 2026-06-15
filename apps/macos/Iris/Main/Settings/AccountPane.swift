@@ -25,9 +25,10 @@ struct AccountPane: View {
                 VStack(alignment: .leading, spacing: DesignSystem.Spacing.xs) {
                     LabeledContent(settings.isSecretSet(openAIKey) ? "Replace" : "Set key") {
                         HStack(spacing: DesignSystem.Spacing.sm) {
-                            SecureField("sk-…", text: $newKey)
+                            SecureField("", text: $newKey, prompt: Text("sk-…"))
+                                .labelsHidden()
                                 .textFieldStyle(.roundedBorder)
-                                .frame(maxWidth: 240)
+                                .frame(width: 200)
                             Button("Save") {
                                 Task {
                                     await settings.saveSecret(openAIKey, newKey)

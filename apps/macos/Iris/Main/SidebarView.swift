@@ -28,6 +28,10 @@ enum MainSection: String, CaseIterable, Identifiable, Hashable {
         }
     }
 
+    /// The day-to-day destinations, shown at the top of the rail. Settings is
+    /// pinned to the bottom (the conventional utility slot).
+    static let primary: [MainSection] = [.home, .activity, .approvals]
+
     /// `--ui-test-section <name>` selects the section the main window opens to,
     /// so screenshots can land directly on Activity/Approvals/Settings.
     static var launchSection: MainSection? {
@@ -38,26 +42,114 @@ enum MainSection: String, CaseIterable, Identifiable, Hashable {
     }
 }
 
-/// The persistent left rail. Selection drives the detail column. Daemon health
-/// already lives in the menu bar, so it deliberately isn't duplicated here.
-struct SidebarView: View {
+/// A collapsible navigation sidebar (in the spirit of Flow / Linear): a narrow
+/// icon-only rail that expands to icons + labels via the toggle at the top.
+/// Daemon health already lives in the menu bar, so it isn't duplicated here.
+struct SidebarRail: View {
     @Binding var selection: MainSection
-    /// Pending approvals — badges the Approvals row when nonzero.
+    @Binding var expanded: Bool
+    /// Pending approvals — badges the Approvals item when nonzero.
     var approvalCount = 0
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    private static let collapsedWidth: CGFloat = 56
+    private static let expandedWidth: CGFloat = 210
 
     var body: some View {
-        List(MainSection.allCases, selection: $selection) { section in
-            Label(section.title, systemImage: section.systemImage)
-                .tag(section)
-                .badge(badge(for: section))
-                .accessibilityIdentifier("sidebar-\(section.rawValue)")
+        VStack(alignment: .leading, spacing: 0) {
+            header
+            VStack(spacing: 2) {
+                ForEach(MainSection.primary) { item($0) }
+            }
+            .padding(.top, DesignSystem.Spacing.sm)
+            Spacer(minLength: DesignSystem.Spacing.sm)
+            item(.settings)
         }
-        .listStyle(.sidebar)
-        .navigationSplitViewColumnWidth(min: 180, ideal: 200, max: 240)
+        .padding(.horizontal, DesignSystem.Spacing.sm)
+        .padding(.vertical, DesignSystem.Spacing.md)
+        .frame(width: expanded ? Self.expandedWidth : Self.collapsedWidth)
+        .frame(maxHeight: .infinity)
+        .background(DesignSystem.Colors.surfaceSecondary)
+        .animation(reduceMotion ? nil : .easeInOut(duration: 0.18), value: expanded)
     }
 
-    /// Only Approvals carries a badge, and only when something is pending.
-    private func badge(for section: MainSection) -> Int {
-        section == .approvals ? approvalCount : 0
+    private var header: some View {
+        HStack(spacing: DesignSystem.Spacing.sm) {
+            SiriNewMark()
+                .frame(width: 20, height: 20)
+            if expanded {
+                Text("Iris")
+                    .font(DesignSystem.Typography.heading)
+                    .foregroundStyle(DesignSystem.Colors.textPrimary)
+                Spacer(minLength: 0)
+            }
+        }
+        .frame(height: 30)
+        .frame(maxWidth: expanded ? .infinity : 40, alignment: expanded ? .leading : .center)
+        .padding(.bottom, DesignSystem.Spacing.sm)
+    }
+
+    private func item(_ section: MainSection) -> some View {
+        SidebarItem(
+            section: section,
+            expanded: expanded,
+            isSelected: selection == section,
+            badge: section == .approvals ? approvalCount : 0
+        ) { selection = section }
+    }
+}
+
+private struct SidebarItem: View {
+    let section: MainSection
+    let expanded: Bool
+    let isSelected: Bool
+    var badge: Int = 0
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: DesignSystem.Spacing.sm) {
+                Image(systemName: section.systemImage)
+                    .font(.system(size: 15, weight: .medium))
+                    .frame(width: 24)
+                    .overlay(alignment: .topTrailing) {
+                        if badge > 0, !expanded { CountBadge(count: badge).offset(x: 8, y: -6) }
+                    }
+                if expanded {
+                    Text(section.title)
+                        .font(DesignSystem.Typography.body)
+                    Spacer(minLength: 0)
+                    if badge > 0 { CountBadge(count: badge) }
+                }
+            }
+            .foregroundStyle(isSelected
+                ? DesignSystem.Colors.textPrimary
+                : DesignSystem.Colors.textSecondary)
+            .frame(maxWidth: expanded ? .infinity : 40, alignment: expanded ? .leading : .center)
+            .frame(height: 34)
+            .padding(.horizontal, expanded ? DesignSystem.Spacing.sm : 0)
+            .background(
+                RoundedRectangle(cornerRadius: DesignSystem.Radius.sm)
+                    .fill(isSelected ? DesignSystem.Colors.surface : .clear)
+            )
+        }
+        .buttonStyle(.plain)
+        .help(section.title)
+        .accessibilityIdentifier("sidebar-\(section.rawValue)")
+        .accessibilityLabel(section.title)
+        .accessibilityAddTraits(isSelected ? [.isSelected] : [])
+    }
+}
+
+private struct CountBadge: View {
+    let count: Int
+
+    var body: some View {
+        Text(count > 9 ? "9+" : "\(count)")
+            .font(.system(size: 9, weight: .bold))
+            .foregroundStyle(.white)
+            .padding(.horizontal, 3)
+            .frame(minWidth: 14, minHeight: 14)
+            .background(Capsule().fill(DesignSystem.Colors.accent))
     }
 }

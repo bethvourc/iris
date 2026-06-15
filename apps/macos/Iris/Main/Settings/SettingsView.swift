@@ -69,6 +69,8 @@ struct SettingTextField: View {
     var prompt: String = ""
     var enabled = true
     var error: String?
+    /// A compact, fixed field width — settings values are short.
+    var fieldWidth: CGFloat = 200
     let onCommit: (String) async -> Void
 
     @State private var text = ""
@@ -76,10 +78,14 @@ struct SettingTextField: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: DesignSystem.Spacing.xs) {
-            LabeledContent(title) {
-                TextField(prompt, text: $text)
+            HStack(spacing: DesignSystem.Spacing.md) {
+                Text(title)
+                    .foregroundStyle(DesignSystem.Colors.textPrimary)
+                Spacer(minLength: DesignSystem.Spacing.md)
+                TextField("", text: $text, prompt: prompt.isEmpty ? nil : Text(prompt))
+                    .labelsHidden()
                     .textFieldStyle(.roundedBorder)
-                    .frame(maxWidth: 280)
+                    .frame(width: fieldWidth)
                     .disabled(!enabled)
                     .focused($focused)
                     .onSubmit(commit)

@@ -19,9 +19,10 @@ struct AdvancedPane: View {
                 }
                 VStack(alignment: .leading, spacing: DesignSystem.Spacing.xs) {
                     LabeledContent("Port") {
-                        TextField("8765", text: $port)
+                        TextField("", text: $port, prompt: Text("8765"))
+                            .labelsHidden()
                             .textFieldStyle(.roundedBorder)
-                            .frame(maxWidth: 100)
+                            .frame(width: 90)
                             .onSubmit(savePort)
                     }
                     Text("Restart Iris to apply a new port.")
