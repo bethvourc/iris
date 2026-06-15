@@ -33,26 +33,26 @@ struct MainWindowView: View {
     }
 
     var body: some View {
-        HStack(spacing: 0) {
-            SidebarRail(
-                selection: $selection,
-                expanded: $sidebarExpanded,
-                approvalCount: model.pendingApprovalCount
-            )
-            Divider().overlay(DesignSystem.Colors.border)
-            detail(for: selection)
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .background(DesignSystem.Colors.canvas)
+        ZStack(alignment: .topLeading) {
+            HStack(spacing: 0) {
+                SidebarRail(
+                    selection: $selection,
+                    expanded: $sidebarExpanded,
+                    approvalCount: model.pendingApprovalCount
+                )
+                Divider().overlay(DesignSystem.Colors.border)
+                detail(for: selection)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .background(DesignSystem.Colors.canvas)
+            }
+
+            SidebarToggleButton(expanded: sidebarExpanded) {
+                sidebarExpanded.toggle()
+            }
+            .offset(x: sidebarExpanded ? 91 : 14, y: 12)
         }
         .frame(minWidth: 720, minHeight: 480)
         .tint(DesignSystem.Colors.accent)
-        // The sidebar toggle lives in the titlebar next to the traffic lights,
-        // matching a Flow/Linear-style collapsible sidebar.
-        .toolbar {
-            ToolbarItem(placement: .navigation) {
-                SidebarToggleButton(expanded: sidebarExpanded) { sidebarExpanded.toggle() }
-            }
-        }
         // Drop the titlebar hairline and the redundant window title (the brand
         // lives in the sidebar) so the rail and content read as one surface.
         .background(WindowConfigurator {
@@ -76,7 +76,7 @@ struct MainWindowView: View {
     }
 }
 
-/// Titlebar control for collapsing the sidebar rail.
+/// Borderless sidebar toggle positioned over the rail, outside row layout.
 private struct SidebarToggleButton: View {
     let expanded: Bool
     let action: () -> Void
@@ -84,7 +84,9 @@ private struct SidebarToggleButton: View {
     var body: some View {
         Button(action: action) {
             Image(systemName: "sidebar.left")
-                .frame(width: 20, height: 20)
+                .font(.system(size: 16, weight: .medium))
+                .foregroundStyle(DesignSystem.Colors.textSecondary)
+                .frame(width: 28, height: 28)
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)

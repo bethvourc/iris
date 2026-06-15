@@ -43,7 +43,7 @@ enum MainSection: String, CaseIterable, Identifiable, Hashable {
 }
 
 /// A collapsible navigation sidebar (in the spirit of Flow / Linear): a narrow
-/// icon-only rail that expands to icons + labels via the toggle at the top.
+/// icon-only rail that expands to icons + labels via the titlebar toggle.
 /// Daemon health already lives in the menu bar, so it isn't duplicated here.
 struct SidebarRail: View {
     @Binding var selection: MainSection
@@ -61,12 +61,13 @@ struct SidebarRail: View {
             VStack(spacing: 2) {
                 ForEach(MainSection.primary) { item($0) }
             }
-            .padding(.top, DesignSystem.Spacing.sm)
+            .padding(.top, DesignSystem.Spacing.xl)
             Spacer(minLength: DesignSystem.Spacing.sm)
             item(.settings)
         }
         .padding(.horizontal, DesignSystem.Spacing.sm)
-        .padding(.vertical, DesignSystem.Spacing.md)
+        .padding(.top, 58)
+        .padding(.bottom, DesignSystem.Spacing.md)
         .frame(width: expanded ? Self.expandedWidth : Self.collapsedWidth)
         .frame(maxHeight: .infinity)
         .background(DesignSystem.Colors.surfaceSecondary)
@@ -76,17 +77,16 @@ struct SidebarRail: View {
     private var header: some View {
         HStack(spacing: DesignSystem.Spacing.sm) {
             SiriNewMark()
-                .frame(width: 20, height: 20)
+                .frame(width: 22, height: 22)
             if expanded {
                 Text("Iris")
-                    .font(DesignSystem.Typography.heading)
+                    .font(.system(size: 25, weight: .semibold))
                     .foregroundStyle(DesignSystem.Colors.textPrimary)
-                Spacer(minLength: 0)
             }
         }
-        .frame(height: 30)
-        .frame(maxWidth: expanded ? .infinity : 40, alignment: expanded ? .leading : .center)
-        .padding(.bottom, DesignSystem.Spacing.sm)
+        .frame(height: 38)
+        .frame(maxWidth: expanded ? .infinity : 40, alignment: .center)
+        .padding(.bottom, DesignSystem.Spacing.xl)
     }
 
     private func item(_ section: MainSection) -> some View {
