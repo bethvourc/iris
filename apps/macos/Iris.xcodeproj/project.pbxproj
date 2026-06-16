@@ -71,7 +71,6 @@
 		D46A3C126A31E1193BE8F8C4 /* ScriptedSettingsProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = 03BEC9E95257419DB4BFCC42 /* ScriptedSettingsProvider.swift */; };
 		D8DAA93840480BCEA34AE2A5 /* ActivityViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = F7C54491C45991BEC3F10D2F /* ActivityViewModel.swift */; };
 		D906FF264EF1A12CFEF7443D /* StatusIcon.swift in Sources */ = {isa = PBXBuildFile; fileRef = A90EB0F1E02CB4A9D1A6D939 /* StatusIcon.swift */; };
-		D91AFD8A882642D69E87E7EF /* StatsCards.swift in Sources */ = {isa = PBXBuildFile; fileRef = F23028864D984530879BA333 /* StatsCards.swift */; };
 		E045B64A8DA7BF576DEBC6B0 /* MenuBarView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D8968AF18FC7A89DEA1035BD /* MenuBarView.swift */; };
 		E597ED3517980E565D7A4A71 /* HomeViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 53BDF75BA5BCBDD0DC3629B8 /* HomeViewModel.swift */; };
 		ED4564A26C4B445F73DF5123 /* AppModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = DF4488917C20113D8BEBA033 /* AppModel.swift */; };
@@ -202,7 +201,6 @@
 		EBBE6AA6E8A0BB9DF7379426 /* OverlayGeometryTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OverlayGeometryTests.swift; sourceTree = "<group>"; };
 		EE5EDDE84E03E354055F77FC /* HomeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HomeView.swift; sourceTree = "<group>"; };
 		F2269F03819E7816B27885AE /* OverlayPanel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OverlayPanel.swift; sourceTree = "<group>"; };
-		F23028864D984530879BA333 /* StatsCards.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StatsCards.swift; sourceTree = "<group>"; };
 		F414097BF38E7E342465DC29 /* OnboardingSteps.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OnboardingSteps.swift; sourceTree = "<group>"; };
 		F6130DB801FD7258BCC40A45 /* OverlayWindowController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OverlayWindowController.swift; sourceTree = "<group>"; };
 		F7C54491C45991BEC3F10D2F /* ActivityViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ActivityViewModel.swift; sourceTree = "<group>"; };
@@ -418,7 +416,6 @@
 			children = (
 				EE5EDDE84E03E354055F77FC /* HomeView.swift */,
 				C79723DA172B4EAFB809F164 /* ScriptedActivityFetcher.swift */,
-				F23028864D984530879BA333 /* StatsCards.swift */,
 			);
 			path = Home;
 			sourceTree = "<group>";
@@ -655,7 +652,6 @@
 				249EEF56753198E597C2BF4B /* SettingsView.swift in Sources */,
 				5F16998778197C4400722A33 /* SidebarView.swift in Sources */,
 				4E5E8C8AFBB9F1C4B3F3A1B6 /* SiriNewIcon.swift in Sources */,
-				D91AFD8A882642D69E87E7EF /* StatsCards.swift in Sources */,
 				D906FF264EF1A12CFEF7443D /* StatusIcon.swift in Sources */,
 				128F6A2A541DF3C4DE7F8E45 /* TranscriptView.swift in Sources */,
 				C19063013458BAB772361915 /* VoicePane.swift in Sources */,

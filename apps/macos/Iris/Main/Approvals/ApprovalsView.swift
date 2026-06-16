@@ -14,41 +14,49 @@ struct ApprovalsView: View {
     }
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: DesignSystem.Spacing.xl) {
-                content
-            }
-            .padding(DesignSystem.Spacing.xl)
-            .frame(maxWidth: 720, alignment: .leading)
-            .frame(maxWidth: .infinity, alignment: .leading)
-        }
-        .background(DesignSystem.Colors.canvas)
-        .accessibilityIdentifier("section-approvals")
-        .task { await model.start() }
+        content
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background(DesignSystem.Colors.canvas)
+            .accessibilityIdentifier("section-approvals")
+            .task { await model.start() }
     }
 
     @ViewBuilder
     private var content: some View {
         switch model.state {
         case .loading:
+            // Top-aligned so it previews where the cards will land.
             ApprovalsSkeleton()
+                .padding(DesignSystem.Spacing.xl)
+                .frame(maxWidth: 720, alignment: .leading)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         case let .failed(message):
             ApprovalsError(message: message) { Task { await model.refresh() } }
         case .loaded:
-            if let actionError = model.actionError {
-                ActionErrorBanner(message: actionError) { model.dismissError() }
-            }
             if model.pending.isEmpty, model.history.isEmpty {
                 EmptyStateView(
                     title: "You're all caught up",
                     message: "Nothing needs your approval right now. Actions Iris "
                         + "wants to take will appear here first."
                 )
-                .frame(minHeight: 300)
             } else {
+                loadedList
+            }
+        }
+    }
+
+    private var loadedList: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: DesignSystem.Spacing.xl) {
+                if let actionError = model.actionError {
+                    ActionErrorBanner(message: actionError) { model.dismissError() }
+                }
                 if !model.pending.isEmpty { pendingSection }
                 if !model.history.isEmpty { historySection }
             }
+            .padding(DesignSystem.Spacing.xl)
+            .frame(maxWidth: 720, alignment: .leading)
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
     }
 
@@ -300,7 +308,7 @@ private struct ApprovalsError: View {
             Button("Retry", action: onRetry)
         }
         .frame(maxWidth: 280)
-        .frame(maxWidth: .infinity, minHeight: 300)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
         .accessibilityElement(children: .combine)
         .accessibilityLabel("Error: \(message)")
     }

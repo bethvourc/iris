@@ -30,6 +30,9 @@ struct IrisApp: App {
             MainWindowView(model: model)
         }
         .defaultSize(width: 960, height: 640)
+        // Hidden titlebar: the sidebar surface runs edge-to-edge under the
+        // traffic lights, and we draw our own borderless toggle next to them.
+        .windowStyle(.hiddenTitleBar)
 
         Window("Welcome to Iris", id: "onboarding") {
             OnboardingView(model: model.makeOnboardingModel())

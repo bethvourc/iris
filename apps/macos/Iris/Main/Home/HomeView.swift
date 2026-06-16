@@ -15,20 +15,11 @@ struct HomeView: View {
     }
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: DesignSystem.Spacing.xl) {
-                Text(model.greeting)
-                    .font(DesignSystem.Typography.title)
-                    .foregroundStyle(DesignSystem.Colors.textPrimary)
-
-                content
-            }
-            .padding(DesignSystem.Spacing.xl)
-            .frame(maxWidth: .infinity, alignment: .leading)
-        }
-        .background(DesignSystem.Colors.canvas)
-        .accessibilityIdentifier("section-home")
-        .task { await model.load() }
+        content
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background(DesignSystem.Colors.canvas)
+            .accessibilityIdentifier("section-home")
+            .task { await model.load() }
     }
 
     @ViewBuilder
@@ -36,21 +27,31 @@ struct HomeView: View {
         switch model.state {
         case .loading:
             HomeSkeleton()
+                .padding(DesignSystem.Spacing.xl)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         case .empty:
             EmptyStateView(
                 title: "Nothing here yet",
                 message: "When Iris helps you, your sessions and runs will show up here.",
                 hint: "Press ⌥Space to start a conversation"
             )
-            .frame(minHeight: 280)
-        case let .loaded(stats, recent):
-            StatsRow(stats: stats)
-            Divider().overlay(DesignSystem.Colors.border)
-            RecentActivitySection(items: recent, onSeeAll: onSeeAll)
+        case let .loaded(_, recent):
+            loaded(recent)
         case let .failed(message):
-            HomeErrorView(message: message) {
-                Task { await model.load() }
+            HomeErrorView(message: message) { Task { await model.load() } }
+        }
+    }
+
+    private func loaded(_ recent: [ActivityItem]) -> some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: DesignSystem.Spacing.xl) {
+                Text(model.greeting)
+                    .font(DesignSystem.Typography.title)
+                    .foregroundStyle(DesignSystem.Colors.textPrimary)
+                RecentActivitySection(items: recent, onSeeAll: onSeeAll)
             }
+            .padding(DesignSystem.Spacing.xl)
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
     }
 }
@@ -127,19 +128,18 @@ private struct HomeErrorView: View {
     let onRetry: () -> Void
 
     var body: some View {
-        Card {
-            VStack(alignment: .leading, spacing: DesignSystem.Spacing.md) {
-                HStack(spacing: DesignSystem.Spacing.sm) {
-                    Image(systemName: "exclamationmark.triangle")
-                        .foregroundStyle(DesignSystem.Colors.amber)
-                    Text(message)
-                        .font(DesignSystem.Typography.body)
-                        .foregroundStyle(DesignSystem.Colors.textPrimary)
-                }
-                Button("Retry", action: onRetry)
-                    .controlSize(.regular)
-            }
+        VStack(spacing: DesignSystem.Spacing.md) {
+            Image(systemName: "exclamationmark.triangle")
+                .font(.system(size: 24, weight: .light))
+                .foregroundStyle(DesignSystem.Colors.amber)
+            Text(message)
+                .font(DesignSystem.Typography.body)
+                .foregroundStyle(DesignSystem.Colors.textPrimary)
+                .multilineTextAlignment(.center)
+            Button("Retry", action: onRetry)
         }
+        .frame(maxWidth: 280)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
         .accessibilityElement(children: .combine)
         .accessibilityLabel("Error: \(message)")
     }
@@ -149,16 +149,9 @@ private struct HomeErrorView: View {
 
 private struct HomeSkeleton: View {
     var body: some View {
-        VStack(alignment: .leading, spacing: DesignSystem.Spacing.xl) {
-            HStack(spacing: DesignSystem.Spacing.md) {
-                ForEach(0 ..< 4, id: \.self) { _ in
-                    SkeletonBlock(height: 72)
-                }
-            }
-            VStack(spacing: DesignSystem.Spacing.sm) {
-                ForEach(0 ..< 4, id: \.self) { _ in
-                    SkeletonBlock(height: 44)
-                }
+        VStack(spacing: DesignSystem.Spacing.sm) {
+            ForEach(0 ..< 5, id: \.self) { _ in
+                SkeletonBlock(height: 44)
             }
         }
         .accessibilityLabel("Loading")

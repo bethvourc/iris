@@ -9,10 +9,10 @@ enum ActivityMetrics {
     /// The collapsible inspector's open/close slide duration — quick but still
     /// readable as a slide.
     static let slideDuration: Double = 0.28
-    /// The List sits ~8.5pt below the detail's plain VStack (it respects a
-    /// title-bar content inset the VStack doesn't), so the detail column gets
-    /// this matching top inset to line the two header dividers up.
-    static let columnTopInset: CGFloat = 8.5
+    /// With the hidden titlebar, the List (scroll view) sits a touch *higher*
+    /// than the detail's plain VStack, so the detail column is nudged up by this
+    /// amount to line the two header dividers up.
+    static let columnTopInset: CGFloat = -8
 }
 
 /// The Activity section: a day-grouped master list on the left and a detail
@@ -103,7 +103,7 @@ struct ActivityListView: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(DesignSystem.Colors.surfaceSecondary)
+        .background(DesignSystem.Colors.canvas)
     }
 
     private var list: some View {
@@ -138,7 +138,7 @@ struct ActivityListView: View {
                 .frame(height: ActivityMetrics.headerHeight)
             Divider().overlay(DesignSystem.Colors.border)
         }
-        .background(DesignSystem.Colors.surfaceSecondary)
+        .background(DesignSystem.Colors.canvas)
         .listRowInsets(EdgeInsets())
         .listRowSeparator(.hidden)
     }

@@ -42,18 +42,15 @@ enum MainSection: String, CaseIterable, Identifiable, Hashable {
     }
 }
 
-/// A collapsible navigation sidebar (in the spirit of Flow / Linear): a narrow
-/// icon-only rail that expands to icons + labels via the titlebar toggle.
-/// Daemon health already lives in the menu bar, so it isn't duplicated here.
+/// The navigation sidebar (in the spirit of Flow / Linear): a brand header and
+/// labeled destinations, the selected one highlighted. Daemon health already
+/// lives in the menu bar, so it isn't duplicated here.
 struct SidebarRail: View {
     @Binding var selection: MainSection
-    @Binding var expanded: Bool
     /// Pending approvals — badges the Approvals item when nonzero.
     var approvalCount = 0
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
-    private static let collapsedWidth: CGFloat = 56
-    private static let expandedWidth: CGFloat = 210
+    private static let width: CGFloat = 210
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -66,34 +63,31 @@ struct SidebarRail: View {
             item(.settings)
         }
         .padding(.horizontal, DesignSystem.Spacing.sm)
-        .padding(.top, DesignSystem.Spacing.md)
+        // Clear the traffic lights that float over the top with the hidden
+        // titlebar.
+        .padding(.top, 44)
         .padding(.bottom, DesignSystem.Spacing.md)
-        .frame(width: expanded ? Self.expandedWidth : Self.collapsedWidth)
+        .frame(width: Self.width)
         .frame(maxHeight: .infinity)
         .background(DesignSystem.Colors.surfaceSecondary)
-        .animation(reduceMotion ? nil : .easeInOut(duration: 0.18), value: expanded)
     }
 
     private var header: some View {
         HStack(spacing: DesignSystem.Spacing.sm) {
             SiriNewMark()
                 .frame(width: 20, height: 20)
-            if expanded {
-                Text("Iris")
-                    .font(.system(size: 19, weight: .semibold))
-                    .foregroundStyle(DesignSystem.Colors.textPrimary)
-                Spacer(minLength: 0)
-            }
+            Text("Iris")
+                .font(.system(size: 19, weight: .semibold))
+                .foregroundStyle(DesignSystem.Colors.textPrimary)
+            Spacer(minLength: 0)
         }
         .frame(height: 28)
-        .frame(maxWidth: expanded ? .infinity : 40, alignment: expanded ? .leading : .center)
-        .padding(.leading, expanded ? DesignSystem.Spacing.xs : 0)
+        .padding(.leading, DesignSystem.Spacing.xs)
     }
 
     private func item(_ section: MainSection) -> some View {
         SidebarItem(
             section: section,
-            expanded: expanded,
             isSelected: selection == section,
             badge: section == .approvals ? approvalCount : 0
         ) { selection = section }
@@ -102,7 +96,6 @@ struct SidebarRail: View {
 
 private struct SidebarItem: View {
     let section: MainSection
-    let expanded: Bool
     let isSelected: Bool
     var badge: Int = 0
     let action: () -> Void
@@ -113,22 +106,17 @@ private struct SidebarItem: View {
                 Image(systemName: section.systemImage)
                     .font(.system(size: 15, weight: .medium))
                     .frame(width: 24)
-                    .overlay(alignment: .topTrailing) {
-                        if badge > 0, !expanded { CountBadge(count: badge).offset(x: 8, y: -6) }
-                    }
-                if expanded {
-                    Text(section.title)
-                        .font(DesignSystem.Typography.body)
-                    Spacer(minLength: 0)
-                    if badge > 0 { CountBadge(count: badge) }
-                }
+                Text(section.title)
+                    .font(DesignSystem.Typography.body)
+                Spacer(minLength: 0)
+                if badge > 0 { CountBadge(count: badge) }
             }
             .foregroundStyle(isSelected
                 ? DesignSystem.Colors.textPrimary
                 : DesignSystem.Colors.textSecondary)
-            .frame(maxWidth: expanded ? .infinity : 40, alignment: expanded ? .leading : .center)
+            .frame(maxWidth: .infinity, alignment: .leading)
             .frame(height: 34)
-            .padding(.horizontal, expanded ? DesignSystem.Spacing.sm : 0)
+            .padding(.horizontal, DesignSystem.Spacing.sm)
             .background(
                 RoundedRectangle(cornerRadius: DesignSystem.Radius.sm)
                     .fill(isSelected ? DesignSystem.Colors.surface : .clear)

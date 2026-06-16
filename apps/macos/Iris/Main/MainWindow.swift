@@ -12,9 +12,6 @@ struct MainWindowView: View {
     /// Held for the section view models wired up in Steps 5.3–5.5.
     let model: AppModel
     @State private var selection: MainSection
-    /// Sidebar starts expanded (labels visible); the toggle collapses it to a
-    /// narrow icon rail.
-    @State private var sidebarExpanded = true
     /// Created once so navigating away and back doesn't drop loaded Home data.
     @State private var home: HomeViewModel
     /// Likewise persisted so list scroll position and selection survive section
@@ -34,11 +31,7 @@ struct MainWindowView: View {
 
     var body: some View {
         HStack(spacing: 0) {
-            SidebarRail(
-                selection: $selection,
-                expanded: $sidebarExpanded,
-                approvalCount: model.pendingApprovalCount
-            )
+            SidebarRail(selection: $selection, approvalCount: model.pendingApprovalCount)
             Divider().overlay(DesignSystem.Colors.border)
             detail(for: selection)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -46,26 +39,7 @@ struct MainWindowView: View {
         }
         .frame(minWidth: 720, minHeight: 480)
         .tint(DesignSystem.Colors.accent)
-        // The sidebar toggle is a native titlebar control (next to the traffic
-        // lights, like Finder/Mail/Linear): correctly positioned, responsive,
-        // and a hover highlight with no persistent chrome.
-        .toolbar {
-            ToolbarItem(placement: .navigation) {
-                Button {
-                    sidebarExpanded.toggle()
-                } label: {
-                    Image(systemName: "sidebar.left")
-                }
-                .help(sidebarExpanded ? "Collapse sidebar" : "Expand sidebar")
-                .accessibilityLabel(sidebarExpanded ? "Collapse sidebar" : "Expand sidebar")
-            }
-        }
-        // Drop the titlebar hairline and the redundant window title (the brand
-        // lives in the sidebar) so the rail and content read as one surface.
-        .background(WindowConfigurator {
-            $0.titlebarSeparatorStyle = .none
-            $0.titleVisibility = .hidden
-        })
+        .background(WindowConfigurator { $0.titlebarSeparatorStyle = .none })
     }
 
     @ViewBuilder
