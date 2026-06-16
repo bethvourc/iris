@@ -125,6 +125,7 @@ struct ActivityListView: View {
         .listStyle(.plain)
         .scrollContentBackground(.hidden)
         .environment(\.defaultMinListRowHeight, 1)
+        .accessibilityLabel("Activity")
     }
 
     /// A day section header rendered as a fixed-height band with its own bottom

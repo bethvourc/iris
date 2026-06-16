@@ -139,6 +139,7 @@ private struct EndedView: View {
 /// Three dots that breathe — a listening affordance (we don't have real mic
 /// levels over SSE, so this signals "live" without faking a meter).
 private struct ListeningPulse: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var phase = 0.0
 
     var body: some View {
@@ -146,13 +147,18 @@ private struct ListeningPulse: View {
             ForEach(0 ..< 3, id: \.self) { index in
                 Circle()
                     .fill(.tint)
+                    // Hold the dots at a steady, legible opacity when motion is
+                    // reduced — the "Listening" label already carries the state.
                     .frame(width: 5, height: 5)
-                    .opacity(0.4 + 0.6 * pulse(index))
+                    .opacity(reduceMotion ? 0.7 : 0.4 + 0.6 * pulse(index))
             }
         }
-        .onAppear { phase = 1 }
+        .onAppear { if !reduceMotion { phase = 1 } }
         .animation(
-            .easeInOut(duration: 0.6).repeatForever(autoreverses: true), value: phase
+            reduceMotion
+                ? nil
+                : .easeInOut(duration: 0.6).repeatForever(autoreverses: true),
+            value: phase
         )
         .accessibilityHidden(true)
     }

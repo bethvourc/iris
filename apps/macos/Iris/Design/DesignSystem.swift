@@ -26,13 +26,16 @@ enum DesignSystem {
         /// Hairline borders and dividers — never heavier than 1pt.
         static let border = dynamic(light: 0xE3_E3_DE, dark: 0x3A_3A_3D)
 
+        // Text tiers all clear WCAG AA (4.5:1) for normal text against every
+        // surface they appear on, while staying visually distinct from each
+        // other — verified in both appearances.
         static let textPrimary = dynamic(light: 0x1A_1A_18, dark: 0xF2_F2_F0)
-        static let textSecondary = dynamic(light: 0x6B_6B_66, dark: 0xA0_A0_9B)
-        static let textTertiary = dynamic(light: 0x9B_9B_95, dark: 0x6E_6E_69)
+        static let textSecondary = dynamic(light: 0x59_59_54, dark: 0xB2_B2_AD)
+        static let textTertiary = dynamic(light: 0x6E_6E_68, dark: 0x95_95_8F)
 
-        /// The lone accent — a single royal blue. Brightened in dark mode to
-        /// hold contrast against the dark canvas.
-        static let accent = dynamic(light: 0x2D_54_CE, dark: 0x5C_7C_FF)
+        /// The lone accent — a single royal blue. Brightened in dark mode so it
+        /// clears AA against the dark canvas *and* raised card surfaces (links).
+        static let accent = dynamic(light: 0x2D_54_CE, dark: 0x78_91_FF)
 
         /// Status hues, used only for status: healthy/success, caution,
         /// failure/destructive. Never decorative.

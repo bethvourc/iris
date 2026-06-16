@@ -15,17 +15,20 @@ struct OverlayErrorView: View {
             HStack(spacing: 12) {
                 Image(systemName: icon)
                     .foregroundStyle(.orange)
+                    .accessibilityHidden(true)
                 Text(title)
                     .font(.system(size: 14))
                     .lineLimit(3)
                     .fixedSize(horizontal: false, vertical: true)
                 Spacer(minLength: 0)
             }
+            // Combine only the message; the recovery Button stays a separate
+            // element so VoiceOver can still focus and activate it.
+            .accessibilityElement(children: .combine)
+            .accessibilityLabel("Iris: \(title)")
             Button(actionLabel, action: action)
                 .controlSize(.small)
         }
-        .accessibilityElement(children: .combine)
-        .accessibilityLabel("Iris: \(title)")
     }
 
     private var icon: String {

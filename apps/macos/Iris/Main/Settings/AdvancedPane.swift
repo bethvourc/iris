@@ -24,6 +24,7 @@ struct AdvancedPane: View {
                             .textFieldStyle(.roundedBorder)
                             .frame(width: 90)
                             .onSubmit(savePort)
+                            .accessibilityLabel("Gateway port")
                     }
                     Text("Restart Iris to apply a new port.")
                         .font(DesignSystem.Typography.caption)

@@ -43,6 +43,25 @@ public final class VoiceSessionViewModel {
                 false
             }
         }
+
+        /// A short, VoiceOver-spoken phrase for each session phase, so a
+        /// non-sighted user tracks the conversation without watching the pill.
+        /// `nil` for transient states (e.g. barge-in) that the next event
+        /// resolves anyway — announcing them would only chatter. Phrasing is
+        /// deduped by the caller, so `listening`/`userSpeaking` collapse to one
+        /// "Listening" announcement.
+        public var accessibilityAnnouncement: String? {
+            switch self {
+            case .connecting: "Connecting to Iris"
+            case .listening, .userSpeaking: "Listening"
+            case .thinking: "Iris is thinking"
+            case .speaking: "Iris is responding"
+            case .meeting: "Listening quietly in a meeting"
+            case .ended: "Session ended"
+            case .error: "Iris ran into a problem"
+            case .interrupted: nil
+            }
+        }
     }
 
     /// Each failure maps to exactly one recovery action; the views render

@@ -90,6 +90,11 @@ struct SettingTextField: View {
                     .focused($focused)
                     .onSubmit(commit)
                     .onChange(of: focused) { _, isFocused in if !isFocused { commit() } }
+                    // `.labelsHidden()` drops the visual label, so re-attach it
+                    // for VoiceOver and fold any inline error into a hint.
+                    .accessibilityLabel(title)
+                    .accessibilityHint(error.map { "Error: \($0)" }
+                        ?? (enabled ? "" : "Managed by environment"))
             }
             FieldFootnote(error: error, managed: !enabled)
         }

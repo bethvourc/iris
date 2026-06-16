@@ -76,6 +76,7 @@ struct SidebarRail: View {
         HStack(spacing: DesignSystem.Spacing.sm) {
             SiriNewMark()
                 .frame(width: 20, height: 20)
+                .accessibilityHidden(true)
             Text("Iris")
                 .font(.system(size: 19, weight: .semibold))
                 .foregroundStyle(DesignSystem.Colors.textPrimary)
@@ -109,7 +110,10 @@ private struct SidebarItem: View {
                 Text(section.title)
                     .font(DesignSystem.Typography.body)
                 Spacer(minLength: 0)
-                if badge > 0 { CountBadge(count: badge) }
+                // Decorative: the count is folded into the button's
+                // accessibilityValue so VoiceOver reads "Approvals, 3 pending"
+                // as one element instead of a stray, unparented badge.
+                if badge > 0 { CountBadge(count: badge).accessibilityHidden(true) }
             }
             .foregroundStyle(isSelected
                 ? DesignSystem.Colors.textPrimary
@@ -126,6 +130,7 @@ private struct SidebarItem: View {
         .help(section.title)
         .accessibilityIdentifier("sidebar-\(section.rawValue)")
         .accessibilityLabel(section.title)
+        .accessibilityValue(badge > 0 ? "\(badge) pending" : "")
         .accessibilityAddTraits(isSelected ? [.isSelected] : [])
     }
 }

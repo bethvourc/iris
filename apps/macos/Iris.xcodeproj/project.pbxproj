@@ -56,6 +56,7 @@
 		9F9D9E55F66223BF3D5D9C77 /* APIClientTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 51758270EE594413BD57364D /* APIClientTests.swift */; };
 		A0C46819A20F164362C99985 /* IrisKit.framework in Embed Frameworks */ = {isa = PBXBuildFile; fileRef = 268F9212891F25E9B2633CCB /* IrisKit.framework */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
 		A1288E007666B7294A1492CB /* IrisKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 268F9212891F25E9B2633CCB /* IrisKit.framework */; };
+		A156C0F55F0ED832F3DFD175 /* AccessibilityAudit.swift in Sources */ = {isa = PBXBuildFile; fileRef = C605A81B9B7C99053C163FD8 /* AccessibilityAudit.swift */; };
 		A7FAB0CECD6B2EE392846C56 /* GeneralPane.swift in Sources */ = {isa = PBXBuildFile; fileRef = 917B1716719B723BBE8FB5D4 /* GeneralPane.swift */; };
 		ABFACF540131E31BDDC5B2CB /* ActivityListView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E7D5C316F6E8E01D2496BC6F /* ActivityListView.swift */; };
 		AC2FF2087AF8B0BFEAAFC79D /* TokenStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = E6E21B8ACF374663E4E71D28 /* TokenStore.swift */; };
@@ -187,6 +188,7 @@
 		C0A0C281FED6B275E8AB36D7 /* VoiceActivationToggleTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VoiceActivationToggleTests.swift; sourceTree = "<group>"; };
 		C5968FE08EA5A6D61037A775 /* ActivityDetailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ActivityDetailView.swift; sourceTree = "<group>"; };
 		C5EE5E09FA40B51A7641C6D5 /* ApprovalNotifier.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ApprovalNotifier.swift; sourceTree = "<group>"; };
+		C605A81B9B7C99053C163FD8 /* AccessibilityAudit.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AccessibilityAudit.swift; sourceTree = "<group>"; };
 		C79723DA172B4EAFB809F164 /* ScriptedActivityFetcher.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScriptedActivityFetcher.swift; sourceTree = "<group>"; };
 		CE0E93A44C3951456DD110CA /* APIClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = APIClient.swift; sourceTree = "<group>"; };
 		CE5A459361D3431B124FD2DD /* OverlayStateViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OverlayStateViews.swift; sourceTree = "<group>"; };
@@ -314,6 +316,7 @@
 		A5D49765C7BBD467D92E6FA8 /* IrisUITests */ = {
 			isa = PBXGroup;
 			children = (
+				C605A81B9B7C99053C163FD8 /* AccessibilityAudit.swift */,
 				3781B221FA93C526FD3A477A /* IrisUITests.swift */,
 			);
 			path = IrisUITests;
@@ -662,6 +665,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				A156C0F55F0ED832F3DFD175 /* AccessibilityAudit.swift in Sources */,
 				8488E88E9886DA18A9D4EE99 /* IrisUITests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;

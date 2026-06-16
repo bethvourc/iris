@@ -25,6 +25,8 @@ final class OverlayPanel: NSPanel {
         isMovableByWindowBackground = false
         // We animate visibility ourselves (see OverlayController).
         animationBehavior = .none
+        // Borderless panels carry no title, so name the window for VoiceOver.
+        setAccessibilityLabel("Iris voice session")
     }
 
     /// The focus contract: never steal key/main from the frontmost app.

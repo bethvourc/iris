@@ -167,7 +167,9 @@ private struct PendingApprovalCard: View {
     private var actionRow: some View {
         HStack(spacing: DesignSystem.Spacing.sm) {
             Button("Deny", action: onDeny)
+                .accessibilityLabel("Deny \(approval.actionName)")
             Button("Approve", action: onApprove)
+                .accessibilityLabel("Approve \(approval.actionName)")
             if isDeciding {
                 ProgressView().controlSize(.small)
                     .padding(.leading, DesignSystem.Spacing.xs)
@@ -301,6 +303,7 @@ private struct ApprovalsError: View {
             Image(systemName: "exclamationmark.triangle")
                 .font(.system(size: 24, weight: .light))
                 .foregroundStyle(DesignSystem.Colors.amber)
+                .accessibilityHidden(true)
             Text(message)
                 .font(DesignSystem.Typography.body)
                 .foregroundStyle(DesignSystem.Colors.textPrimary)

@@ -29,6 +29,8 @@ struct AccountPane: View {
                                 .labelsHidden()
                                 .textFieldStyle(.roundedBorder)
                                 .frame(width: 200)
+                                .accessibilityLabel(settings.isSecretSet(openAIKey)
+                                    ? "Replace OpenAI API key" : "Set OpenAI API key")
                             Button("Save") {
                                 Task {
                                     await settings.saveSecret(openAIKey, newKey)
