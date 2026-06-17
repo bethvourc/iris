@@ -165,6 +165,7 @@ def test_voice_status_snapshot() -> None:
         "session": None,
         "subscribers": 0,
         "meeting_active": False,
+        "wake_listening": False,
     }
 
     service.handle_post("/voice/start", {})
@@ -234,6 +235,7 @@ def test_voice_sse_sends_snapshot_then_events_and_heartbeats(
                 "state": "idle",
                 "session": None,
                 "meeting_active": False,
+                "wake_listening": False,
             }
 
             # 2. idle stream produces heartbeat comments

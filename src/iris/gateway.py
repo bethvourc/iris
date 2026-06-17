@@ -97,9 +97,27 @@ class GatewayService:
     def voice_controller(self) -> VoiceController:
         if self._voice_controller is None:
             self._voice_controller = VoiceController(
-                session_factory=self._build_voice_session
+                session_factory=self._build_voice_session,
+                wake_listener_factory=self._build_wake_listener,
             )
         return self._voice_controller
+
+    def _build_wake_listener(self, on_detected: Any) -> Any:
+        # Imported here so the optional `iris[wakeword]` deps are only required
+        # when the feature is actually enabled.
+        from iris.wake_word import WakeWordListener
+
+        return WakeWordListener(on_detected=on_detected)
+
+    def apply_wake_word_setting(self) -> None:
+        """Bring the wake listener in line with the current config.
+
+        Called at boot and after every `PUT /settings`, so toggling the setting
+        starts or stops on-device listening without restarting the daemon.
+        """
+        self.voice_controller.set_wake_word_enabled(
+            getattr(self.config, "wake_word_enabled", False)
+        )
 
     def _build_voice_session(self, *, event_sink: Any, mode: str) -> Any:
         # `mode` is validated by the controller; "conversation" is the only
@@ -140,6 +158,11 @@ class GatewayService:
                 "return 401. Set it before serving to enable access."
             )
         self._install_signal_handlers()
+        # Arm the on-device wake listener if it's enabled (default off).
+        try:
+            self.apply_wake_word_setting()
+        except Exception:
+            _LOG.exception("gateway.wake_word_start_failed")
         _LOG.info(
             "gateway.start",
             extra={"host": bound_host, "port": bound_port, "pid": os.getpid()},
@@ -147,6 +170,7 @@ class GatewayService:
         try:
             server.serve_forever()
         finally:
+            self.voice_controller.set_wake_word_enabled(False)
             server.server_close()
             self._server = None
             _LOG.info("gateway.stop", extra={"pid": os.getpid()})
@@ -403,6 +427,11 @@ class GatewayService:
         # Future reads (and the next voice session) see the new values; a
         # live session keeps its config until it ends, per the contract.
         self.config = IrisConfig.from_env(self.config.project_root)
+        # Start/stop the wake listener if the toggle changed — no restart.
+        try:
+            self.apply_wake_word_setting()
+        except Exception:
+            _LOG.exception("gateway.wake_word_apply_failed")
         return 200, settings_payload(self.config)
 
     def handle_post(
@@ -747,6 +776,7 @@ class _GatewayHandler(BaseHTTPRequestHandler):
             "state": status["state"],
             "session": status["session"],
             "meeting_active": status["meeting_active"],
+            "wake_listening": status.get("wake_listening", False),
         }
 
     def _write_sse_frame(self, event_type: str, data: dict[str, Any]) -> None:

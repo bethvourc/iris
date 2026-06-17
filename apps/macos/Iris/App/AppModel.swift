@@ -11,6 +11,9 @@ final class AppModel {
     /// Pending approvals awaiting a decision — drives the sidebar and menu-bar
     /// badges. Fed by the always-running `ApprovalNotifier` poll.
     private(set) var pendingApprovalCount = 0
+    /// True while the daemon's on-device wake-word mic loop is armed — drives
+    /// the menu bar's "listening" treatment. Fed by `WakeWordWatcher`.
+    private(set) var wakeListening = false
 
     private(set) var daemonManager: DaemonManager?
     private(set) var approvalNotifier: ApprovalNotifier?
@@ -18,6 +21,12 @@ final class AppModel {
     let preferences: AppPreferences
     let apiClient: APIClient
     let voiceModel: VoiceSessionViewModel
+    /// Always-on subscriber that opens the overlay on "Hey Iris" and tracks the
+    /// daemon's listening state. Built in `bootstrap` (skipped in UI tests).
+    @ObservationIgnored private var wakeWatcher: WakeWordWatcher?
+    /// One factory for `/voice/events` subscriptions, shared by the session
+    /// model and the wake watcher (each `events()` call is its own stream).
+    @ObservationIgnored private let voiceEventsStream: @Sendable () -> AsyncStream<SSEClientEvent>
     /// Bridge so non-View code (recovery actions) can open SwiftUI windows;
     /// set once from the menu bar label's view context.
     @ObservationIgnored var openWindowAction: ((String) -> Void)?
@@ -80,6 +89,7 @@ final class AppModel {
         apiClient = APIClient(baseURL: baseURL, token: tokenProvider)
         let eventsURL = baseURL.appending(path: "voice/events")
         let sse = SSEClient(url: eventsURL, token: tokenProvider)
+        voiceEventsStream = { sse.events() }
         // Hermetic UI-test runs assume mic access; real runs check TCC.
         let micCheck: @Sendable () -> Bool = if Self.isUITestRun {
             { true }
@@ -286,7 +296,30 @@ final class AppModel {
         voiceModel.onOpenMicrophoneSettings = {
             SystemPermissionChecker().openSystemSettings(.microphone)
         }
+        // Always-on wake watcher: opens a session on "Hey Iris" and mirrors the
+        // daemon's listening state. Skipped under UI tests (daemon-free).
+        if !Self.isUITestRun {
+            let watcher = WakeWordWatcher(
+                eventStream: voiceEventsStream,
+                onWake: { [weak self] in self?.wakeActivationRequested() },
+                onListeningChanged: { [weak self] listening in
+                    self?.wakeListening = listening
+                }
+            )
+            wakeWatcher = watcher
+            watcher.start()
+        }
         Task { await manager.start() }
+    }
+
+    /// "Hey Iris" was detected on-device. Open the overlay and start a session,
+    /// reusing the hotkey path. Ignored if a session is already on screen (a
+    /// duplicate detection, or a wake during an active session).
+    private func wakeActivationRequested() {
+        guard !overlay.isVisible else { return }
+        logger.info("wake word: starting session")
+        NSApp.activate(ignoringOtherApps: true)
+        voiceActivationRequested()
     }
 
     private func voiceActivationRequested() {

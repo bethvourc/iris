@@ -24,11 +24,15 @@ from iris.voice_events import (
     VoiceState,
     error_event,
 )
+from iris.wake_word import Detection, DetectionCallback, WakeWordListener
 
 _LOG = logging.getLogger("iris.voice_controller")
 
 VALID_MODES = ("conversation",)
 SUBSCRIBER_QUEUE_SIZE = 256
+
+WakeListenerFactory = Callable[[DetectionCallback], WakeWordListener]
+"""Called as factory(on_detected=...) to build a configured wake listener."""
 
 
 class VoiceSessionLike(Protocol):
@@ -106,10 +110,12 @@ class VoiceController:
         self,
         *,
         session_factory: SessionFactory,
+        wake_listener_factory: WakeListenerFactory | None = None,
         modes: tuple[str, ...] = VALID_MODES,
         queue_size: int = SUBSCRIBER_QUEUE_SIZE,
     ) -> None:
         self._factory = session_factory
+        self._wake_factory = wake_listener_factory
         self._modes = tuple(modes)
         self._queue_size = queue_size
         self._lock = threading.RLock()
@@ -117,6 +123,8 @@ class VoiceController:
         self._thread: threading.Thread | None = None
         self._descriptor: SessionDescriptor | None = None
         self._session_ended_seen = False
+        self._wake_enabled = False
+        self._wake: WakeWordListener | None = None
         self._subs_lock = threading.Lock()
         self._subscriptions: dict[int, Subscription] = {}
         self._next_subscription_id = 1
@@ -172,6 +180,9 @@ class VoiceController:
         with self._lock:
             if self._session is not None and self._descriptor is not None:
                 raise VoiceAlreadyRunningError(self._descriptor.to_dict())
+            # The session takes sole use of the microphone; release the wake
+            # loop for its duration (resumed in `_run_session`).
+            self._stop_wake_locked()
             descriptor = SessionDescriptor(
                 id=f"voice-{uuid.uuid4().hex}",
                 mode=mode,
@@ -218,6 +229,49 @@ class VoiceController:
             raise VoiceNotRunningError()
         return bool(session.interrupt())
 
+    # -------------------------------------------------------- wake word
+
+    def set_wake_word_enabled(self, enabled: bool) -> None:
+        """Turn the on-device wake listener on or off (idempotent).
+
+        Honors the "never listen while in a session" rule: enabling during an
+        active session arms the listener but leaves it stopped until the
+        session ends, when `_run_session` resumes it.
+        """
+        with self._lock:
+            self._wake_enabled = enabled and self._wake_factory is not None
+            if not self._wake_enabled:
+                self._stop_wake_locked()
+            elif self._session is None:
+                self._start_wake_locked()
+
+    @property
+    def wake_listening(self) -> bool:
+        wake = self._wake
+        return bool(self._wake_enabled and wake is not None and wake.is_running)
+
+    def _start_wake_locked(self) -> None:
+        """Build (once) and start the listener. Caller holds `_lock`."""
+        if self._wake_factory is None:
+            return
+        if self._wake is None:
+            self._wake = self._wake_factory(self._handle_wake_detected)
+        self._wake.start()
+
+    def _stop_wake_locked(self) -> None:
+        """Stop the listener so the mic indicator clears. Caller holds `_lock`."""
+        if self._wake is not None:
+            self._wake.stop()
+
+    def _handle_wake_detected(self, detection: Detection) -> None:
+        """Listener callback: announce the wake so the app opens a session."""
+        self.emit(
+            VoiceEvent(
+                VoiceEventType.WAKE_DETECTED,
+                {"model": detection.model, "score": round(detection.score, 3)},
+            )
+        )
+
     def status(self) -> dict[str, Any]:
         """Snapshot for GET /voice/status and SSE connect."""
         with self._lock:
@@ -229,12 +283,14 @@ class VoiceController:
                 "session": None,
                 "subscribers": self.subscriber_count,
                 "meeting_active": False,
+                "wake_listening": self.wake_listening,
             }
         return {
             "state": getattr(session, "state", VoiceState.CONNECTING),
             "session": descriptor.to_dict(),
             "subscribers": self.subscriber_count,
             "meeting_active": bool(getattr(session, "_meeting_active", False)),
+            "wake_listening": self.wake_listening,
         }
 
     # -------------------------------------------------------- internals
@@ -258,6 +314,9 @@ class VoiceController:
                 self._session = None
                 self._thread = None
                 self._descriptor = None
+                # Hand the microphone back to the wake loop if it's still armed.
+                if self._wake_enabled:
+                    self._start_wake_locked()
             if not ended_cleanly:
                 # The session died before its own finally could report the
                 # end (e.g. the websocket connect raised); subscribers must

@@ -15,6 +15,7 @@
 		0DD331ADAA7686E029973500 /* Models.swift in Sources */ = {isa = PBXBuildFile; fileRef = 511C19A5D2BC2AA0CF91B476 /* Models.swift */; };
 		0DE66B6D2339D64A49B83F8E /* OverlayStateViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = CE5A459361D3431B124FD2DD /* OverlayStateViews.swift */; };
 		0FF7FA2A4503A44E2B1D1DA2 /* ScriptedApprovalSource.swift in Sources */ = {isa = PBXBuildFile; fileRef = A445A6A19AEDBB850BFC02D8 /* ScriptedApprovalSource.swift */; };
+		115788A4B6BCD3C029FCDD78 /* WakeWordWatcherTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E004C456FF993C0A79C9C853 /* WakeWordWatcherTests.swift */; };
 		128F6A2A541DF3C4DE7F8E45 /* TranscriptView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9D2934055E5D59F4035580AA /* TranscriptView.swift */; };
 		169E19097DF5D2F505DAD8FD /* MainWindow.swift in Sources */ = {isa = PBXBuildFile; fileRef = D17FEDE6E2AE7CDED3029367 /* MainWindow.swift */; };
 		1798F6B68D48593970A390B2 /* HomeViewModelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 49720BD61CF053D6D234EF1B /* HomeViewModelTests.swift */; };
@@ -57,6 +58,7 @@
 		A0C46819A20F164362C99985 /* IrisKit.framework in Embed Frameworks */ = {isa = PBXBuildFile; fileRef = 268F9212891F25E9B2633CCB /* IrisKit.framework */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
 		A1288E007666B7294A1492CB /* IrisKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 268F9212891F25E9B2633CCB /* IrisKit.framework */; };
 		A156C0F55F0ED832F3DFD175 /* AccessibilityAudit.swift in Sources */ = {isa = PBXBuildFile; fileRef = C605A81B9B7C99053C163FD8 /* AccessibilityAudit.swift */; };
+		A31D6CDFD098D5194299CF15 /* WakeWordWatcher.swift in Sources */ = {isa = PBXBuildFile; fileRef = 16111DA05D4ECA21A9891CBC /* WakeWordWatcher.swift */; };
 		A7FAB0CECD6B2EE392846C56 /* GeneralPane.swift in Sources */ = {isa = PBXBuildFile; fileRef = 917B1716719B723BBE8FB5D4 /* GeneralPane.swift */; };
 		ABFACF540131E31BDDC5B2CB /* ActivityListView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E7D5C316F6E8E01D2496BC6F /* ActivityListView.swift */; };
 		AC2FF2087AF8B0BFEAAFC79D /* TokenStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = E6E21B8ACF374663E4E71D28 /* TokenStore.swift */; };
@@ -138,6 +140,7 @@
 		105E541504E935FF2228B379 /* SSEClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SSEClient.swift; sourceTree = "<group>"; };
 		115F1687BCCB32521075C390 /* AdvancedPane.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AdvancedPane.swift; sourceTree = "<group>"; };
 		15FE71599F07D9A1CDC9BFF2 /* DaemonState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DaemonState.swift; sourceTree = "<group>"; };
+		16111DA05D4ECA21A9891CBC /* WakeWordWatcher.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WakeWordWatcher.swift; sourceTree = "<group>"; };
 		1A98741C5E8B6EA921C3217B /* VoicePane.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VoicePane.swift; sourceTree = "<group>"; };
 		1B68D16D51878BB8C8C7CBC8 /* IrisKitScaffoldTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IrisKitScaffoldTests.swift; sourceTree = "<group>"; };
 		1CE44248792B4277D555923B /* DaemonManagerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DaemonManagerTests.swift; sourceTree = "<group>"; };
@@ -196,6 +199,7 @@
 		D8968AF18FC7A89DEA1035BD /* MenuBarView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MenuBarView.swift; sourceTree = "<group>"; };
 		DC51C781281399AAABBB4184 /* SettingsViewModelTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsViewModelTests.swift; sourceTree = "<group>"; };
 		DF4488917C20113D8BEBA033 /* AppModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppModel.swift; sourceTree = "<group>"; };
+		E004C456FF993C0A79C9C853 /* WakeWordWatcherTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WakeWordWatcherTests.swift; sourceTree = "<group>"; };
 		E0B30308D08E575D6B0B7371 /* Iris.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Iris.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		E6E21B8ACF374663E4E71D28 /* TokenStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TokenStore.swift; sourceTree = "<group>"; };
 		E7D5C316F6E8E01D2496BC6F /* ActivityListView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ActivityListView.swift; sourceTree = "<group>"; };
@@ -253,6 +257,7 @@
 				E6E21B8ACF374663E4E71D28 /* TokenStore.swift */,
 				76895AFFF5DB1B75A66AA1FF /* VoiceActivationToggle.swift */,
 				45A4FB759EE9D30AF4C2B570 /* VoiceSessionViewModel.swift */,
+				16111DA05D4ECA21A9891CBC /* WakeWordWatcher.swift */,
 			);
 			path = IrisKit;
 			sourceTree = "<group>";
@@ -340,6 +345,7 @@
 				C0A0C281FED6B275E8AB36D7 /* VoiceActivationToggleTests.swift */,
 				8A5F42B45546147A75AAFF6A /* VoiceSessionTestSupport.swift */,
 				368C51815336D9BEB886FE19 /* VoiceSessionViewModelTests.swift */,
+				E004C456FF993C0A79C9C853 /* WakeWordWatcherTests.swift */,
 			);
 			path = IrisTests;
 			sourceTree = "<group>";
@@ -596,6 +602,7 @@
 				AC2FF2087AF8B0BFEAAFC79D /* TokenStore.swift in Sources */,
 				907F2CF9BBF559276040AA30 /* VoiceActivationToggle.swift in Sources */,
 				6F2D153EF85A82BB284DA2ED /* VoiceSessionViewModel.swift in Sources */,
+				A31D6CDFD098D5194299CF15 /* WakeWordWatcher.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -618,6 +625,7 @@
 				FB04D42AD7DFEB4F4B837437 /* VoiceActivationToggleTests.swift in Sources */,
 				07C61B39123478E60460680C /* VoiceSessionTestSupport.swift in Sources */,
 				6743E1E8470926FAC0A5DFF1 /* VoiceSessionViewModelTests.swift in Sources */,
+				115788A4B6BCD3C029FCDD78 /* WakeWordWatcherTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

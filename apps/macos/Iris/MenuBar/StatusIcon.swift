@@ -8,6 +8,9 @@ struct StatusIcon: View {
     let state: DaemonState
     /// Pending approvals — shown as a small count badge on the glyph.
     var approvalCount = 0
+    /// The on-device wake-word loop is armed — shown as a small accent dot, so
+    /// "Iris is listening" is always honest at a glance (never silent).
+    var listening = false
 
     var body: some View {
         Image(nsImage: SiriNewIcon.image(variant))
@@ -22,13 +25,22 @@ struct StatusIcon: View {
                         .offset(x: 5, y: -4)
                 }
             }
+            .overlay(alignment: .bottomTrailing) {
+                if listening, approvalCount == 0 {
+                    Circle()
+                        .fill(DesignSystem.Colors.accent)
+                        .frame(width: 5, height: 5)
+                        .offset(x: 3, y: 3)
+                }
+            }
             .accessibilityLabel(accessibilityLabel)
     }
 
     private var accessibilityLabel: String {
-        approvalCount > 0
-            ? "Iris: \(state.menuDescription), \(approvalCount) approvals pending"
-            : "Iris: \(state.menuDescription)"
+        var label = "Iris: \(state.menuDescription)"
+        if listening { label += ", listening for wake word" }
+        if approvalCount > 0 { label += ", \(approvalCount) approvals pending" }
+        return label
     }
 
     private var variant: SiriNewIcon.Variant {
