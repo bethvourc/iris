@@ -26,7 +26,7 @@ public final class SettingsViewModel {
         case failed(message: String)
     }
 
-    // Known keys, centralized so the panes and the model agree.
+    /// Known keys, centralized so the panes and the model agree.
     public enum Key {
         public static let wakeWords = "wake_words"
         public static let voice = "voice"
@@ -56,7 +56,7 @@ public final class SettingsViewModel {
     public func load() async {
         if !hasLoaded { state = .loading }
         do {
-            apply(try await provider.settings())
+            try await apply(provider.settings())
             state = .loaded
             hasLoaded = true
         } catch {
@@ -66,10 +66,18 @@ public final class SettingsViewModel {
 
     // MARK: - Accessors
 
-    public func entry(_ key: String) -> SettingEntry? { settings[key] }
+    public func entry(_ key: String) -> SettingEntry? {
+        settings[key]
+    }
+
     /// Env-managed keys come back `mutable: false`; default true if unknown.
-    public func isMutable(_ key: String) -> Bool { settings[key]?.mutable ?? true }
-    public func isEnvManaged(_ key: String) -> Bool { settings[key]?.source == .env }
+    public func isMutable(_ key: String) -> Bool {
+        settings[key]?.mutable ?? true
+    }
+
+    public func isEnvManaged(_ key: String) -> Bool {
+        settings[key]?.source == .env
+    }
 
     public func stringValue(_ key: String) -> String {
         if case let .string(value)? = settings[key]?.value { return value }
@@ -86,9 +94,17 @@ public final class SettingsViewModel {
         return items.compactMap { if case let .string(value) = $0 { value } else { nil } }
     }
 
-    public func error(_ key: String) -> String? { fieldErrors[key] }
-    public func isSaving(_ key: String) -> Bool { savingKeys.contains(key) }
-    public func isSecretSet(_ key: String) -> Bool { secrets[key]?.isSet ?? false }
+    public func error(_ key: String) -> String? {
+        fieldErrors[key]
+    }
+
+    public func isSaving(_ key: String) -> Bool {
+        savingKeys.contains(key)
+    }
+
+    public func isSecretSet(_ key: String) -> Bool {
+        secrets[key]?.isSet ?? false
+    }
 
     // MARK: - Typed savers (save-on-change)
 
@@ -129,7 +145,7 @@ public final class SettingsViewModel {
         savingKeys.insert(key)
         defer { savingKeys.remove(key) }
         do {
-            apply(try await provider.updateSecrets([key: trimmed]))
+            try await apply(provider.updateSecrets([key: trimmed]))
         } catch {
             fieldErrors[key] = Self.message(for: error)
         }
@@ -154,7 +170,7 @@ public final class SettingsViewModel {
         savingKeys.insert(key)
         defer { savingKeys.remove(key) }
         do {
-            apply(try await provider.updateSettings([key: value]))
+            try await apply(provider.updateSettings([key: value]))
         } catch {
             fieldErrors[key] = Self.message(for: error)
         }

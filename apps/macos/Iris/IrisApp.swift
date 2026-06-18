@@ -53,20 +53,20 @@ private struct MenuBarLabel: View {
             approvalCount: model.pendingApprovalCount,
             listening: model.wakeListening
         )
-            .task {
-                model.openWindowAction = { openWindow(id: $0) }
-                if model.shouldShowOnboarding {
-                    openWindow(id: "onboarding")
-                    NSApp.activate(ignoringOtherApps: true)
-                }
-                if ProcessInfo.processInfo.arguments.contains("--open-main-window") {
-                    openWindow(id: "main")
-                    NSApp.activate(ignoringOtherApps: true)
-                }
-                if model.shouldShowOverlayAtLaunch {
-                    model.showOverlay()
-                }
+        .task {
+            model.openWindowAction = { openWindow(id: $0) }
+            if model.shouldShowOnboarding {
+                openWindow(id: "onboarding")
+                NSApp.activate(ignoringOtherApps: true)
             }
+            if ProcessInfo.processInfo.arguments.contains("--open-main-window") {
+                openWindow(id: "main")
+                NSApp.activate(ignoringOtherApps: true)
+            }
+            if model.shouldShowOverlayAtLaunch {
+                model.showOverlay()
+            }
+        }
     }
 }
 

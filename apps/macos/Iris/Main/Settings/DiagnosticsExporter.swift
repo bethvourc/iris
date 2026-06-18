@@ -17,7 +17,7 @@ enum DiagnosticsExporter {
     /// Last `maxBytes` of the daemon log — for the log viewer and the bundle.
     static func readLogTail(maxBytes: Int = 200_000) -> String {
         guard let data = try? Data(contentsOf: logURL) else { return "" }
-        return String(decoding: data.suffix(maxBytes), as: UTF8.self)
+        return String(bytes: data.suffix(maxBytes), encoding: .utf8) ?? ""
     }
 
     static func appVersion() -> String {

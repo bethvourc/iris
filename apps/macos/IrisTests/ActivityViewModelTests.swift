@@ -204,7 +204,7 @@ final class ActivityViewModelTests: XCTestCase {
         await model.load()
 
         model.selection = "a"
-        await waitUntil { if case .loaded = model.detail { return true } else { return false } }
+        await waitUntil { if case .loaded = model.detail { true } else { false } }
 
         guard case let .loaded(loaded) = model.detail else {
             return XCTFail("expected detail .loaded, got \(model.detail)")
@@ -220,7 +220,7 @@ final class ActivityViewModelTests: XCTestCase {
         let model = ActivityViewModel(client: service)
         await model.load()
         model.selection = "a"
-        await waitUntil { if case .loaded = model.detail { return true } else { return false } }
+        await waitUntil { if case .loaded = model.detail { true } else { false } }
 
         model.selection = nil
 
@@ -236,7 +236,7 @@ final class ActivityViewModelTests: XCTestCase {
         await model.load()
 
         model.selection = "a"
-        await waitUntil { if case .failed = model.detail { return true } else { return false } }
+        await waitUntil { if case .failed = model.detail { true } else { false } }
 
         XCTAssertEqual(model.detail, .failed(message: "This item is no longer available."))
     }

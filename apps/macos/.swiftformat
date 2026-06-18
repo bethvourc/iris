@@ -9,4 +9,6 @@
 --stripunusedargs closure-only
 --self remove
 --importgrouping testable-bottom
---exclude Iris.xcodeproj
+# scripts/ holds standalone build tooling (a `swift` shebang script), not app
+# code; SwiftLint already scopes to the build targets only.
+--exclude Iris.xcodeproj,scripts

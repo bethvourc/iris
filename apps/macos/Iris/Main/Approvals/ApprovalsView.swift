@@ -153,7 +153,7 @@ private struct PendingApprovalCard: View {
             if let run = approval.runId, !run.isEmpty {
                 Text("Run \(run)")
             }
-            if let age = age {
+            if let age {
                 if approval.runId != nil { Text("·") }
                 Text(age)
             }
@@ -223,7 +223,9 @@ private struct RiskLabel: View {
             .accessibilityLabel("Risk: \(label)")
     }
 
-    private var isHighRisk: Bool { risk.lowercased() == "blocked" }
+    private var isHighRisk: Bool {
+        risk.lowercased() == "blocked"
+    }
 
     private var label: String {
         switch risk.lowercased() {

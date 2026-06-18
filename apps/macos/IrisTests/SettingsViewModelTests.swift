@@ -172,8 +172,13 @@ private actor FakeSettingsProvider: SettingsProviding {
         self.response = response
     }
 
-    func setFailLoad(_ value: Bool) { failLoad = value }
-    func setFailUpdates(_ error: Error) { updateError = error }
+    func setFailLoad(_ value: Bool) {
+        failLoad = value
+    }
+
+    func setFailUpdates(_ error: Error) {
+        updateError = error
+    }
 
     func settings() async throws -> SettingsResponse {
         if failLoad { throw IrisAPIError.daemonUnreachable(detail: "x") }
@@ -186,7 +191,11 @@ private actor FakeSettingsProvider: SettingsProviding {
         var merged = response.settings
         for (key, value) in changes {
             let existing = merged[key]
-            merged[key] = SettingEntry(value: value, source: existing?.source ?? .settings, mutable: existing?.mutable ?? true)
+            merged[key] = SettingEntry(
+                value: value,
+                source: existing?.source ?? .settings,
+                mutable: existing?.mutable ?? true
+            )
         }
         response = SettingsResponse(settings: merged, secrets: response.secrets)
         return response
@@ -196,7 +205,9 @@ private actor FakeSettingsProvider: SettingsProviding {
         secretUpdates.append(changes)
         if let updateError { throw updateError }
         var merged = response.secrets
-        for key in changes.keys { merged[key] = SecretStatus(isSet: true) }
+        for key in changes.keys {
+            merged[key] = SecretStatus(isSet: true)
+        }
         response = SettingsResponse(settings: response.settings, secrets: merged)
         return response
     }

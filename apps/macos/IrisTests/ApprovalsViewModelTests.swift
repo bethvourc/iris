@@ -17,8 +17,10 @@ final class ApprovalsViewModelTests: XCTestCase {
         )
     }
 
-    private func model(_ outcomes: [ScriptedApprovalFake.FeedOutcome] = [],
-                       decision: Result<Void, Error> = .success(())) -> (ApprovalsViewModel, ScriptedApprovalFake) {
+    private func model(
+        _ outcomes: [ScriptedApprovalFake.FeedOutcome] = [],
+        decision: Result<Void, Error> = .success(())
+    ) -> (ApprovalsViewModel, ScriptedApprovalFake) {
         let source = ScriptedApprovalFake(feeds: outcomes, decision: decision)
         return (ApprovalsViewModel(source: source), source)
     }

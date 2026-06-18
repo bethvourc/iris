@@ -22,7 +22,7 @@ final class AccessibilityAudit: XCTestCase {
             "--ui-test-home", "populated",
             "--ui-test-activity", "populated",
             "--ui-test-approvals", "pending",
-            "--ui-test-settings", "loaded",
+            "--ui-test-settings", "loaded"
         ]
         app.launch()
         guard app.windows["Iris"].waitForExistence(timeout: 10) else {
@@ -72,7 +72,7 @@ final class AccessibilityAudit: XCTestCase {
     /// and that we don't construct (the NSHostingView root group, the overlay's
     /// hosting group, the Touch Bar, help-tag tooltips, scroll/list wrappers).
     private static let containerRoles: Set<XCUIElement.ElementType> = [
-        .group, .window, .dialog, .touchBar, .helpTag, .scrollView, .table, .outline, .other,
+        .group, .window, .dialog, .touchBar, .helpTag, .scrollView, .table, .outline, .other
     ]
 
     /// Findings we intentionally accept because they belong to AppKit/SwiftUI
@@ -137,7 +137,7 @@ final class AccessibilityAudit: XCTestCase {
         app.launchArguments = [
             "--ui-test-state", "healthy",
             "--ui-test-overlay",
-            "--ui-test-overlay-state", "listening",
+            "--ui-test-overlay-state", "listening"
         ]
         app.launch()
         guard app.descendants(matching: .any)["overlay-panel"].waitForExistence(timeout: 10) else {

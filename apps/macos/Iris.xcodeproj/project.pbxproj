@@ -77,7 +77,9 @@
 		D906FF264EF1A12CFEF7443D /* StatusIcon.swift in Sources */ = {isa = PBXBuildFile; fileRef = A90EB0F1E02CB4A9D1A6D939 /* StatusIcon.swift */; };
 		E045B64A8DA7BF576DEBC6B0 /* MenuBarView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D8968AF18FC7A89DEA1035BD /* MenuBarView.swift */; };
 		E597ED3517980E565D7A4A71 /* HomeViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 53BDF75BA5BCBDD0DC3629B8 /* HomeViewModel.swift */; };
+		EB37EB593C43787B02900913 /* DaemonConfiguration.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4F3C74525867A60393A77546 /* DaemonConfiguration.swift */; };
 		ED4564A26C4B445F73DF5123 /* AppModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = DF4488917C20113D8BEBA033 /* AppModel.swift */; };
+		F5763B85A25E67582B2AB4F1 /* AppModel+Launch.swift in Sources */ = {isa = PBXBuildFile; fileRef = 66AE68225F288235425EF50A /* AppModel+Launch.swift */; };
 		F72A7D664272B6F549C7BBBB /* OverlayGeometryTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = EBBE6AA6E8A0BB9DF7379426 /* OverlayGeometryTests.swift */; };
 		FA9AB2FB4DD692116E9DFF5E /* ApprovalsViewModelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7410EBB5AC6ADE03840DDCF4 /* ApprovalsViewModelTests.swift */; };
 		FB04D42AD7DFEB4F4B837437 /* VoiceActivationToggleTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0A0C281FED6B275E8AB36D7 /* VoiceActivationToggleTests.swift */; };
@@ -156,6 +158,7 @@
 		4817A7463132D678935AD668 /* ApprovalsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ApprovalsView.swift; sourceTree = "<group>"; };
 		485D527C4FEB1FBF6282B238 /* Components.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Components.swift; sourceTree = "<group>"; };
 		49720BD61CF053D6D234EF1B /* HomeViewModelTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HomeViewModelTests.swift; sourceTree = "<group>"; };
+		4F3C74525867A60393A77546 /* DaemonConfiguration.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DaemonConfiguration.swift; sourceTree = "<group>"; };
 		511C19A5D2BC2AA0CF91B476 /* Models.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models.swift; sourceTree = "<group>"; };
 		51758270EE594413BD57364D /* APIClientTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = APIClientTests.swift; sourceTree = "<group>"; };
 		527F060CF8C7BE3BF0D545CE /* Iris.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = Iris.entitlements; sourceTree = "<group>"; };
@@ -170,6 +173,7 @@
 		5D0A88C56A8806CDBA9729B9 /* IrisAPIError.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IrisAPIError.swift; sourceTree = "<group>"; };
 		5D70DB5CBC94B0FA1EEDA34D /* TokenStoreTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TokenStoreTests.swift; sourceTree = "<group>"; };
 		5EFCB894FA1687C8B5500551 /* SettingsViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsViewModel.swift; sourceTree = "<group>"; };
+		66AE68225F288235425EF50A /* AppModel+Launch.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "AppModel+Launch.swift"; sourceTree = "<group>"; };
 		6882310BBE5EEEB7EDE09E4F /* SiriNewIcon.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SiriNewIcon.swift; sourceTree = "<group>"; };
 		6B1FBBA4C38C01CDA146F874 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		6F3DE91910860EFA8169880E /* HotkeyController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HotkeyController.swift; sourceTree = "<group>"; };
@@ -246,6 +250,7 @@
 				C5EE5E09FA40B51A7641C6D5 /* ApprovalNotifier.swift */,
 				442F31DB661417CB238F1ADA /* ApprovalsViewModel.swift */,
 				59EAF2213EFFB592027EB184 /* Backoff.swift */,
+				4F3C74525867A60393A77546 /* DaemonConfiguration.swift */,
 				5832BB3F2301BAB207502BC3 /* DaemonManager.swift */,
 				15FE71599F07D9A1CDC9BFF2 /* DaemonState.swift */,
 				989B032177C157CECACA3D0E /* Diagnostics.swift */,
@@ -436,6 +441,7 @@
 			isa = PBXGroup;
 			children = (
 				DF4488917C20113D8BEBA033 /* AppModel.swift */,
+				66AE68225F288235425EF50A /* AppModel+Launch.swift */,
 			);
 			path = App;
 			sourceTree = "<group>";
@@ -627,6 +633,7 @@
 				7E4A44B1053A7E1550C5C833 /* ApprovalNotifier.swift in Sources */,
 				5562D2C4CB226A3A22B7AC3B /* ApprovalsViewModel.swift in Sources */,
 				381C68541379DB50A2F9206C /* Backoff.swift in Sources */,
+				EB37EB593C43787B02900913 /* DaemonConfiguration.swift in Sources */,
 				8EBC18397BD612DCCB7BBD59 /* DaemonManager.swift in Sources */,
 				979273EC3D7ED668E1A3D226 /* DaemonState.swift in Sources */,
 				6A40F662D749E0F1A3A3B8F0 /* Diagnostics.swift in Sources */,
@@ -675,6 +682,7 @@
 				224BCBC09F9432088E0D13F4 /* ActivityDetailView.swift in Sources */,
 				ABFACF540131E31BDDC5B2CB /* ActivityListView.swift in Sources */,
 				C4CA8AACB0CB43C2D784EDF9 /* AdvancedPane.swift in Sources */,
+				F5763B85A25E67582B2AB4F1 /* AppModel+Launch.swift in Sources */,
 				ED4564A26C4B445F73DF5123 /* AppModel.swift in Sources */,
 				0B0F83803155186C02F3472A /* ApprovalsView.swift in Sources */,
 				997DFB58FC4CE662E1037659 /* Components.swift in Sources */,

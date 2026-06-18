@@ -8,7 +8,9 @@ enum MainSection: String, CaseIterable, Identifiable, Hashable {
     case approvals
     case settings
 
-    var id: String { rawValue }
+    var id: String {
+        rawValue
+    }
 
     var title: String {
         switch self {

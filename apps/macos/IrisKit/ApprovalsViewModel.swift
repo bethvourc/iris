@@ -23,7 +23,9 @@ public final class ApprovalsViewModel {
     public struct Resolved: Equatable, Sendable, Identifiable {
         public let approval: Approval
         public let decision: ApprovalDecision
-        public var id: String { approval.approvalId }
+        public var id: String {
+            approval.approvalId
+        }
 
         public init(approval: Approval, decision: ApprovalDecision) {
             self.approval = approval
@@ -41,7 +43,9 @@ public final class ApprovalsViewModel {
     /// Non-fatal: a failed decision surfaces here without dropping content.
     public private(set) var actionError: String?
 
-    public var pendingCount: Int { pending.count }
+    public var pendingCount: Int {
+        pending.count
+    }
 
     private let source: any ApprovalSource
     private let pollInterval: Duration

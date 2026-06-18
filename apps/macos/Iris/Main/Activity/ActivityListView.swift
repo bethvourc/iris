@@ -32,7 +32,9 @@ struct ActivityView: View {
 
     /// The detail pane is a collapsible inspector: the list owns the full width
     /// until an item is selected, then the detail slides in alongside it.
-    private var isDetailShown: Bool { model.selection != nil }
+    private var isDetailShown: Bool {
+        model.selection != nil
+    }
 
     private var revealAnimation: Animation {
         .easeInOut(duration: ActivityMetrics.slideDuration)

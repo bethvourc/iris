@@ -91,7 +91,7 @@ struct ScriptedActivityService: ActivityServing {
             {"role": "user", "text": "What's on my calendar today?",
              "time": "2026-06-14T13:20:02Z"},
             {"role": "assistant",
-             "text": "You have three things today: a 10 a.m. design review, lunch with Sam at noon, and a 3 p.m. one-on-one.",
+             "text": "You have three things today: a 10 a.m. design review, lunch with Sam, and a 3 p.m. one-on-one.",
              "time": "2026-06-14T13:20:05Z"},
             {"role": "user", "text": "Move the one-on-one to tomorrow.",
              "time": "2026-06-14T13:20:18Z"},

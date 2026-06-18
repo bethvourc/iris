@@ -219,7 +219,7 @@ final class AppModel {
         return model
     }
 
-    private static func argumentValue(after flag: String) -> String? {
+    static func argumentValue(after flag: String) -> String? {
         let arguments = ProcessInfo.processInfo.arguments
         guard let index = arguments.firstIndex(of: flag),
               arguments.indices.contains(index + 1) else { return nil }
@@ -279,6 +279,13 @@ final class AppModel {
             onActivate: { [weak self] in self?.voiceActivationRequested() },
             onDeactivate: { [weak self] in self?.voiceDeactivationRequested() }
         )
+        configureVoiceIntegration()
+        Task { await manager.start() }
+    }
+
+    /// Wire the voice session view model's callbacks to the app layer (hotkey,
+    /// overlay, recovery actions) and start the always-on wake watcher.
+    private func configureVoiceIntegration() {
         // Session truth from the SSE stream reconciles the activation toggle;
         // a session ending on its own dismisses the overlay.
         voiceModel.onSessionActiveChanged = { [weak self] active in
@@ -298,18 +305,16 @@ final class AppModel {
         }
         // Always-on wake watcher: opens a session on "Hey Iris" and mirrors the
         // daemon's listening state. Skipped under UI tests (daemon-free).
-        if !Self.isUITestRun {
-            let watcher = WakeWordWatcher(
-                eventStream: voiceEventsStream,
-                onWake: { [weak self] in self?.wakeActivationRequested() },
-                onListeningChanged: { [weak self] listening in
-                    self?.wakeListening = listening
-                }
-            )
-            wakeWatcher = watcher
-            watcher.start()
-        }
-        Task { await manager.start() }
+        guard !Self.isUITestRun else { return }
+        let watcher = WakeWordWatcher(
+            eventStream: voiceEventsStream,
+            onWake: { [weak self] in self?.wakeActivationRequested() },
+            onListeningChanged: { [weak self] listening in
+                self?.wakeListening = listening
+            }
+        )
+        wakeWatcher = watcher
+        watcher.start()
     }
 
     /// "Hey Iris" was detected on-device. Open the overlay and start a session,
@@ -373,98 +378,5 @@ final class AppModel {
     func shutdownForQuit() async {
         observationTask?.cancel()
         await daemonManager?.stop()
-    }
-
-    // MARK: - Runtime resolution
-
-    private static func daemonConfiguration() -> DaemonConfiguration? {
-        let port = AppPreferences().gatewayPort
-        let logDirectory = FileManager.default.homeDirectoryForCurrentUser
-            .appending(path: "Library/Logs/Iris")
-        // Dev checkout wins: run the daemon from the repo via uv so source edits
-        // take effect without repackaging.
-        if let repoRoot = devRepoRoot() {
-            return .development(
-                repoRoot: repoRoot, port: port, logDirectory: logDirectory
-            )
-        }
-        // Shipped app: run the embedded Python runtime from the bundle.
-        if let resources = Bundle.main.resourceURL,
-           DaemonConfiguration.bundledRuntimeExists(resourcesURL: resources) {
-            return .bundled(
-                resourcesURL: resources, port: port, logDirectory: logDirectory
-            )
-        }
-        return nil
-    }
-
-    /// Dev builds resolve the repo from IRIS_REPO_ROOT or from this source
-    /// file's compile-time location (apps/macos/Iris/App/AppModel.swift).
-    private static func devRepoRoot() -> URL? {
-        if let override = ProcessInfo.processInfo.environment["IRIS_REPO_ROOT"] {
-            return URL(fileURLWithPath: override)
-        }
-        var url = URL(fileURLWithPath: #filePath)
-        for _ in 0 ..< 5 {
-            url.deleteLastPathComponent()
-        }
-        let marker = url.appending(path: "pyproject.toml")
-        return FileManager.default.fileExists(atPath: marker.path) ? url : nil
-    }
-
-    // MARK: - UI-test support
-
-    /// `--ui-test-state <name>` pins a daemon state and skips real
-    /// supervision, so UI tests and screenshots are deterministic.
-    private static let pinnableStates: [String: DaemonState] = [
-        "healthy": .healthy(adopted: false),
-        "adopted": .healthy(adopted: true),
-        "launching": .launching,
-        "restarting": .restarting(attempt: 2),
-        "unhealthy": .unhealthy,
-        "crashLooping": .crashLooping(stderrTail: "stub stderr tail"),
-        "portConflict": .portConflict(reason: "port 8765 is owned by something else"),
-        "tokenMismatch": .tokenMismatch,
-        "stopped": .stopped
-    ]
-
-    private static func uiTestState() -> DaemonState? {
-        let arguments = ProcessInfo.processInfo.arguments
-        guard let flagIndex = arguments.firstIndex(of: "--ui-test-state"),
-              arguments.indices.contains(flagIndex + 1) else { return nil }
-        return pinnableStates[arguments[flagIndex + 1]]
-    }
-
-    /// `--ui-test-overlay-state <name>` pins a rendered overlay state with
-    /// sample content, so each state is screenshottable without a daemon.
-    private struct ForcedOverlay {
-        let state: VoiceSessionViewModel.DisplayState
-        var userText = ""
-        var assistantText = ""
-        var statusLine: String?
-    }
-
-    private static let forcedOverlayStates: [String: ForcedOverlay] = [
-        "connecting": ForcedOverlay(state: .connecting),
-        "listening": ForcedOverlay(state: .listening, userText: "What's on my calendar today?"),
-        "thinking": ForcedOverlay(state: .thinking, statusLine: "Checking your calendar…"),
-        "speaking": ForcedOverlay(
-            state: .speaking,
-            userText: "What's on my calendar today?",
-            assistantText: "You have three things: a 10 a.m. design review, "
-                + "lunch with Sam at noon, and a 3 p.m. one-on-one."
-        ),
-        "ended": ForcedOverlay(state: .ended(summary: "Set a reminder for 3 p.m.")),
-        "error-daemon": ForcedOverlay(state: .error(.daemonNotRunning)),
-        "error-crash": ForcedOverlay(state: .error(.daemonFailing)),
-        "error-port": ForcedOverlay(state: .error(.portConflict)),
-        "error-token": ForcedOverlay(state: .error(.tokenMismatch)),
-        "error-mic": ForcedOverlay(state: .error(.microphoneOff)),
-        "error": ForcedOverlay(state: .error(.generic(message: "Couldn't reach OpenAI.")))
-    ]
-
-    private static func forcedOverlayState() -> ForcedOverlay? {
-        guard let name = argumentValue(after: "--ui-test-overlay-state") else { return nil }
-        return forcedOverlayStates[name]
     }
 }

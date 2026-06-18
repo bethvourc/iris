@@ -17,31 +17,31 @@ enum DesignSystem {
     /// directly, so a palette change happens in exactly one place.
     enum Colors {
         /// The window canvas behind cards and content.
-        static let canvas = dynamic(light: 0xF7_F7_F5, dark: 0x1C_1C_1E)
+        static let canvas = dynamic(light: 0xF7F7F5, dark: 0x1C1C1E)
         /// Raised surface — cards, the selected sidebar row.
-        static let surface = dynamic(light: 0xFF_FF_FF, dark: 0x25_25_27)
+        static let surface = dynamic(light: 0xFFFFFF, dark: 0x252527)
         /// A quieter fill for nested wells and the sidebar background.
-        static let surfaceSecondary = dynamic(light: 0xF0_F0_ED, dark: 0x2D_2D_30)
+        static let surfaceSecondary = dynamic(light: 0xF0F0ED, dark: 0x2D2D30)
 
         /// Hairline borders and dividers — never heavier than 1pt.
-        static let border = dynamic(light: 0xE3_E3_DE, dark: 0x3A_3A_3D)
+        static let border = dynamic(light: 0xE3E3DE, dark: 0x3A3A3D)
 
         // Text tiers all clear WCAG AA (4.5:1) for normal text against every
         // surface they appear on, while staying visually distinct from each
         // other — verified in both appearances.
-        static let textPrimary = dynamic(light: 0x1A_1A_18, dark: 0xF2_F2_F0)
-        static let textSecondary = dynamic(light: 0x59_59_54, dark: 0xB2_B2_AD)
-        static let textTertiary = dynamic(light: 0x6E_6E_68, dark: 0x95_95_8F)
+        static let textPrimary = dynamic(light: 0x1A1A18, dark: 0xF2F2F0)
+        static let textSecondary = dynamic(light: 0x595954, dark: 0xB2B2AD)
+        static let textTertiary = dynamic(light: 0x6E6E68, dark: 0x95958F)
 
         /// The lone accent — a single royal blue. Brightened in dark mode so it
         /// clears AA against the dark canvas *and* raised card surfaces (links).
-        static let accent = dynamic(light: 0x2D_54_CE, dark: 0x78_91_FF)
+        static let accent = dynamic(light: 0x2D54CE, dark: 0x7891FF)
 
         /// Status hues, used only for status: healthy/success, caution,
         /// failure/destructive. Never decorative.
-        static let moss = dynamic(light: 0x4E_7A_4F, dark: 0x74_A9_75)
-        static let amber = dynamic(light: 0xB5_81_1F, dark: 0xE0_A5_3E)
-        static let rust = dynamic(light: 0xB1_4A_2C, dark: 0xE0_7B_5B)
+        static let moss = dynamic(light: 0x4E7A4F, dark: 0x74A975)
+        static let amber = dynamic(light: 0xB5811F, dark: 0xE0A53E)
+        static let rust = dynamic(light: 0xB14A2C, dark: 0xE07B5B)
     }
 
     // MARK: - Typography

@@ -3,107 +3,11 @@ import os
 
 /// Spawns and supervises the Python daemon (docs/desktop/architecture.md §3).
 ///
-/// Responsibilities: resolve + launch the daemon with the Keychain token in
-/// its environment, poll `/health` until ready, restart with jittered
-/// backoff on unexpected exits, declare crash-loop after repeated failures,
-/// detect port conflicts and token mismatches, and adopt (never kill) a
-/// daemon someone else started.
-public struct DaemonConfiguration: Sendable {
-    public var executableURL: URL
-    public var arguments: [String]
-    public var workingDirectory: URL?
-    public var extraEnvironment: [String: String]
-    public var port: Int
-    public var launchTimeout: Duration
-    public var pollInterval: Duration
-    public var healthCheckInterval: Duration
-    public var minRestartBackoff: Duration
-    public var maxRestartBackoff: Duration
-    public var crashLoopThreshold: Int
-    public var crashLoopWindow: Duration
-    public var stopGracePeriod: Duration
-
-    public init(
-        executableURL: URL,
-        arguments: [String],
-        workingDirectory: URL? = nil,
-        extraEnvironment: [String: String] = [:],
-        port: Int = AppPreferences.defaultGatewayPort,
-        launchTimeout: Duration = .seconds(15),
-        pollInterval: Duration = .milliseconds(200),
-        healthCheckInterval: Duration = .seconds(5),
-        minRestartBackoff: Duration = .seconds(1),
-        maxRestartBackoff: Duration = .seconds(30),
-        crashLoopThreshold: Int = 3,
-        crashLoopWindow: Duration = .seconds(60),
-        stopGracePeriod: Duration = .seconds(5)
-    ) {
-        self.executableURL = executableURL
-        self.arguments = arguments
-        self.workingDirectory = workingDirectory
-        self.extraEnvironment = extraEnvironment
-        self.port = port
-        self.launchTimeout = launchTimeout
-        self.pollInterval = pollInterval
-        self.healthCheckInterval = healthCheckInterval
-        self.minRestartBackoff = minRestartBackoff
-        self.maxRestartBackoff = maxRestartBackoff
-        self.crashLoopThreshold = crashLoopThreshold
-        self.crashLoopWindow = crashLoopWindow
-        self.stopGracePeriod = stopGracePeriod
-    }
-
-    /// Dev mode: run the gateway from the repo checkout via uv.
-    public static func development(
-        repoRoot: URL,
-        port: Int = AppPreferences.defaultGatewayPort,
-        logDirectory: URL
-    ) -> DaemonConfiguration {
-        DaemonConfiguration(
-            executableURL: URL(fileURLWithPath: "/usr/bin/env"),
-            arguments: [
-                "uv", "run", "iris", "serve",
-                "--port", String(port),
-                "--json-logs",
-                "--log-dir", logDirectory.path
-            ],
-            workingDirectory: repoRoot,
-            port: port
-        )
-    }
-
-    /// Release mode: run the gateway from the embedded Python runtime shipped in
-    /// `Iris.app/Contents/Resources/iris-runtime/` (built by
-    /// `scripts/package_python.sh`). No system Python or dev tools required.
-    public static func bundled(
-        resourcesURL: URL,
-        port: Int = AppPreferences.defaultGatewayPort,
-        logDirectory: URL
-    ) -> DaemonConfiguration {
-        let python = resourcesURL
-            .appending(path: "iris-runtime/python/bin/python3")
-        return DaemonConfiguration(
-            // Invoke the interpreter directly with `-m iris` rather than the
-            // generated `iris` console script, whose shebang isn't relocatable.
-            executableURL: python,
-            arguments: [
-                "-m", "iris", "serve",
-                "--port", String(port),
-                "--json-logs",
-                "--log-dir", logDirectory.path
-            ],
-            port: port
-        )
-    }
-
-    /// Whether the embedded runtime exists at `resourcesURL` (a packaged app).
-    public static func bundledRuntimeExists(resourcesURL: URL) -> Bool {
-        let python = resourcesURL
-            .appending(path: "iris-runtime/python/bin/python3")
-        return FileManager.default.isExecutableFile(atPath: python.path)
-    }
-}
-
+/// Responsibilities: resolve + launch the daemon (see `DaemonConfiguration`)
+/// with the Keychain token in its environment, poll `/health` until ready,
+/// restart with jittered backoff on unexpected exits, declare crash-loop after
+/// repeated failures, detect port conflicts and token mismatches, and adopt
+/// (never kill) a daemon someone else started.
 public actor DaemonManager {
     public typealias HealthProbe = @Sendable (URL, String?) async -> ProbeOutcome
     public typealias Configuration = DaemonConfiguration

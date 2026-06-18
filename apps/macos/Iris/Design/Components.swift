@@ -1,9 +1,9 @@
 import SwiftUI
 
-/// Shared building blocks rendered entirely from `DesignSystem` tokens. These
-/// are the only primitives the section views (Home, Activity, Approvals,
-/// Settings) should reach for when they need a card, a label, a status dot, or
-/// an empty state — so consistency is structural, not a per-view discipline.
+// Shared building blocks rendered entirely from `DesignSystem` tokens. These
+// are the only primitives the section views (Home, Activity, Approvals,
+// Settings) should reach for when they need a card, a label, a status dot, or
+// an empty state — so consistency is structural, not a per-view discipline.
 
 // MARK: - Card
 
@@ -31,7 +31,9 @@ struct Card<Content: View>: View {
 struct SectionLabel: View {
     let text: String
 
-    init(_ text: String) { self.text = text }
+    init(_ text: String) {
+        self.text = text
+    }
 
     var body: some View {
         Text(text.uppercased())

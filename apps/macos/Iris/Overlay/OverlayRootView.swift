@@ -50,7 +50,7 @@ struct OverlayRootView: View {
             notification: .announcementRequested,
             userInfo: [
                 .announcement: phrase,
-                .priority: NSAccessibilityPriorityLevel.high.rawValue,
+                .priority: NSAccessibilityPriorityLevel.high.rawValue
             ]
         )
     }
