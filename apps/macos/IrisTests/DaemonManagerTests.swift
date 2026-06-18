@@ -17,6 +17,44 @@ final class DaemonManagerTests: XCTestCase {
         try super.tearDownWithError()
     }
 
+    // MARK: - Configuration factories
+
+    func testBundledConfigurationResolvesEmbeddedRuntime() {
+        let resources = URL(fileURLWithPath: "/Apps/Iris.app/Contents/Resources")
+        let logs = URL(fileURLWithPath: "/tmp/logs")
+        let config = DaemonConfiguration.bundled(
+            resourcesURL: resources, port: 8800, logDirectory: logs
+        )
+        XCTAssertEqual(
+            config.executableURL.path,
+            "/Apps/Iris.app/Contents/Resources/iris-runtime/python/bin/python3"
+        )
+        XCTAssertEqual(
+            config.arguments,
+            ["-m", "iris", "serve", "--port", "8800", "--json-logs",
+             "--log-dir", "/tmp/logs"]
+        )
+        // No working directory: the embedded runtime is self-contained.
+        XCTAssertNil(config.workingDirectory)
+        XCTAssertEqual(config.port, 8800)
+    }
+
+    func testBundledRuntimeExistsDetection() throws {
+        // Absent in a bare directory...
+        XCTAssertFalse(DaemonConfiguration.bundledRuntimeExists(resourcesURL: workDir))
+        // ...present once an executable interpreter is laid down.
+        let binDir = workDir.appending(path: "iris-runtime/python/bin")
+        try FileManager.default.createDirectory(
+            at: binDir, withIntermediateDirectories: true
+        )
+        let python = binDir.appending(path: "python3")
+        try Data("#!/bin/sh\n".utf8).write(to: python)
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0o755], ofItemAtPath: python.path
+        )
+        XCTAssertTrue(DaemonConfiguration.bundledRuntimeExists(resourcesURL: workDir))
+    }
+
     // MARK: - Fixtures
 
     private func writeScript(_ body: String) throws -> URL {

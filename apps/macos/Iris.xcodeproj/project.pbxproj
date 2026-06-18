@@ -493,6 +493,7 @@
 				38E6665FE1001B13C56AFF3D /* Sources */,
 				9E37C435105A0404CF6F56D0 /* Frameworks */,
 				FD007FAA19BA048340249FAD /* Embed Frameworks */,
+				14B5C9E7D69DDE18D360D1A6 /* Embed Python runtime */,
 			);
 			buildRules = (
 			);
@@ -577,6 +578,28 @@
 			);
 		};
 /* End PBXProject section */
+
+/* Begin PBXShellScriptBuildPhase section */
+		14B5C9E7D69DDE18D360D1A6 /* Embed Python runtime */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+			);
+			name = "Embed Python runtime";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "\"${SRCROOT}/scripts/package_python.sh\"";
+		};
+/* End PBXShellScriptBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
 		15D4CEE4500EB55205895950 /* Sources */ = {

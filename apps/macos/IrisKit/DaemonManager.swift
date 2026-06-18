@@ -71,6 +71,37 @@ public struct DaemonConfiguration: Sendable {
             port: port
         )
     }
+
+    /// Release mode: run the gateway from the embedded Python runtime shipped in
+    /// `Iris.app/Contents/Resources/iris-runtime/` (built by
+    /// `scripts/package_python.sh`). No system Python or dev tools required.
+    public static func bundled(
+        resourcesURL: URL,
+        port: Int = AppPreferences.defaultGatewayPort,
+        logDirectory: URL
+    ) -> DaemonConfiguration {
+        let python = resourcesURL
+            .appending(path: "iris-runtime/python/bin/python3")
+        return DaemonConfiguration(
+            // Invoke the interpreter directly with `-m iris` rather than the
+            // generated `iris` console script, whose shebang isn't relocatable.
+            executableURL: python,
+            arguments: [
+                "-m", "iris", "serve",
+                "--port", String(port),
+                "--json-logs",
+                "--log-dir", logDirectory.path
+            ],
+            port: port
+        )
+    }
+
+    /// Whether the embedded runtime exists at `resourcesURL` (a packaged app).
+    public static func bundledRuntimeExists(resourcesURL: URL) -> Bool {
+        let python = resourcesURL
+            .appending(path: "iris-runtime/python/bin/python3")
+        return FileManager.default.isExecutableFile(atPath: python.path)
+    }
 }
 
 public actor DaemonManager {

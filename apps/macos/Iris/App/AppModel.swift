@@ -378,14 +378,24 @@ final class AppModel {
     // MARK: - Runtime resolution
 
     private static func daemonConfiguration() -> DaemonConfiguration? {
-        guard let repoRoot = devRepoRoot() else { return nil }
+        let port = AppPreferences().gatewayPort
         let logDirectory = FileManager.default.homeDirectoryForCurrentUser
             .appending(path: "Library/Logs/Iris")
-        return .development(
-            repoRoot: repoRoot,
-            port: AppPreferences().gatewayPort,
-            logDirectory: logDirectory
-        )
+        // Dev checkout wins: run the daemon from the repo via uv so source edits
+        // take effect without repackaging.
+        if let repoRoot = devRepoRoot() {
+            return .development(
+                repoRoot: repoRoot, port: port, logDirectory: logDirectory
+            )
+        }
+        // Shipped app: run the embedded Python runtime from the bundle.
+        if let resources = Bundle.main.resourceURL,
+           DaemonConfiguration.bundledRuntimeExists(resourcesURL: resources) {
+            return .bundled(
+                resourcesURL: resources, port: port, logDirectory: logDirectory
+            )
+        }
+        return nil
     }
 
     /// Dev builds resolve the repo from IRIS_REPO_ROOT or from this source
