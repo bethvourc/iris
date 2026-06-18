@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- Hardened-runtime exceptions for the EMBEDDED Python interpreter only
+	     (Contents/Resources/iris-runtime/.../python3.x), not the app. An
+	     embedded CPython that imports third-party native wheels (cffi, ctypes,
+	     pyobjc, numpy/onnxruntime when bundled) needs these to run under the
+	     hardened runtime + notarization. The app itself keeps the minimal
+	     Iris.entitlements (microphone only). -->
+
+	<!-- cffi/ctypes generate and call executable trampolines at runtime. -->
+	<key>com.apple.security.cs.allow-unsigned-executable-memory</key>
+	<true/>
+
+	<!-- Some numerical/JIT-ish backends map writable+executable memory. -->
+	<key>com.apple.security.cs.allow-jit</key>
+	<true/>
+
+	<!-- Load the interpreter's own bundled dylibs and wheel-provided native
+	     libraries. They are re-signed with our Developer ID during packaging,
+	     but disabling library validation keeps dlopen of relocated libs robust
+	     across the runtime tree. -->
+	<key>com.apple.security.cs.disable-library-validation</key>
+	<true/>
+</dict>
+</plist>
