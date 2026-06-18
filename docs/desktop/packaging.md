@@ -77,13 +77,25 @@ Run it standalone (outside Xcode) against any Resources directory:
 CONFIGURATION=Release apps/macos/scripts/package_python.sh /path/to/Resources
 ```
 
-### Architecture
+### Architecture (universal)
 
-The script targets a single architecture per build, chosen from Xcode's `$ARCHS`
-(falling back to `uname -m`): `arm64` → `aarch64-apple-darwin`, `x86_64` →
-`x86_64-apple-darwin`. python-build-standalone ships per-arch archives; a
-universal app would `lipo` two runtimes together (not yet implemented — Apple
-Silicon is the primary target).
+The script builds one runtime per architecture in `$ARCHS` (default
+`arm64 x86_64`), then merges them into a single universal tree:
+
+1. For each arch, extract the matching python-build-standalone archive and
+   install the locked deps with uv's `--python-platform` / `--python-version`
+   (so x86_64 wheels install on an Apple Silicon host with no Rosetta).
+2. The first arch becomes the primary tree; for every other arch, each Mach-O
+   file (`python3`, `*.dylib`, `*.so`) is combined with `lipo` into a fat binary
+   (slices deduped, so wheels that already ship universal are handled). Identical
+   pure-Python/text files are kept from the primary.
+
+The result is verified with `lipo -archs` on the interpreter (recorded in
+`VERSION` as `interpreter_archs`). A Release build with `ONLY_ACTIVE_ARCH=NO`
+(the default for `xcodebuild ... -configuration Release`) yields a fully
+universal app — both `Contents/MacOS/Iris` and the embedded runtime.
+
+To build a single-arch runtime (faster, dev convenience): `ARCHS=arm64 …`.
 
 ### Wake word (optional, large)
 
