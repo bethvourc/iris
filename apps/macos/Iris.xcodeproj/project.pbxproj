@@ -59,6 +59,7 @@
 		A1288E007666B7294A1492CB /* IrisKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 268F9212891F25E9B2633CCB /* IrisKit.framework */; };
 		A156C0F55F0ED832F3DFD175 /* AccessibilityAudit.swift in Sources */ = {isa = PBXBuildFile; fileRef = C605A81B9B7C99053C163FD8 /* AccessibilityAudit.swift */; };
 		A31D6CDFD098D5194299CF15 /* WakeWordWatcher.swift in Sources */ = {isa = PBXBuildFile; fileRef = 16111DA05D4ECA21A9891CBC /* WakeWordWatcher.swift */; };
+		A626827C9763E6995AD3724C /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 6B1FBBA4C38C01CDA146F874 /* Assets.xcassets */; };
 		A7FAB0CECD6B2EE392846C56 /* GeneralPane.swift in Sources */ = {isa = PBXBuildFile; fileRef = 917B1716719B723BBE8FB5D4 /* GeneralPane.swift */; };
 		ABFACF540131E31BDDC5B2CB /* ActivityListView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E7D5C316F6E8E01D2496BC6F /* ActivityListView.swift */; };
 		AC2FF2087AF8B0BFEAAFC79D /* TokenStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = E6E21B8ACF374663E4E71D28 /* TokenStore.swift */; };
@@ -170,6 +171,7 @@
 		5D70DB5CBC94B0FA1EEDA34D /* TokenStoreTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TokenStoreTests.swift; sourceTree = "<group>"; };
 		5EFCB894FA1687C8B5500551 /* SettingsViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsViewModel.swift; sourceTree = "<group>"; };
 		6882310BBE5EEEB7EDE09E4F /* SiriNewIcon.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SiriNewIcon.swift; sourceTree = "<group>"; };
+		6B1FBBA4C38C01CDA146F874 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		6F3DE91910860EFA8169880E /* HotkeyController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HotkeyController.swift; sourceTree = "<group>"; };
 		7410EBB5AC6ADE03840DDCF4 /* ApprovalsViewModelTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ApprovalsViewModelTests.swift; sourceTree = "<group>"; };
 		74C7B8112CF837094372ACCF /* AppPreferences.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppPreferences.swift; sourceTree = "<group>"; };
@@ -353,6 +355,7 @@
 		AD693C86B9C5C60C0F865BD7 /* Iris */ = {
 			isa = PBXGroup;
 			children = (
+				6B1FBBA4C38C01CDA146F874 /* Assets.xcassets */,
 				FA4B1FE916581CEAA29457C4 /* Info.plist */,
 				527F060CF8C7BE3BF0D545CE /* Iris.entitlements */,
 				553E0AFFE0B2EB105BB5FB5F /* IrisApp.swift */,
@@ -491,6 +494,7 @@
 			buildConfigurationList = A7101607CB8AABFC691FB9FC /* Build configuration list for PBXNativeTarget "Iris" */;
 			buildPhases = (
 				38E6665FE1001B13C56AFF3D /* Sources */,
+				C584275E28E9A30EB0F38B91 /* Resources */,
 				9E37C435105A0404CF6F56D0 /* Frameworks */,
 				FD007FAA19BA048340249FAD /* Embed Frameworks */,
 				14B5C9E7D69DDE18D360D1A6 /* Embed Python runtime */,
@@ -578,6 +582,17 @@
 			);
 		};
 /* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		C584275E28E9A30EB0F38B91 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				A626827C9763E6995AD3724C /* Assets.xcassets in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
 
 /* Begin PBXShellScriptBuildPhase section */
 		14B5C9E7D69DDE18D360D1A6 /* Embed Python runtime */ = {

@@ -41,6 +41,7 @@ targets:
         INFOPLIST_FILE: Iris/Info.plist
         GENERATE_INFOPLIST_FILE: NO
         CODE_SIGN_ENTITLEMENTS: Iris/Iris.entitlements
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
     # Embed the relocatable Python runtime into Contents/Resources. The script
     # no-ops for Debug (dev mode runs the daemon from the repo via uv), so this
     # only adds time to Release builds. Runs after signing of the app's own code
