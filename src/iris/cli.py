@@ -459,6 +459,16 @@ def build_parser() -> argparse.ArgumentParser:
     serve = subparsers.add_parser("serve", help="Run the local Iris agent gateway")
     serve.add_argument("--host", default="127.0.0.1")
     serve.add_argument("--port", type=int, default=8765)
+    serve.add_argument(
+        "--json-logs",
+        action="store_true",
+        help="Emit structured JSON logs (one object per line)",
+    )
+    serve.add_argument(
+        "--log-dir",
+        default=None,
+        help="Write rotating logs to DIR/daemon.log instead of stderr",
+    )
     serve.set_defaults(func=cmd_serve)
 
     tasks = subparsers.add_parser(
@@ -998,11 +1008,15 @@ def _run_profile_setup(config: IrisConfig, *, interactive: bool) -> None:
         print("Run `./iris setup` to personalize Iris.")
         return
     print("Let's personalize Iris.")
-    preferred_name = _prompt_default("What should I call you?", inferred.preferred_name)
-    full_name = _prompt_default(
-        "Full name? Press Enter to use the detected value.", inferred.full_name
+    preferred_name = _prompt_name(
+        "What should I call you? Type a name, or press Enter to keep",
+        inferred.preferred_name,
     )
-    pronouns = _prompt_optional("Pronouns? Press Enter to skip.")
+    full_name = _prompt_name(
+        "What is your full name? Type it, or press Enter to keep",
+        inferred.full_name,
+    )
+    pronouns = _prompt_optional("Pronouns (e.g. she/her)? Press Enter to skip.")
     result = _save_profile_setup(
         config,
         preferred_name=preferred_name,
@@ -1039,9 +1053,19 @@ def _save_profile_setup(
     return {"memory_id": memory_id, "profile": profile.__dict__}
 
 
-def _prompt_default(question: str, default: str) -> str:
-    value = input(f"{question} [{default}] ").strip()
-    return value or default
+_AFFIRMATIONS = {"yes", "y", "yeah", "yep", "ok", "okay", "sure", "correct", "right"}
+_NEGATIONS = {"no", "n", "nope", "nah", "wrong", "incorrect"}
+
+
+def _prompt_name(question: str, default: str) -> str:
+    while True:
+        value = input(f"{question} [{default}]: ").strip()
+        if not value or value.lower() in _AFFIRMATIONS:
+            return default
+        if value.lower() in _NEGATIONS:
+            print("No problem — type the name you'd like me to use.")
+            continue
+        return value
 
 
 def _prompt_optional(question: str) -> str | None:
@@ -1410,7 +1434,9 @@ def cmd_start(args: argparse.Namespace) -> int:
 
 def cmd_serve(args: argparse.Namespace) -> int:
     from iris.gateway import GatewayService
+    from iris.logging_setup import configure_logging
 
+    configure_logging(json_logs=args.json_logs, log_dir=args.log_dir)
     config = _config(args)
 
     def router_factory():

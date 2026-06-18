@@ -1,0 +1,126 @@
+name: Release
+
+# Build → sign → notarize → DMG → draft GitHub Release on a version tag.
+# See docs/desktop/release.md for the required secrets and the full procedure.
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch: {}   # manual dry runs (still needs the signing secrets)
+
+permissions:
+  contents: write          # create the draft release + upload assets
+
+jobs:
+  release:
+    runs-on: macos-15
+    env:
+      MACOS_DIR: apps/macos
+      DERIVED: build
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install tooling (xcodegen, create-dmg)
+        run: brew install xcodegen create-dmg
+
+      - name: Import Developer ID signing certificate
+        env:
+          CERT_P12_BASE64: ${{ secrets.DEVELOPER_ID_APP_CERT_P12_BASE64 }}
+          CERT_PASSWORD: ${{ secrets.DEVELOPER_ID_APP_CERT_PASSWORD }}
+        run: |
+          set -euo pipefail
+          KEYCHAIN="$RUNNER_TEMP/iris-signing.keychain-db"
+          KCPW="$(openssl rand -hex 24)"
+          echo "$CERT_P12_BASE64" | base64 --decode > "$RUNNER_TEMP/cert.p12"
+          security create-keychain -p "$KCPW" "$KEYCHAIN"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN"
+          security unlock-keychain -p "$KCPW" "$KEYCHAIN"
+          security import "$RUNNER_TEMP/cert.p12" -k "$KEYCHAIN" \
+            -P "$CERT_PASSWORD" -T /usr/bin/codesign
+          # Make the imported key usable by codesign without an interactive prompt.
+          security set-key-partition-list -S apple-tool:,apple:,codesign: \
+            -s -k "$KCPW" "$KEYCHAIN"
+          # Search this keychain (keep the login keychain too).
+          security list-keychains -d user -s "$KEYCHAIN" \
+            $(security list-keychains -d user | sed 's/[\" ]//g')
+          rm -f "$RUNNER_TEMP/cert.p12"
+          echo "KEYCHAIN=$KEYCHAIN" >> "$GITHUB_ENV"
+
+      - name: Write notary API key
+        env:
+          NOTARY_KEY_P8_BASE64: ${{ secrets.NOTARY_KEY_P8_BASE64 }}
+        run: |
+          echo "$NOTARY_KEY_P8_BASE64" | base64 --decode > "$RUNNER_TEMP/notary.p8"
+          echo "NOTARY_KEY_PATH=$RUNNER_TEMP/notary.p8" >> "$GITHUB_ENV"
+
+      - name: Generate Xcode project
+        working-directory: ${{ env.MACOS_DIR }}
+        run: xcodegen generate
+
+      - name: Build universal Release (unsigned; runtime embedded)
+        working-directory: ${{ env.MACOS_DIR }}
+        run: |
+          set -euo pipefail
+          # Build without Xcode signing — the post-build phase embeds the Python
+          # runtime, then sign_and_notarize.sh signs everything with Developer ID.
+          xcodebuild \
+            -project Iris.xcodeproj -scheme Iris -configuration Release \
+            -derivedDataPath "$DERIVED" \
+            ONLY_ACTIVE_ARCH=NO \
+            CODE_SIGN_IDENTITY="-" CODE_SIGNING_REQUIRED=NO CODE_SIGNING_ALLOWED=NO \
+            build
+
+      - name: Sign, notarize, staple
+        working-directory: ${{ env.MACOS_DIR }}
+        env:
+          DEVELOPER_ID_APP: ${{ secrets.DEVELOPER_ID_APP_IDENTITY }}
+          NOTARY_KEY_ID: ${{ secrets.NOTARY_KEY_ID }}
+          NOTARY_ISSUER_ID: ${{ secrets.NOTARY_ISSUER_ID }}
+        run: |
+          set -euo pipefail
+          APP="$DERIVED/Build/Products/Release/Iris.app"
+          ./scripts/sign_and_notarize.sh "$APP"
+
+      - name: Build DMG
+        id: dmg
+        working-directory: ${{ env.MACOS_DIR }}
+        env:
+          DEVELOPER_ID_APP: ${{ secrets.DEVELOPER_ID_APP_IDENTITY }}
+        run: |
+          set -euo pipefail
+          APP="$DERIVED/Build/Products/Release/Iris.app"
+          ./scripts/make_dmg.sh "$APP" | tee /tmp/dmg.out
+          # Surface the script's machine-readable lines as step outputs.
+          grep '^DMG_' /tmp/dmg.out >> "$GITHUB_OUTPUT"
+
+      - name: Checksums
+        id: sums
+        working-directory: ${{ env.MACOS_DIR }}
+        run: |
+          set -euo pipefail
+          DMG="${{ steps.dmg.outputs.DMG_PATH }}"
+          shasum -a 256 "$DMG" | tee "$DMG.sha256"
+          echo "SHA256_FILE=$DMG.sha256" >> "$GITHUB_OUTPUT"
+
+      - name: Create draft GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          draft: true
+          name: Iris ${{ steps.dmg.outputs.DMG_VERSION }}
+          files: |
+            ${{ steps.dmg.outputs.DMG_PATH }}
+            ${{ steps.sums.outputs.SHA256_FILE }}
+          body: |
+            Iris ${{ steps.dmg.outputs.DMG_VERSION }}
+
+            Signed with Developer ID, notarized, and stapled — Gatekeeper-clean
+            on first launch.
+
+            **SHA-256:** `${{ steps.dmg.outputs.DMG_SHA256 }}`
+
+      - name: Clean up keychain
+        if: always()
+        run: security delete-keychain "$KEYCHAIN" || true

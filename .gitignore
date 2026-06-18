@@ -16,3 +16,9 @@ build/
 iris-debug/
 iris_tmp_exec_test
 *.log
+implementation/
+
+# Xcode
+xcuserdata/
+DerivedData/
+*.xcresult

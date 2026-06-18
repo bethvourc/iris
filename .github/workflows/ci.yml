@@ -1,0 +1,93 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  python:
+    name: Python daemon
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.12"
+      - name: Install dependencies
+        run: uv sync --dev
+      - name: Lint
+        run: uv run ruff check src tests
+      - name: Tests
+        run: uv run pytest -q
+
+  macos-app:
+    name: macOS app
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install tools
+        run: brew install xcodegen swiftlint swiftformat
+      - name: Generate project
+        run: xcodegen generate
+        working-directory: apps/macos
+      - name: SwiftLint
+        run: swiftlint --strict
+        working-directory: apps/macos
+      - name: SwiftFormat (lint only)
+        run: swiftformat --lint .
+        working-directory: apps/macos
+      - name: Build and test
+        run: >
+          xcodebuild test
+          -project Iris.xcodeproj
+          -scheme Iris
+          -destination 'platform=macOS'
+          CODE_SIGNING_ALLOWED=NO
+        working-directory: apps/macos
+
+  release-scripts:
+    name: Release scripts (ad-hoc dry run)
+    # Exercises the Step 7.2 pipeline logic — embed runtime, inside-out sign,
+    # DMG — without any signing secrets, so regressions surface on every PR.
+    # Single-arch build for speed; universality is covered by the runtime build.
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.12"
+      - name: Install tools
+        run: brew install xcodegen create-dmg
+      - name: Shell syntax check
+        run: bash -n scripts/*.sh
+        working-directory: apps/macos
+      - name: Generate project
+        run: xcodegen generate
+        working-directory: apps/macos
+      - name: Build unsigned Release (embeds the Python runtime)
+        run: >
+          xcodebuild
+          -project Iris.xcodeproj
+          -scheme Iris
+          -configuration Release
+          -derivedDataPath build
+          ARCHS=arm64 ONLY_ACTIVE_ARCH=YES
+          CODE_SIGN_IDENTITY="-" CODE_SIGNING_REQUIRED=NO CODE_SIGNING_ALLOWED=NO
+          build
+        working-directory: apps/macos
+      - name: Sign inside-out (ad-hoc, no notarization)
+        env:
+          DEVELOPER_ID_APP: "-"
+          SKIP_NOTARIZE: "1"
+        run: ./scripts/sign_and_notarize.sh build/Build/Products/Release/Iris.app
+        working-directory: apps/macos
+      - name: Build DMG (ad-hoc signed)
+        env:
+          DEVELOPER_ID_APP: "-"
+        run: |
+          set -euo pipefail
+          ./scripts/make_dmg.sh build/Build/Products/Release/Iris.app /tmp/Iris-dryrun.dmg
+          test -f /tmp/Iris-dryrun.dmg
+          codesign --verify --strict build/Build/Products/Release/Iris.app
+        working-directory: apps/macos

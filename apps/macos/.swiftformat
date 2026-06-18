@@ -1,0 +1,14 @@
+# SwiftFormat — run `swiftformat .` from apps/macos
+--swiftversion 6.0
+--indent 4
+# SwiftLint forbids trailing commas; keep the tools agreeing.
+--commas inline
+--maxwidth 120
+--wraparguments before-first
+--wrapparameters before-first
+--stripunusedargs closure-only
+--self remove
+--importgrouping testable-bottom
+# scripts/ holds standalone build tooling (a `swift` shebang script), not app
+# code; SwiftLint already scopes to the build targets only.
+--exclude Iris.xcodeproj,scripts

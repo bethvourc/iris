@@ -1,17 +1,27 @@
 from __future__ import annotations
 
+from datetime import datetime, timezone
 import hmac
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
+import logging
+import os
 import queue
 import re
+import signal
+import threading
+import time
 from typing import Any, Callable
 from urllib.parse import parse_qs, urlparse
 
+from iris import __version__
+
+from iris.activity import ActivityRequestError, activity_detail, activity_feed
 from iris.approvals import list_approvals
 from iris.audit import record_audit
 from iris.config import IrisConfig
 from iris.actions import RiskLevel
+from iris.gateway_ui import DASHBOARD_HTML
 from iris.memory_graph import (
     explain_fact,
     memory_context_packet,
@@ -21,7 +31,18 @@ from iris.memory_graph import (
 from iris.memory_lifecycle import maintain_lifecycle, set_memory_pinned
 from iris.memory_review import decide_review_item, list_review_items
 from iris.runtime import RunOrchestrator
+from iris.secrets_store import (
+    EnvManagedSecretError,
+    SecretsError,
+    update_stored_secrets,
+)
 from iris.sessions import get_session, list_sessions
+from iris.settings_store import (
+    EnvManagedSettingError,
+    SettingsError,
+    settings_payload,
+    update_stored_settings,
+)
 from iris.state import open_state
 from iris.supervisor import TaskSupervisor
 from iris.tasks import (
@@ -29,11 +50,29 @@ from iris.tasks import (
     list_tasks,
     resume_task,
 )
+from iris.voice_controller import (
+    UnknownModeError,
+    VoiceAlreadyRunningError,
+    VoiceController,
+    VoiceNotRunningError,
+    VoiceUnavailableError,
+)
 
 
 RouterFactory = Callable[[], Any]
-AUTH_EXEMPT_PATHS = {"/health", "/memory-browser"}
+AUTH_EXEMPT_PATHS = {"/health", "/dashboard", "/memory-browser"}
 MAX_BODY_BYTES = 1_000_000
+CONTRACT_VERSION = 1
+# Paths that use the structured error envelope from the desktop contract
+# (docs/desktop/api-contract.md §1); legacy routes keep flat error strings.
+CONTRACT_PATH_PREFIXES = ("/voice", "/settings", "/secrets", "/activity")
+VOICE_SSE_HEARTBEAT_SECONDS = 15.0
+
+_LOG = logging.getLogger("iris.gateway")
+
+
+def _error_payload(code: str, message: str) -> dict[str, Any]:
+    return {"error": {"code": code, "message": message}}
 
 
 class GatewayService:
@@ -41,6 +80,9 @@ class GatewayService:
         self.config = config
         self.router_factory = router_factory
         self._orchestrator: RunOrchestrator | None = None
+        self._voice_controller: VoiceController | None = None
+        self._server: ThreadingHTTPServer | None = None
+        self.started_at = datetime.now(timezone.utc)
 
     @property
     def orchestrator(self) -> RunOrchestrator:
@@ -51,6 +93,53 @@ class GatewayService:
             )
         return self._orchestrator
 
+    @property
+    def voice_controller(self) -> VoiceController:
+        if self._voice_controller is None:
+            self._voice_controller = VoiceController(
+                session_factory=self._build_voice_session,
+                wake_listener_factory=self._build_wake_listener,
+            )
+        return self._voice_controller
+
+    def _build_wake_listener(self, on_detected: Any) -> Any:
+        # Imported here so the optional `iris[wakeword]` deps are only required
+        # when the feature is actually enabled.
+        from iris.wake_word import WakeWordListener
+
+        return WakeWordListener(on_detected=on_detected)
+
+    def apply_wake_word_setting(self) -> None:
+        """Bring the wake listener in line with the current config.
+
+        Called at boot and after every `PUT /settings`, so toggling the setting
+        starts or stops on-device listening without restarting the daemon.
+        """
+        self.voice_controller.set_wake_word_enabled(
+            getattr(self.config, "wake_word_enabled", False)
+        )
+
+    def _build_voice_session(self, *, event_sink: Any, mode: str) -> Any:
+        # `mode` is validated by the controller; "conversation" is the only
+        # mode today and maps to an un-gated session (the caller's hotkey or
+        # wake word already established intent).
+        del mode
+        if not self.config.openai_api_key:
+            raise RuntimeError("OPENAI_API_KEY is required for live voice sessions")
+        from iris.profile import load_user_profile
+        from iris.voice import RealtimeSpeechSession
+
+        with open_state(self.config) as db:
+            user_profile = load_user_profile(self.config, db)
+        return RealtimeSpeechSession(
+            config=self.config,
+            router=self.router_factory(),
+            user_profile=user_profile,
+            orchestrator=self.orchestrator,
+            wake_gated=False,
+            event_sink=event_sink,
+        )
+
     def serve(self, *, host: str = "127.0.0.1", port: int = 8765) -> None:
         service = self
 
@@ -58,8 +147,53 @@ class GatewayService:
             gateway = service
 
         server = ThreadingHTTPServer((host, port), Handler)
-        print(f"Iris gateway listening on http://{host}:{port}")
-        server.serve_forever()
+        self._server = server
+        bound_host, bound_port = server.server_address[:2]
+        base_url = f"http://{bound_host}:{bound_port}"
+        print(f"Iris gateway listening on {base_url}")
+        print(f"Open {base_url}/dashboard to use the UI")
+        if not self.config.gateway_token:
+            print(
+                "WARNING: IRIS_GATEWAY_TOKEN is not set; all API endpoints will "
+                "return 401. Set it before serving to enable access."
+            )
+        self._install_signal_handlers()
+        # Arm the on-device wake listener if it's enabled (default off).
+        try:
+            self.apply_wake_word_setting()
+        except Exception:
+            _LOG.exception("gateway.wake_word_start_failed")
+        _LOG.info(
+            "gateway.start",
+            extra={"host": bound_host, "port": bound_port, "pid": os.getpid()},
+        )
+        try:
+            server.serve_forever()
+        finally:
+            self.voice_controller.set_wake_word_enabled(False)
+            server.server_close()
+            self._server = None
+            _LOG.info("gateway.stop", extra={"pid": os.getpid()})
+
+    def request_shutdown(self) -> None:
+        """Stop the server. Safe to call from any thread or a signal handler."""
+        server = self._server
+        if server is None:
+            return
+        # shutdown() blocks until serve_forever() exits, so it must never run
+        # on the thread that is inside serve_forever() (e.g. a SIGTERM handler
+        # interrupting the main thread).
+        threading.Thread(target=server.shutdown, daemon=True).start()
+
+    def _install_signal_handlers(self) -> None:
+        if threading.current_thread() is not threading.main_thread():
+            return
+
+        def handle_sigterm(_signum: int, _frame: Any) -> None:
+            _LOG.info("gateway.sigterm")
+            self.request_shutdown()
+
+        signal.signal(signal.SIGTERM, handle_sigterm)
 
     def authorize(self, path: str, authorization_header: str | None) -> bool:
         if path in AUTH_EXEMPT_PATHS:
@@ -75,9 +209,41 @@ class GatewayService:
     def handle_get(
         self, path: str, query: dict[str, list[str]]
     ) -> tuple[int, dict[str, Any]]:
+        if path == "/health":
+            return 200, {
+                "ok": True,
+                "agent": self.config.agent_name,
+                "version": __version__,
+                "contract_version": CONTRACT_VERSION,
+                "pid": os.getpid(),
+                "started_at": self.started_at.isoformat(
+                    timespec="seconds"
+                ).replace("+00:00", "Z"),
+            }
+        if path == "/voice/status":
+            return 200, self.voice_controller.status()
+        if path == "/settings":
+            return 200, settings_payload(self.config)
         with open_state(self.config) as db:
-            if path == "/health":
-                return 200, {"ok": True, "agent": self.config.agent_name}
+            if path == "/activity":
+                try:
+                    return 200, activity_feed(
+                        db,
+                        days=_int_query(query, "days", 7),
+                        limit=_int_query(query, "limit", 50),
+                        cursor=_str_query(query, "cursor"),
+                        tz=_str_query(query, "tz") or "UTC",
+                    )
+                except ActivityRequestError as exc:
+                    return 400, _error_payload("invalid_request", str(exc))
+            activity_match = re.fullmatch(r"/activity/([A-Za-z0-9._:-]+)", path)
+            if activity_match:
+                detail = activity_detail(db, activity_match.group(1))
+                if detail is None:
+                    return 404, _error_payload(
+                        "not_found", "activity item not found"
+                    )
+                return 200, detail
             if path == "/sessions":
                 return 200, {
                     "sessions": list_sessions(db, limit=_int_query(query, "limit", 25))
@@ -213,9 +379,73 @@ class GatewayService:
         finally:
             unsubscribe()
 
+    def handle_put(
+        self, path: str, body: dict[str, Any]
+    ) -> tuple[int, dict[str, Any]]:
+        if path == "/settings":
+            return self._handle_settings_put(body)
+        if path == "/secrets":
+            return self._handle_secrets_put(body)
+        return 404, {"error": "not found"}
+
+    def _handle_secrets_put(self, body: dict[str, Any]) -> tuple[int, dict[str, Any]]:
+        try:
+            update_stored_secrets(self.config.state_db_path, body)
+        except EnvManagedSecretError as exc:
+            return 409, _error_payload(exc.code, str(exc))
+        except SecretsError as exc:
+            return 400, _error_payload(exc.code, str(exc))
+        with open_state(self.config) as db:
+            record_audit(
+                db,
+                actor="gateway",
+                tool="secrets.update",
+                risk=RiskLevel.SENSITIVE,
+                details={"keys": sorted(body)},
+                result="ok",
+            )
+        self.config = IrisConfig.from_env(self.config.project_root)
+        # Same shape as GET /settings: presence only, never values.
+        return 200, settings_payload(self.config)
+
+    def _handle_settings_put(self, body: dict[str, Any]) -> tuple[int, dict[str, Any]]:
+        try:
+            update_stored_settings(self.config.state_db_path, body)
+        except EnvManagedSettingError as exc:
+            return 409, _error_payload(exc.code, str(exc))
+        except SettingsError as exc:
+            return 400, _error_payload(exc.code, str(exc))
+        with open_state(self.config) as db:
+            record_audit(
+                db,
+                actor="gateway",
+                tool="settings.update",
+                risk=RiskLevel.LOW_RISK,
+                details={"keys": sorted(body)},
+                result="ok",
+            )
+        # Future reads (and the next voice session) see the new values; a
+        # live session keeps its config until it ends, per the contract.
+        self.config = IrisConfig.from_env(self.config.project_root)
+        # Start/stop the wake listener if the toggle changed — no restart.
+        try:
+            self.apply_wake_word_setting()
+        except Exception:
+            _LOG.exception("gateway.wake_word_apply_failed")
+        return 200, settings_payload(self.config)
+
     def handle_post(
         self, path: str, body: dict[str, Any]
     ) -> tuple[int, dict[str, Any]]:
+        if path == "/voice/start":
+            return self._handle_voice_start(body)
+        if path == "/voice/stop":
+            return 200, {"ok": True, "was_running": self.voice_controller.stop()}
+        if path == "/voice/interrupt":
+            try:
+                return 200, {"ok": self.voice_controller.interrupt()}
+            except VoiceNotRunningError as exc:
+                return 409, _error_payload(exc.code, str(exc))
         if path == "/messages":
             return self._handle_message(body)
         task_cancel = re.fullmatch(r"/tasks/([a-fA-F0-9]+)/cancel", path)
@@ -309,6 +539,22 @@ class GatewayService:
             return 200, result.__dict__
         return 404, {"error": "not found"}
 
+    def _handle_voice_start(self, body: dict[str, Any]) -> tuple[int, dict[str, Any]]:
+        mode = body.get("mode", "conversation")
+        if not isinstance(mode, str):
+            return 400, _error_payload("invalid_request", "mode must be a string")
+        try:
+            session = self.voice_controller.start(mode=mode)
+        except UnknownModeError as exc:
+            return 400, _error_payload(exc.code, str(exc))
+        except VoiceAlreadyRunningError as exc:
+            payload = _error_payload(exc.code, str(exc))
+            payload["session"] = exc.session
+            return 409, payload
+        except VoiceUnavailableError as exc:
+            return 500, _error_payload(exc.code, str(exc))
+        return 202, {"session": session}
+
     def _handle_message(self, body: dict[str, Any]) -> tuple[int, dict[str, Any]]:
         text = str(body.get("message") or body.get("text") or "").strip()
         if not text:
@@ -341,32 +587,93 @@ class GatewayService:
 
 class _GatewayHandler(BaseHTTPRequestHandler):
     gateway: GatewayService
+    _status_code = 0
 
     def do_GET(self) -> None:  # noqa: N802
-        parsed = urlparse(self.path)
-        if not self._authorize(parsed.path):
-            return
-        if parsed.path == "/memory-browser":
-            self._write_html(200, MEMORY_BROWSER_HTML)
-            return
-        stream_match = re.fullmatch(r"/runs/([a-fA-F0-9]+)/stream", parsed.path)
-        if stream_match:
-            self._write_sse(stream_match.group(1))
-            return
-        status, payload = self.gateway.handle_get(parsed.path, parse_qs(parsed.query))
-        self._write_json(status, payload)
+        self._handle_request("GET", self._dispatch_get)
 
     def do_POST(self) -> None:  # noqa: N802
-        parsed = urlparse(self.path)
+        self._handle_request("POST", self._dispatch_post)
+
+    def do_PUT(self) -> None:  # noqa: N802
+        self._handle_request("PUT", self._dispatch_put)
+
+    def _dispatch_put(self, parsed: Any) -> None:
         if not self._authorize(parsed.path):
             return
         try:
             body = self._read_body()
         except ValueError as exc:
-            self._write_json(400, {"error": str(exc)})
+            self._write_json(400, _error_payload("invalid_request", str(exc)))
+            return
+        status, payload = self.gateway.handle_put(parsed.path, body)
+        self._write_json(status, payload)
+
+    def _dispatch_get(self, parsed: Any) -> None:
+        if parsed.path in ("", "/"):
+            self._redirect("/dashboard")
+            return
+        if not self._authorize(parsed.path):
+            return
+        if parsed.path in ("/dashboard", "/memory-browser"):
+            self._write_html(200, DASHBOARD_HTML)
+            return
+        stream_match = re.fullmatch(r"/runs/([a-fA-F0-9]+)/stream", parsed.path)
+        if stream_match:
+            self._write_sse(stream_match.group(1))
+            return
+        if parsed.path == "/voice/events":
+            self._write_voice_sse()
+            return
+        status, payload = self.gateway.handle_get(parsed.path, parse_qs(parsed.query))
+        self._write_json(status, payload)
+
+    def _dispatch_post(self, parsed: Any) -> None:
+        if not self._authorize(parsed.path):
+            return
+        try:
+            body = self._read_body()
+        except ValueError as exc:
+            if parsed.path.startswith(CONTRACT_PATH_PREFIXES):
+                self._write_json(400, _error_payload("invalid_request", str(exc)))
+            else:
+                self._write_json(400, {"error": str(exc)})
             return
         status, payload = self.gateway.handle_post(parsed.path, body)
         self._write_json(status, payload)
+
+    def _handle_request(self, method: str, dispatch: Callable[[Any], None]) -> None:
+        started = time.monotonic()
+        parsed = urlparse(self.path)
+        self._status_code = 0
+        try:
+            dispatch(parsed)
+        except Exception:
+            # Log path/status only: request bodies and headers may carry
+            # secrets and must never reach the log.
+            _LOG.exception(
+                "gateway.request_failed",
+                extra={"method": method, "path": parsed.path},
+            )
+            if self._status_code == 0:
+                try:
+                    self._write_json(500, {"error": "internal error"})
+                except Exception:
+                    pass
+        finally:
+            _LOG.info(
+                "gateway.request",
+                extra={
+                    "method": method,
+                    "path": parsed.path,
+                    "status": self._status_code,
+                    "duration_ms": round((time.monotonic() - started) * 1000, 1),
+                },
+            )
+
+    def send_response(self, code: int, message: str | None = None) -> None:
+        self._status_code = code
+        super().send_response(code, message)
 
     def log_message(self, format: str, *args: Any) -> None:
         return
@@ -400,6 +707,12 @@ class _GatewayHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def _redirect(self, location: str) -> None:
+        self.send_response(302)
+        self.send_header("Location", location)
+        self.send_header("Content-Length", "0")
+        self.end_headers()
+
     def _write_html(self, status: int, html: str) -> None:
         body = html.encode("utf-8")
         self.send_response(status)
@@ -420,6 +733,56 @@ class _GatewayHandler(BaseHTTPRequestHandler):
             self.wfile.flush()
 
         self.gateway.stream_run_events(run_id, write)
+
+    def _write_voice_sse(self) -> None:
+        """Voice event stream per docs/desktop/api-contract.md §4.
+
+        Always opens with a `state` snapshot; heartbeat comments let clients
+        detect stale connections. The stream is not session-scoped — it stays
+        open across sessions until the client disconnects.
+        """
+        controller = self.gateway.voice_controller
+        subscription = controller.subscribe()
+        self.send_response(200)
+        self.send_header("Content-Type", "text/event-stream; charset=utf-8")
+        self.send_header("Cache-Control", "no-cache")
+        self.end_headers()
+        try:
+            self._write_sse_frame("state", self._voice_state_snapshot(controller))
+            while True:
+                try:
+                    event = subscription.events.get(
+                        timeout=VOICE_SSE_HEARTBEAT_SECONDS
+                    )
+                except queue.Empty:
+                    self.wfile.write(b": hb\n\n")
+                    self.wfile.flush()
+                    continue
+                data = event.data
+                if event.type == "state":
+                    # Contract state payloads carry the session descriptor;
+                    # session-emitted events only know their own state.
+                    data = {**data, "session": controller.status()["session"]}
+                self._write_sse_frame(event.type, data)
+        except (BrokenPipeError, ConnectionResetError, OSError):
+            return
+        finally:
+            controller.unsubscribe(subscription)
+
+    @staticmethod
+    def _voice_state_snapshot(controller: VoiceController) -> dict[str, Any]:
+        status = controller.status()
+        return {
+            "state": status["state"],
+            "session": status["session"],
+            "meeting_active": status["meeting_active"],
+            "wake_listening": status.get("wake_listening", False),
+        }
+
+    def _write_sse_frame(self, event_type: str, data: dict[str, Any]) -> None:
+        body = json.dumps(data, sort_keys=True, default=str)
+        self.wfile.write(f"event: {event_type}\ndata: {body}\n\n".encode("utf-8"))
+        self.wfile.flush()
 
 
 def _task_status_for_message(message: str) -> str:
@@ -451,335 +814,3 @@ def _str_query(query: dict[str, list[str]], key: str) -> str | None:
     value = (query.get(key) or [""])[0]
     return str(value) if value else None
 
-
-MEMORY_BROWSER_HTML = """<!doctype html>
-<html lang="en">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Iris Memory Browser</title>
-  <style>
-    :root {
-      --ink: #1a1813;
-      --paper: #f5ecd8;
-      --paper-2: #efe0bf;
-      --oxide: #a34b2f;
-      --moss: #3f5d45;
-      --blueprint: #23384f;
-      --gold: #c29136;
-      --muted: #776b5d;
-      --line: rgba(26, 24, 19, .16);
-      --shadow: 0 24px 70px rgba(35, 31, 20, .18);
-    }
-    * { box-sizing: border-box; }
-    body {
-      margin: 0;
-      min-height: 100vh;
-      color: var(--ink);
-      font-family: "Avenir Next", "Gill Sans", Verdana, sans-serif;
-      background:
-        radial-gradient(circle at 12% 10%, rgba(194,145,54,.32), transparent 27rem),
-        radial-gradient(circle at 90% 0%, rgba(63,93,69,.20), transparent 24rem),
-        linear-gradient(135deg, var(--paper), var(--paper-2));
-    }
-    body::before {
-      content: "";
-      position: fixed;
-      inset: 0;
-      pointer-events: none;
-      background-image:
-        linear-gradient(rgba(26,24,19,.035) 1px, transparent 1px),
-        linear-gradient(90deg, rgba(26,24,19,.035) 1px, transparent 1px);
-      background-size: 34px 34px;
-      mask-image: linear-gradient(to bottom, rgba(0,0,0,.9), rgba(0,0,0,.28));
-    }
-    header {
-      padding: 34px clamp(18px, 4vw, 56px) 18px;
-      display: grid;
-      grid-template-columns: 1.2fr .8fr;
-      gap: 24px;
-      align-items: end;
-    }
-    h1 {
-      margin: 0;
-      font-family: Georgia, "Iowan Old Style", serif;
-      font-size: clamp(2.6rem, 7vw, 6.8rem);
-      letter-spacing: -.07em;
-      line-height: .82;
-      max-width: 900px;
-    }
-    .deck {
-      color: var(--blueprint);
-      font-size: 1rem;
-      line-height: 1.55;
-      border-left: 3px solid var(--oxide);
-      padding-left: 18px;
-    }
-    main {
-      padding: 12px clamp(18px, 4vw, 56px) 56px;
-      display: grid;
-      grid-template-columns: minmax(260px, 340px) minmax(0, 1fr);
-      gap: 22px;
-    }
-    .panel, .card {
-      background: rgba(255, 250, 238, .72);
-      border: 1px solid var(--line);
-      border-radius: 28px;
-      box-shadow: var(--shadow);
-      backdrop-filter: blur(16px);
-    }
-    .panel { padding: 18px; position: sticky; top: 18px; align-self: start; }
-    label { display: block; font-size: .78rem; text-transform: uppercase; letter-spacing: .14em; color: var(--muted); margin: 14px 0 7px; }
-    input, select {
-      width: 100%;
-      border: 1px solid rgba(26,24,19,.18);
-      background: rgba(255,255,255,.62);
-      color: var(--ink);
-      border-radius: 16px;
-      padding: 12px 13px;
-      font: inherit;
-      outline: none;
-    }
-    input:focus, select:focus { border-color: var(--oxide); box-shadow: 0 0 0 4px rgba(163,75,47,.14); }
-    button {
-      border: 0;
-      border-radius: 999px;
-      padding: 11px 15px;
-      background: var(--ink);
-      color: var(--paper);
-      font-weight: 700;
-      cursor: pointer;
-      transition: transform .18s ease, background .18s ease;
-    }
-    button:hover { transform: translateY(-1px); background: var(--oxide); }
-    button.secondary { background: rgba(26,24,19,.08); color: var(--ink); }
-    button.good { background: var(--moss); }
-    button.warn { background: var(--oxide); }
-    .actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; }
-    .tabs { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 16px; }
-    .tab.active { background: var(--oxide); color: white; }
-    .grid { display: grid; gap: 14px; }
-    .card {
-      padding: 18px;
-      display: grid;
-      gap: 9px;
-      animation: rise .45s ease both;
-    }
-    @keyframes rise { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: none; } }
-    .fact-title {
-      font-family: Georgia, "Iowan Old Style", serif;
-      font-size: 1.35rem;
-      line-height: 1.15;
-    }
-    .meta { display: flex; flex-wrap: wrap; gap: 7px; color: var(--muted); font-size: .84rem; }
-    .pill { border: 1px solid var(--line); border-radius: 999px; padding: 4px 8px; background: rgba(255,255,255,.45); }
-    .status { min-height: 24px; color: var(--blueprint); font-size: .92rem; margin-top: 12px; }
-    .canvas {
-      min-height: 540px;
-      border: 1px dashed rgba(26,24,19,.18);
-      border-radius: 32px;
-      padding: 18px;
-      background: linear-gradient(155deg, rgba(255,255,255,.28), rgba(255,255,255,.08));
-    }
-    .empty {
-      padding: 56px 20px;
-      text-align: center;
-      color: var(--muted);
-      font-family: Georgia, "Iowan Old Style", serif;
-      font-size: 1.5rem;
-    }
-    pre {
-      white-space: pre-wrap;
-      overflow-wrap: anywhere;
-      background: rgba(35,56,79,.08);
-      border-radius: 18px;
-      padding: 12px;
-      margin: 0;
-      font-size: .85rem;
-    }
-    @media (max-width: 860px) {
-      header, main { grid-template-columns: 1fr; }
-      .panel { position: static; }
-    }
-  </style>
-</head>
-<body>
-  <header>
-    <h1>Memory<br>Cartograph</h1>
-    <p class="deck">A local instrument panel for Iris memory: inspect active facts, trace evidence, review pending sensitive candidates, and tune lifecycle state without leaving the gateway.</p>
-  </header>
-  <main>
-    <aside class="panel">
-      <label for="token">Gateway token</label>
-      <input id="token" type="password" placeholder="Bearer token">
-      <label for="query">Search or entity</label>
-      <input id="query" placeholder="Spotify, Iris, SQLite">
-      <label for="mode">View</label>
-      <select id="mode">
-        <option value="facts">Facts</option>
-        <option value="related">Related graph</option>
-        <option value="reviews">Review queue</option>
-        <option value="explain">Evidence timeline</option>
-      </select>
-      <div class="actions">
-        <button id="run">Inspect</button>
-        <button class="secondary" id="maintain">Maintain</button>
-      </div>
-      <div class="status" id="status">Ready.</div>
-    </aside>
-    <section>
-      <div class="tabs">
-        <button class="tab active" data-mode="facts">Facts</button>
-        <button class="tab" data-mode="related">Related</button>
-        <button class="tab" data-mode="reviews">Review</button>
-        <button class="tab" data-mode="explain">Evidence</button>
-      </div>
-      <div class="canvas"><div id="results" class="grid"></div></div>
-    </section>
-  </main>
-  <script>
-    const $ = (id) => document.getElementById(id);
-    const state = {
-      token: localStorage.getItem("irisGatewayToken") || "",
-      mode: "facts",
-    };
-    $("token").value = state.token;
-    $("token").addEventListener("input", () => {
-      state.token = $("token").value.trim();
-      localStorage.setItem("irisGatewayToken", state.token);
-    });
-    document.querySelectorAll(".tab").forEach((tab) => {
-      tab.addEventListener("click", () => {
-        state.mode = tab.dataset.mode;
-        $("mode").value = state.mode;
-        document.querySelectorAll(".tab").forEach((item) => item.classList.toggle("active", item === tab));
-        load();
-      });
-    });
-    $("mode").addEventListener("change", () => {
-      state.mode = $("mode").value;
-      document.querySelectorAll(".tab").forEach((item) => item.classList.toggle("active", item.dataset.mode === state.mode));
-    });
-    $("run").addEventListener("click", load);
-    $("maintain").addEventListener("click", async () => {
-      const data = await api("/memory/maintain", { method: "POST", body: "{}" });
-      setStatus(`Maintained ${data.relations || 0} relation(s); ${data.stale || 0} stale.`);
-      load();
-    });
-    async function api(path, options = {}) {
-      if (!state.token) throw new Error("Enter IRIS_GATEWAY_TOKEN first.");
-      const response = await fetch(path, {
-        ...options,
-        headers: {
-          "Authorization": `Bearer ${state.token}`,
-          "Content-Type": "application/json",
-          ...(options.headers || {})
-        }
-      });
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.error || data.message || `HTTP ${response.status}`);
-      return data;
-    }
-    async function load() {
-      try {
-        setStatus("Loading memory map...");
-        const q = encodeURIComponent($("query").value.trim());
-        if (state.mode === "facts") {
-          const data = await api(`/memory/facts?query=${q}&limit=30`);
-          renderFacts(data.facts || []);
-        } else if (state.mode === "related") {
-          const data = await api(`/memory/related?entity=${q}&limit=30`);
-          renderFacts(data.facts || []);
-        } else if (state.mode === "reviews") {
-          const data = await api("/memory/reviews?status=pending&limit=50");
-          renderReviews(data.items || []);
-        } else {
-          const data = await api(`/memory/explain?query=${q}`);
-          renderExplain(data.fact);
-        }
-        setStatus("Loaded.");
-      } catch (error) {
-        $("results").innerHTML = `<div class="empty">${escapeHtml(error.message)}</div>`;
-        setStatus("Blocked.");
-      }
-    }
-    function renderFacts(facts) {
-      if (!facts.length) return empty("No matching memory facts.");
-      $("results").innerHTML = facts.map((fact, index) => `
-        <article class="card" style="animation-delay:${index * 35}ms">
-          <div class="fact-title">${escapeHtml(fact.subject)} <span style="color:var(--oxide)">${escapeHtml((fact.predicate || "").replaceAll("_", " "))}</span> ${escapeHtml(fact.object_value)}</div>
-          <div class="meta">
-            <span class="pill">${fact.active ? "active" : "inactive"}</span>
-            <span class="pill">confidence ${num(fact.confidence)}</span>
-            <span class="pill">decay ${num(fact.decay_score)}</span>
-            <span class="pill">${fact.pinned ? "pinned" : "unpinned"}</span>
-            <span class="pill">access ${fact.access_count || 0}</span>
-          </div>
-          <div>${escapeHtml(fact.content || fact.relation_content || "")}</div>
-          <div class="actions">
-            <button class="secondary" data-action="pin" data-id="${escapeAttr(fact.relation_id)}" data-pinned="${fact.pinned ? "false" : "true"}">${fact.pinned ? "Unpin" : "Pin"}</button>
-            <button class="secondary" data-action="explain" data-value="${escapeAttr(fact.object_value)}">Evidence</button>
-          </div>
-        </article>`).join("");
-    }
-    function renderReviews(items) {
-      if (!items.length) return empty("No pending review items.");
-      $("results").innerHTML = items.map((item, index) => {
-        const c = item.candidate || {};
-        return `<article class="card" style="animation-delay:${index * 35}ms">
-          <div class="fact-title">${escapeHtml(c.subject || "candidate")} <span style="color:var(--oxide)">${escapeHtml(c.predicate || "")}</span> ${escapeHtml(c.object_value || "")}</div>
-          <div class="meta"><span class="pill">${escapeHtml(item.reason)}</span><span class="pill">${escapeHtml(item.review_id)}</span></div>
-          <pre>${escapeHtml(JSON.stringify(c, null, 2))}</pre>
-          <div class="actions">
-            <button class="good" data-action="decide" data-id="${escapeAttr(item.review_id)}" data-decision="approve">Approve</button>
-            <button class="secondary" data-action="decide" data-id="${escapeAttr(item.review_id)}" data-decision="supersede">Supersede</button>
-            <button class="warn" data-action="decide" data-id="${escapeAttr(item.review_id)}" data-decision="reject">Reject</button>
-          </div>
-        </article>`;
-      }).join("");
-    }
-    function renderExplain(fact) {
-      if (!fact) return empty("No evidence found.");
-      $("results").innerHTML = `<article class="card">
-        <div class="fact-title">${escapeHtml(fact.relation_content || fact.content)}</div>
-        <div class="meta"><span class="pill">${fact.active ? "active" : "inactive"}</span><span class="pill">${escapeHtml(fact.provenance || "")}</span></div>
-        ${(fact.evidence || []).map((ev) => `<pre>${escapeHtml(JSON.stringify(ev, null, 2))}</pre>`).join("")}
-      </article>`;
-    }
-    $("results").addEventListener("click", async (event) => {
-      const button = event.target.closest("button[data-action]");
-      if (!button) return;
-      if (button.dataset.action === "pin") {
-        await pin(button.dataset.id, button.dataset.pinned === "true");
-      } else if (button.dataset.action === "decide") {
-        await decide(button.dataset.id, button.dataset.decision);
-      } else if (button.dataset.action === "explain") {
-        explain(button.dataset.value);
-      }
-    });
-    async function pin(id, pinned) {
-      await api(`/memory/facts/${id}/${pinned ? "pin" : "unpin"}`, { method: "POST", body: "{}" });
-      load();
-    }
-    async function decide(id, decision) {
-      await api(`/memory/reviews/${id}/${decision}`, { method: "POST", body: "{}" });
-      load();
-    }
-    function explain(value) {
-      state.mode = "explain";
-      $("mode").value = "explain";
-      $("query").value = value;
-      load();
-    }
-    function empty(message) { $("results").innerHTML = `<div class="empty">${escapeHtml(message)}</div>`; }
-    function setStatus(message) { $("status").textContent = message; }
-    function num(value) { return Number(value || 0).toFixed(2); }
-    function escapeHtml(value) {
-      return String(value ?? "").replace(/[&<>"']/g, (ch) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[ch]));
-    }
-    function escapeAttr(value) { return escapeHtml(value).replace(/`/g, "&#96;"); }
-    load();
-  </script>
-</body>
-</html>
-"""

@@ -1,0 +1,28 @@
+included:
+  - Iris
+  - IrisKit
+  - IrisTests
+  - IrisUITests
+
+# Import ordering is owned by SwiftFormat (testable-bottom grouping),
+# so sorted_imports stays off.
+opt_in_rules:
+  - empty_count
+  - closure_spacing
+  - contains_over_filter_is_empty
+  - redundant_nil_coalescing
+
+line_length:
+  warning: 120
+  error: 160
+  ignores_comments: true
+
+identifier_name:
+  min_length: 2
+  max_length: 50
+
+type_body_length:
+  warning: 300
+
+function_body_length:
+  warning: 60
