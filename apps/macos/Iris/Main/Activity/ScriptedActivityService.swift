@@ -19,11 +19,48 @@ struct ScriptedActivityService: ActivityServing {
             throw IrisAPIError.daemonUnreachable(detail: "no daemon")
         case "empty":
             return try Self.decode(Self.emptyJSON, as: ActivityFeed.self)
+        case "large":
+            // ~10k rows in one feed (no cursor) for the resilience-audit scroll
+            // drill (§2.8): all items load at once so scrolling exercises the
+            // full list. Daemon-memory-flat is a separate manual check.
+            return try Self.decode(Self.largeJSON, as: ActivityFeed.self)
         default:
             let json = cursor == "p2" ? Self.page2JSON : Self.page1JSON
             return try Self.decode(json, as: ActivityFeed.self)
         }
     }
+
+    /// Build a ~10,000-item feed (200 days × 50 items). `date` is only a
+    /// ForEach id here (the header shows `label`), so a synthetic unique string
+    /// is fine; `time` must be valid ISO 8601 for the contract decoder.
+    private static let largeJSON: String = {
+        let daysCount = 200
+        let perDay = 50
+        var dayBlocks: [String] = []
+        dayBlocks.reserveCapacity(daysCount)
+        for day in 0 ..< daysCount {
+            var items: [String] = []
+            items.reserveCapacity(perDay)
+            for slot in 0 ..< perDay {
+                let index = day * perDay + slot
+                let status = index % 7 == 0 ? "failed" : "done"
+                items.append("""
+                {"id":"\(index)","kind":"run","time":"2026-06-14T13:20:00Z",\
+                "title":"Activity item \(index)",\
+                "preview":"Generated row \(index)","status":"\(status)"}
+                """)
+            }
+            dayBlocks.append("""
+            {"date":"day-\(day)","label":"Day \(day)",\
+            "items":[\(items.joined(separator: ","))]}
+            """)
+        }
+        return """
+        {"stats":{"sessions_this_week":42,"runs_completed":9000,\
+        "runs_failed":1000,"last_active_at":"2026-06-14T13:20:00Z"},\
+        "days":[\(dayBlocks.joined(separator: ","))],"next_cursor":null}
+        """
+    }()
 
     func activityDetail(id: String) async throws -> ActivityDetail {
         try Self.decode(Self.detailJSON(for: id), as: ActivityDetail.self)

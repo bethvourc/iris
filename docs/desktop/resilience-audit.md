@@ -57,6 +57,23 @@ every user-facing state into `docs/desktop/screenshots/resilience/` and fill in
 the **Observed** column. Map the app surface to the real `DaemonState` /
 `ProbeOutcome` cases in `apps/macos/IrisKit/DaemonState.swift`.
 
+> **What is now automated.** The *destination UI* for each failure mode — the
+> overlay error state and the menu recovery action — is asserted by
+> `apps/macos/IrisUITests/ResilienceUITests.swift`, which pins each state via
+> `--ui-test-state` / `--ui-test-overlay-state` and checks that exactly one
+> recovery action is offered and hittable (no daemon, mic, or network). The
+> 10k-item scroll (§2.8) is driven by `--ui-test-activity large`. Run them with:
+>
+> ```sh
+> xcodebuild test -scheme IrisUITests -destination 'platform=macOS' \
+>   -only-testing:IrisUITests/ResilienceUITests
+> ```
+>
+> What stays manual below is *inducing the real transition* (SIGKILL, occupying
+> the port, revoking TCC, sleep/wake) against a signed build and capturing the
+> screenshots — the UI tests verify where the app lands, the manual drills
+> verify it actually routes there.
+
 ### 2.1 — F1/F2 SIGKILL the daemon mid-session
 
 1. Start a voice session from the overlay.
@@ -126,7 +143,11 @@ feature that needs it.
 1. Seed ~10,000 activity rows; open the activity feed; scroll top→bottom.
 2. **Expected:** smooth scroll (no dropped frames / spinner stalls); pagination
    holds; daemon RSS stays flat across the scroll (no per-row leak).
-- **Observed (scroll):** 🔲   **(daemon RSS before/after):** 🔲
+- **Scroll/render:** ✅ automated —
+  `ResilienceUITests.testLargeActivityHistoryScrollsResponsively`
+  (`--ui-test-activity large`, ~10k rows) loads the populated list (no skeleton
+  stall) and scrolls it under `XCTClockMetric`.
+- **Observed (daemon RSS before/after):** 🔲 (manual — needs a real daemon)
 
 ---
 
