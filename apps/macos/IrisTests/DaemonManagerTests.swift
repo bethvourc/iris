@@ -39,6 +39,25 @@ final class DaemonManagerTests: XCTestCase {
         XCTAssertEqual(config.port, 8800)
     }
 
+    func testBundledConfigurationPinsStateDatabaseEnv() {
+        // A shipped app must place state under Application Support, not the
+        // process cwd (docs/desktop/runbook.md). Absent the URL, no override.
+        let resources = URL(fileURLWithPath: "/Apps/Iris.app/Contents/Resources")
+        let logs = URL(fileURLWithPath: "/tmp/logs")
+        let stateDB = URL(fileURLWithPath: "/Users/x/Library/Application Support/Iris/iris.sqlite3")
+
+        let pinned = DaemonConfiguration.bundled(
+            resourcesURL: resources, port: 8800, logDirectory: logs,
+            stateDatabaseURL: stateDB
+        )
+        XCTAssertEqual(pinned.extraEnvironment["IRIS_STATE_DB"], stateDB.path)
+
+        let unpinned = DaemonConfiguration.bundled(
+            resourcesURL: resources, port: 8800, logDirectory: logs
+        )
+        XCTAssertNil(unpinned.extraEnvironment["IRIS_STATE_DB"])
+    }
+
     func testBundledRuntimeExistsDetection() throws {
         // Absent in a bare directory...
         XCTAssertFalse(DaemonConfiguration.bundledRuntimeExists(resourcesURL: workDir))

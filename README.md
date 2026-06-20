@@ -4,6 +4,25 @@ Iris is a local-first Mac agent that runs from the terminal. It supports text,
 voice, live screen awareness, safe Mac/browser actions, local state, connectors,
 watchers, approvals, and audit logs.
 
+## Iris for macOS (desktop app)
+
+Beyond the terminal CLI, Iris ships as a native macOS app — a menu-bar presence
+with a global hotkey, a Siri-style voice overlay, and a main window for activity
+and settings — backed by the same Python core running as a supervised local
+daemon (`iris serve`). The Swift/SwiftUI app lives in [`apps/macos/`](apps/macos).
+
+The app spawns and supervises the daemon (health polling, restart with backoff,
+crash-loop detection, adopt-if-already-running), binds `127.0.0.1` only, and
+holds the gateway token in the Keychain — injected into the daemon via
+environment, never written to disk. In a shipped build, state lives in
+`~/Library/Application Support/Iris/` and logs in `~/Library/Logs/Iris/`.
+
+- **Architecture & trust boundaries** — [`docs/desktop/architecture.md`](docs/desktop/architecture.md)
+- **API contract** (voice / activity / settings / health, SSE catalog) — [`docs/desktop/api-contract.md`](docs/desktop/api-contract.md)
+- **Packaging & release** (signing, notarization, DMG) — [`docs/desktop/packaging.md`](docs/desktop/packaging.md), [`docs/desktop/release.md`](docs/desktop/release.md)
+- **Operations runbook** (logs, health checks, reset, uninstall, failure signatures) — [`docs/desktop/runbook.md`](docs/desktop/runbook.md)
+- **Resilience audit** (fault-injection drills) — [`docs/desktop/resilience-audit.md`](docs/desktop/resilience-audit.md)
+
 ## Requirements
 
 - macOS
