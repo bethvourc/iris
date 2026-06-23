@@ -13,14 +13,27 @@ extension AppModel {
         let logDirectory = FileManager.default.homeDirectoryForCurrentUser
             .appending(path: "Library/Logs/Iris")
         // Dev checkout wins: run the daemon from the repo via uv so source edits
-        // take effect without repackaging.
+        // take effect without repackaging. Dev state stays repo-relative
+        // (`<repo>/build/iris.sqlite3`).
         if let repoRoot = devRepoRoot() {
             return .development(repoRoot: repoRoot, port: port, logDirectory: logDirectory)
         }
-        // Shipped app: run the embedded Python runtime from the bundle.
+        // Shipped app: run the embedded Python runtime from the bundle, with
+        // state pinned under Application Support (sqlite won't create parent
+        // dirs, so create it up front).
         let resources = Bundle.main.resourceURL
         if let resources, DaemonConfiguration.bundledRuntimeExists(resourcesURL: resources) {
-            return .bundled(resourcesURL: resources, port: port, logDirectory: logDirectory)
+            let stateDirectory = FileManager.default.homeDirectoryForCurrentUser
+                .appending(path: "Library/Application Support/Iris")
+            try? FileManager.default.createDirectory(
+                at: stateDirectory, withIntermediateDirectories: true
+            )
+            return .bundled(
+                resourcesURL: resources,
+                port: port,
+                logDirectory: logDirectory,
+                stateDatabaseURL: stateDirectory.appending(path: "iris.sqlite3")
+            )
         }
         return nil
     }

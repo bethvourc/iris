@@ -1433,7 +1433,7 @@ def cmd_start(args: argparse.Namespace) -> int:
 
 
 def cmd_serve(args: argparse.Namespace) -> int:
-    from iris.gateway import GatewayService
+    from iris.gateway import GatewayService, PortInUseError
     from iris.logging_setup import configure_logging
 
     configure_logging(json_logs=args.json_logs, log_dir=args.log_dir)
@@ -1442,10 +1442,16 @@ def cmd_serve(args: argparse.Namespace) -> int:
     def router_factory():
         return _runtime(args)[-1]
 
-    GatewayService(config=config, router_factory=router_factory).serve(
-        host=args.host,
-        port=args.port,
-    )
+    try:
+        GatewayService(config=config, router_factory=router_factory).serve(
+            host=args.host,
+            port=args.port,
+        )
+    except PortInUseError as exc:
+        # Exit 2 (not a crash) so a supervisor can distinguish a port conflict
+        # from an unexpected fault; the daemon log already carries the detail.
+        print(str(exc), file=sys.stderr)
+        return 2
     return 0
 
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+import errno
 import hmac
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
@@ -75,6 +76,24 @@ def _error_payload(code: str, message: str) -> dict[str, Any]:
     return {"error": {"code": code, "message": message}}
 
 
+class PortInUseError(RuntimeError):
+    """The configured gateway port is already bound by another process.
+
+    Raised instead of leaking a raw ``OSError`` so the daemon fails with a
+    comprehensible message (docs/desktop/architecture.md §8 F3 — no silent
+    port hopping; surface an explicit port-conflict state).
+    """
+
+    def __init__(self, host: str, port: int) -> None:
+        self.host = host
+        self.port = port
+        super().__init__(
+            f"Port {port} on {host} is already in use. Another process "
+            f"(possibly a stale Iris daemon) is bound to it. Free the port "
+            f"or choose a different one with --port."
+        )
+
+
 class GatewayService:
     def __init__(self, *, config: IrisConfig, router_factory: RouterFactory) -> None:
         self.config = config
@@ -146,7 +165,16 @@ class GatewayService:
         class Handler(_GatewayHandler):
             gateway = service
 
-        server = ThreadingHTTPServer((host, port), Handler)
+        try:
+            server = ThreadingHTTPServer((host, port), Handler)
+        except OSError as exc:
+            if exc.errno in (errno.EADDRINUSE, errno.EADDRNOTAVAIL):
+                _LOG.error(
+                    "gateway.port_in_use",
+                    extra={"host": host, "port": port, "detail": str(exc)},
+                )
+                raise PortInUseError(host, port) from exc
+            raise
         self._server = server
         bound_host, bound_port = server.server_address[:2]
         base_url = f"http://{bound_host}:{bound_port}"

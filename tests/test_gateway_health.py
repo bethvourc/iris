@@ -91,6 +91,30 @@ def test_request_shutdown_without_server_is_a_no_op() -> None:
     _service().request_shutdown()
 
 
+def test_serve_on_occupied_port_raises_clean_port_in_use(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Regression for resilience-audit F3: a busy port must surface a typed
+    PortInUseError (logged as gateway.port_in_use), never a raw OSError."""
+    import socket
+
+    from iris.gateway import PortInUseError
+
+    blocker = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    blocker.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    blocker.bind(("127.0.0.1", 0))
+    port = blocker.getsockname()[1]
+    blocker.listen(1)
+    try:
+        with caplog.at_level(logging.ERROR):
+            with pytest.raises(PortInUseError) as excinfo:
+                _service().serve(host="127.0.0.1", port=port)
+        assert excinfo.value.port == port
+        assert any(r.message == "gateway.port_in_use" for r in caplog.records)
+    finally:
+        blocker.close()
+
+
 def test_requests_are_logged_without_leaking_tokens(
     caplog: pytest.LogCaptureFixture,
 ) -> None:

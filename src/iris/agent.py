@@ -8,6 +8,14 @@ import uuid
 from typing import Any, Callable, Literal, TypeVar
 
 from iris.actions import RiskLevel
+from iris.agent_loop import (
+    Plan,
+    SubGoal,
+    coerce_subgoals,
+    detect_stuck,
+    normalize_call,
+    observation_signature,
+)
 from iris.approvals import (
     approval_details,
     create_approval,
@@ -35,7 +43,7 @@ from iris.tracing import now_iso, record_trace_event
 T = TypeVar("T")
 
 
-PlannerType = Literal["tool_call", "final_answer", "approval_request"]
+PlannerType = Literal["tool_call", "final_answer", "approval_request", "plan"]
 
 
 @dataclass(frozen=True)
@@ -49,6 +57,7 @@ class PlannerResult:
     expected_observation: str = ""
     done_condition: str = ""
     user_message: str = ""
+    subgoals: list[SubGoal] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -57,6 +66,22 @@ class AgentRunResult:
     message: str
     payload: Any | None = None
     run_id: str = ""
+
+
+@dataclass(frozen=True)
+class _SubgoalOutcome:
+    """Result of running one sub-goal's inner loop.
+
+    ``kind`` drives the orchestrator: ``done`` continues to the next sub-goal
+    (or finishes the run), while ``approval`` / ``error`` / ``stuck`` stop the
+    whole run and surface ``message`` to the user.
+    """
+
+    kind: str  # done | approval | error | stuck
+    ok: bool
+    message: str
+    payload: Any | None = None
+    steps_used: int = 0
 
 
 class AgentPlanner:
@@ -177,6 +202,10 @@ class AgentExecutor:
         computer_backend: ComputerBackend | None = None,
         recipes: ActionRecipeRegistry | None = None,
         max_steps: int = 12,
+        max_total_steps: int = 24,
+        stuck_repeat_threshold: int = 3,
+        stuck_window: int = 3,
+        max_escalations: int = 2,
     ) -> None:
         self.planner = planner
         self.registry = registry
@@ -197,6 +226,10 @@ class AgentExecutor:
             config.project_root if config is not None else None
         )
         self.max_steps = max(1, max_steps)
+        self.max_total_steps = max(self.max_steps, max_total_steps)
+        self.stuck_repeat_threshold = max(2, stuck_repeat_threshold)
+        self.stuck_window = max(2, stuck_window)
+        self.max_escalations = max(0, max_escalations)
         self._conversation_history: list[dict[str, str]] = []
         self._session_state: dict[str, Any] = _initial_session_state()
         self._current_cancellation_token: CancellationToken | None = None
@@ -322,183 +355,101 @@ class AgentExecutor:
             details={"request_preview": user_request[:220]},
         )
         try:
-            for _step in range(self.max_steps):
+            plan, seed = self._triage_plan(run_id, user_request, observations, token)
+            subgoal_messages: list[str] = []
+            last_outcome: _SubgoalOutcome | None = None
+            total_steps = 0
+            for index, subgoal in enumerate(plan.subgoals):
                 token.throw_if_cancelled()
-                screen_context = self._trace_call(
-                    run_id,
-                    "screen_context",
-                    "perception",
-                    self._screen_context_summary,
-                )
-                connector_context = self._trace_call(
-                    run_id,
-                    "connector_context",
-                    "connectors",
-                    self._connector_context,
-                )
-                plan = self._trace_call(
-                    run_id,
-                    "planner",
-                    "agent",
-                    lambda: self.planner.plan(
-                        user_request=user_request,
-                        tool_schemas=self.registry.schemas(),
-                        action_recipes=self.recipes.schemas(),
-                        screen_context=screen_context,
-                        conversation_history=self._conversation_history,
-                        observations=observations,
-                        session_state=self._session_state,
-                        connector_context=connector_context,
-                        known_memories=self._known_memories(),
-                    ),
-                    details={"step": _step + 1, "observations": len(observations)},
-                )
-                self._set_current_status(
-                    run_id=run_id,
-                    stage="executing_plan",
-                    request=user_request,
-                    tool_name=plan.tool_name,
-                    plan_type=plan.type,
-                )
-                token.throw_if_cancelled()
-                if plan.type == "final_answer":
-                    message = plan.spoken_response or plan.user_message or "I am here."
-                    self._audit_agent_event(
-                        run_id=run_id,
-                        result="ok",
-                        input_value={
-                            "request": user_request,
-                            "observations": observations,
-                        },
-                        output_value={"message": message},
-                    )
-                    self._remember_turn(user_request, message)
-                    return self._complete_run(
+                remaining = self.max_total_steps - total_steps
+                if remaining <= 0:
+                    return self._finalize(
                         run_id,
                         run_started_at,
-                        AgentRunResult(True, message, run_id=run_id),
-                    )
-                if plan.type == "approval_request":
-                    message = self._create_approval(
-                        run_id=run_id,
-                        action_name=plan.tool_name or "agent_action",
-                        arguments=plan.arguments,
-                        reason=plan.reason or plan.spoken_response,
-                    )
-                    self._audit_agent_event(
-                        run_id=run_id,
-                        result="approval_required",
-                        input_value={"request": user_request, "plan": plan},
-                        output_value={"message": message},
-                    )
-                    self._remember_turn(user_request, message)
-                    return self._complete_run(
-                        run_id,
-                        run_started_at,
-                        AgentRunResult(False, message, run_id=run_id),
-                        status="approval_required",
-                    )
-                if plan.type != "tool_call" or not plan.tool_name:
-                    message = (
-                        plan.spoken_response
-                        or "I could not decide the next agent action."
-                    )
-                    self._remember_turn(user_request, message)
-                    return self._complete_run(
-                        run_id,
-                        run_started_at,
-                        AgentRunResult(False, message, run_id=run_id),
+                        user_request,
+                        observations,
+                        ok=False,
+                        message=self._stuck_message(
+                            subgoal, plan, [], "step_budget_exhausted"
+                        ),
                         status="error",
                     )
-                result = self._execute_tool(
+                self._trace_event(
                     run_id,
-                    plan.tool_name,
-                    plan.arguments,
-                    cancellation_token=token,
+                    "subgoal_started",
+                    details={
+                        "index": index + 1,
+                        "total": len(plan.subgoals),
+                        "goal": subgoal.goal[:220],
+                    },
                 )
-                token.throw_if_cancelled()
-                observation = {
-                    "tool_name": plan.tool_name,
-                    "arguments": plan.arguments,
-                    "ok": result.ok,
-                    "message": result.message,
-                    "payload": result.payload,
-                    "expected_observation": plan.expected_observation,
-                    "done_condition": plan.done_condition,
-                    "post_action_screen": self._trace_call(
-                        run_id,
-                        "post_action_screen_context",
-                        "perception",
-                        self._screen_context_summary,
-                        details={"tool_name": plan.tool_name},
+                outcome = self._run_subgoal(
+                    run_id=run_id,
+                    overall_request=user_request,
+                    plan=plan,
+                    subgoal=subgoal,
+                    observations=observations,
+                    token=token,
+                    budget=min(self.max_steps, remaining),
+                    seed_result=seed if index == 0 else None,
+                )
+                total_steps += outcome.steps_used
+                last_outcome = outcome
+                self._trace_event(
+                    run_id,
+                    "subgoal_finished",
+                    status="ok" if outcome.ok else "error",
+                    details={
+                        "index": index + 1,
+                        "kind": outcome.kind,
+                        "steps_used": outcome.steps_used,
+                    },
+                )
+                if outcome.kind != "done":
+                    status = (
+                        "approval_required" if outcome.kind == "approval" else "error"
                     )
-                    if result.ok or result.continue_planning
-                    else None,
-                }
-                observations.append(observation)
-                _update_session_from_observation(self._session_state, observation)
-                token.throw_if_cancelled()
-                if result.continue_planning:
-                    continue
-                if (
-                    result.ok
-                    and _needs_verification(plan)
-                    and _step + 1 < self.max_steps
-                ):
-                    self._session_state["last_step_needs_verification"] = {
-                        "tool_name": plan.tool_name,
-                        "expected_observation": plan.expected_observation,
-                        "done_condition": plan.done_condition,
-                        "message": result.message,
-                    }
-                    continue
-                if (
-                    not result.ok
-                    and _is_retryable_tool_error(result.message)
-                    and _step + 1 < self.max_steps
-                ):
-                    continue
-                if not result.continue_planning:
-                    self._remember_turn(user_request, result.message)
-                    self._audit_agent_event(
-                        run_id=run_id,
-                        result="ok" if result.ok else "error",
-                        input_value={
-                            "request": user_request,
-                            "observations": observations,
-                        },
-                        output_value={
-                            "message": result.message,
-                            "payload": result.payload,
-                        },
-                        error=None if result.ok else result.message,
-                    )
-                    return self._complete_run(
+                    return self._finalize(
                         run_id,
                         run_started_at,
-                        AgentRunResult(
-                            result.ok, result.message, result.payload, run_id=run_id
-                        ),
-                        status="ok" if result.ok else "error",
+                        user_request,
+                        observations,
+                        ok=outcome.ok,
+                        message=outcome.message,
+                        payload=outcome.payload,
+                        status=status,
                     )
-            message = (
-                observations[-1]["message"]
-                if observations
-                else "I could not complete that."
-            )
-            self._audit_agent_event(
-                run_id=run_id,
-                result="error",
-                input_value={"request": user_request, "observations": observations},
-                output_value={"message": message},
-                error=str(message),
-            )
-            self._remember_turn(user_request, str(message))
-            return self._complete_run(
+                subgoal.status = "done"
+                subgoal_messages.append(outcome.message)
+
+            if not subgoal_messages or last_outcome is None:
+                return self._finalize(
+                    run_id,
+                    run_started_at,
+                    user_request,
+                    observations,
+                    ok=False,
+                    message="I could not complete that.",
+                    status="error",
+                )
+            payload: Any | None = last_outcome.payload
+            if plan.is_multi:
+                payload = {
+                    "subgoals": [
+                        {"goal": item.goal, "status": item.status}
+                        for item in plan.subgoals
+                    ],
+                    "result": last_outcome.payload,
+                }
+            return self._finalize(
                 run_id,
                 run_started_at,
-                AgentRunResult(False, str(message), run_id=run_id),
-                status="error",
+                user_request,
+                observations,
+                ok=True,
+                message=subgoal_messages[-1],
+                payload=payload,
+                status="ok",
             )
         except AutomationPaused as exc:
             message = str(exc) or "Operation cancelled."
@@ -538,6 +489,357 @@ class AgentExecutor:
                 self._current_cancellation_token = None
             if self._current_run_id == run_id:
                 self._current_run_id = None
+
+    def _triage_plan(
+        self,
+        run_id: str,
+        user_request: str,
+        observations: list[dict[str, Any]],
+        token: CancellationToken,
+    ) -> tuple[Plan, PlannerResult | None]:
+        """First planning turn: decide whether to decompose, with no extra call.
+
+        The planner's own first turn judges complexity. If it returns a ``plan``
+        shape, expand it into sub-goals (the model is the complexity judge, so
+        there is no heuristic and no separate decomposition round-trip). If it
+        returns a concrete action instead, the request is simple: run a single
+        sub-goal and *seed* that action as its first step so the triage call is
+        never wasted — a simple request costs exactly one planner call, as
+        before.
+        """
+
+        token.throw_if_cancelled()
+        first = self._invoke_planner(run_id, user_request, observations, step=1)
+        if first.type == "plan" and first.subgoals:
+            plan = Plan(subgoals=list(first.subgoals))
+            seed: PlannerResult | None = None
+        else:
+            plan = Plan.single(user_request)
+            seed = first
+        self._trace_event(
+            run_id,
+            "plan_built",
+            details={
+                "count": len(plan.subgoals),
+                "decomposed": seed is None and plan.is_multi,
+                "subgoals": [item.goal[:160] for item in plan.subgoals],
+            },
+        )
+        return plan, seed
+
+    def _invoke_planner(
+        self,
+        run_id: str,
+        request: str,
+        observations: list[dict[str, Any]],
+        *,
+        step: int,
+    ) -> PlannerResult:
+        """Gather context and make one planner call (traced)."""
+
+        screen_context = self._trace_call(
+            run_id,
+            "screen_context",
+            "perception",
+            self._screen_context_summary,
+        )
+        connector_context = self._trace_call(
+            run_id,
+            "connector_context",
+            "connectors",
+            self._connector_context,
+        )
+        return self._trace_call(
+            run_id,
+            "planner",
+            "agent",
+            lambda: self.planner.plan(
+                user_request=request,
+                tool_schemas=self.registry.schemas(),
+                action_recipes=self.recipes.schemas(),
+                screen_context=screen_context,
+                conversation_history=self._conversation_history,
+                observations=observations,
+                session_state=self._session_state,
+                connector_context=connector_context,
+                known_memories=self._known_memories(),
+            ),
+            details={"step": step, "observations": len(observations)},
+        )
+
+    def _run_subgoal(
+        self,
+        *,
+        run_id: str,
+        overall_request: str,
+        plan: Plan,
+        subgoal: SubGoal,
+        observations: list[dict[str, Any]],
+        token: CancellationToken,
+        budget: int,
+        seed_result: PlannerResult | None = None,
+    ) -> _SubgoalOutcome:
+        """Run the plan -> act -> observe loop for a single sub-goal.
+
+        Mirrors the original flat agent loop, scoped to one sub-goal and bounded
+        by ``budget`` steps, with stuck detection layered on: a spinning loop
+        first escalates (a ``_stuck_signal`` nudges the planner to change
+        approach) and, once escalations are exhausted, stops with a blocked
+        message so the user is asked rather than the loop running forever.
+
+        ``seed_result`` is the triage turn's planner result reused as this
+        sub-goal's first step, so a simple request never re-plans the call that
+        already decided it was simple.
+        """
+
+        planner_request = subgoal.goal if plan.is_multi else overall_request
+        if plan.is_multi:
+            self._session_state["plan_context"] = {
+                "overall_goal": overall_request,
+                "current_subgoal": subgoal.goal,
+                "done_condition": subgoal.done_condition,
+                "subgoals": [
+                    {"goal": item.goal, "status": item.status} for item in plan.subgoals
+                ],
+            }
+        else:
+            self._session_state.pop("plan_context", None)
+
+        signatures: list[str] = []
+        calls: list[str] = []
+        escalations = 0
+        steps_used = 0
+        last_message = ""
+        for _step in range(budget):
+            token.throw_if_cancelled()
+            steps_used += 1
+            if seed_result is not None and _step == 0:
+                plan_result = seed_result
+            else:
+                plan_result = self._invoke_planner(
+                    run_id, planner_request, observations, step=steps_used
+                )
+            self._set_current_status(
+                run_id=run_id,
+                stage="executing_plan",
+                request=planner_request,
+                tool_name=plan_result.tool_name,
+                plan_type=plan_result.type,
+            )
+            token.throw_if_cancelled()
+            if plan_result.type == "final_answer":
+                message = (
+                    plan_result.spoken_response
+                    or plan_result.user_message
+                    or "I am here."
+                )
+                return _SubgoalOutcome("done", True, message, steps_used=steps_used)
+            if plan_result.type == "approval_request":
+                message = self._create_approval(
+                    run_id=run_id,
+                    action_name=plan_result.tool_name or "agent_action",
+                    arguments=plan_result.arguments,
+                    reason=plan_result.reason or plan_result.spoken_response,
+                )
+                return _SubgoalOutcome(
+                    "approval", False, message, steps_used=steps_used
+                )
+            if plan_result.type != "tool_call" or not plan_result.tool_name:
+                message = (
+                    plan_result.spoken_response
+                    or "I could not decide the next agent action."
+                )
+                return _SubgoalOutcome("error", False, message, steps_used=steps_used)
+            result = self._execute_tool(
+                run_id,
+                plan_result.tool_name,
+                plan_result.arguments,
+                cancellation_token=token,
+            )
+            token.throw_if_cancelled()
+            observation = {
+                "tool_name": plan_result.tool_name,
+                "arguments": plan_result.arguments,
+                "ok": result.ok,
+                "message": result.message,
+                "payload": result.payload,
+                "expected_observation": plan_result.expected_observation,
+                "done_condition": plan_result.done_condition,
+                "post_action_screen": self._trace_call(
+                    run_id,
+                    "post_action_screen_context",
+                    "perception",
+                    self._screen_context_summary,
+                    details={"tool_name": plan_result.tool_name},
+                )
+                if result.ok or result.continue_planning
+                else None,
+            }
+            observations.append(observation)
+            _update_session_from_observation(self._session_state, observation)
+            last_message = result.message
+            calls.append(normalize_call(plan_result.tool_name, plan_result.arguments))
+            signatures.append(observation_signature(observation))
+            token.throw_if_cancelled()
+
+            should_continue = False
+            if result.continue_planning:
+                should_continue = True
+            elif result.ok and _needs_verification(plan_result) and steps_used < budget:
+                self._session_state["last_step_needs_verification"] = {
+                    "tool_name": plan_result.tool_name,
+                    "expected_observation": plan_result.expected_observation,
+                    "done_condition": plan_result.done_condition,
+                    "message": result.message,
+                }
+                should_continue = True
+            elif (
+                not result.ok
+                and _is_retryable_tool_error(result.message)
+                and steps_used < budget
+            ):
+                should_continue = True
+
+            if should_continue:
+                reason = detect_stuck(
+                    signatures,
+                    calls,
+                    repeat_threshold=self.stuck_repeat_threshold,
+                    window=self.stuck_window,
+                )
+                if reason:
+                    if escalations < self.max_escalations:
+                        escalations += 1
+                        self._trace_event(
+                            run_id,
+                            "agent_escalation",
+                            details={"reason": reason, "escalation": escalations},
+                        )
+                        observations.append(self._stuck_signal_observation(reason))
+                    else:
+                        self._trace_event(
+                            run_id,
+                            "agent_stuck",
+                            status="error",
+                            details={"reason": reason, "steps_used": steps_used},
+                        )
+                        return _SubgoalOutcome(
+                            "stuck",
+                            False,
+                            self._stuck_message(subgoal, plan, calls, reason),
+                            steps_used=steps_used,
+                        )
+                continue
+
+            return _SubgoalOutcome(
+                "done" if result.ok else "error",
+                result.ok,
+                result.message,
+                payload=result.payload,
+                steps_used=steps_used,
+            )
+
+        reason = (
+            detect_stuck(
+                signatures,
+                calls,
+                repeat_threshold=self.stuck_repeat_threshold,
+                window=self.stuck_window,
+            )
+            or "step_budget_exhausted"
+        )
+        return _SubgoalOutcome(
+            "stuck",
+            False,
+            self._stuck_message(subgoal, plan, calls, reason),
+            payload={"last_message": last_message} if last_message else None,
+            steps_used=steps_used,
+        )
+
+    def _finalize(
+        self,
+        run_id: str,
+        run_started_at: float,
+        user_request: str,
+        observations: list[dict[str, Any]],
+        *,
+        ok: bool,
+        message: str,
+        status: str,
+        payload: Any | None = None,
+    ) -> AgentRunResult:
+        """Single place every run exit funnels through: audit, remember, trace."""
+
+        audit_result = (
+            "approval_required"
+            if status == "approval_required"
+            else "ok"
+            if ok
+            else "error"
+        )
+        error_value = None if (ok or status == "approval_required") else str(message)
+        output_value: dict[str, Any] = {"message": message}
+        if payload is not None:
+            output_value["payload"] = payload
+        self._audit_agent_event(
+            run_id=run_id,
+            result=audit_result,
+            input_value={"request": user_request, "observations": observations},
+            output_value=output_value,
+            error=error_value,
+        )
+        self._remember_turn(user_request, str(message))
+        return self._complete_run(
+            run_id,
+            run_started_at,
+            AgentRunResult(ok, str(message), payload, run_id=run_id),
+            status=status,
+            error=error_value,
+        )
+
+    def _stuck_signal_observation(self, reason: str) -> dict[str, Any]:
+        human = {
+            "repeating_action": (
+                "You have repeated the same action without any change in the result."
+            ),
+            "no_progress": "The last few actions produced no visible change.",
+        }.get(reason, "You appear to be stuck.")
+        return {
+            "tool_name": "_stuck_signal",
+            "arguments": {},
+            "ok": False,
+            "message": (
+                f"{human} Do not repeat the same tool and arguments. Choose a "
+                "genuinely different tool or approach. If nothing else can work, "
+                "return final_answer that says what you tried and asks the user "
+                "one specific question."
+            ),
+            "payload": {"stuck_reason": reason},
+        }
+
+    def _stuck_message(
+        self,
+        subgoal: SubGoal,
+        plan: Plan,
+        calls: list[str],
+        reason: str,
+    ) -> str:
+        human = {
+            "repeating_action": "I kept repeating the same step without progress",
+            "no_progress": "I stopped making visible progress",
+            "step_budget_exhausted": "I ran out of steps before finishing",
+        }.get(reason, "I got stuck")
+        tools: list[str] = []
+        for call in calls:
+            name = call.split(":", 1)[0]
+            if name and name not in tools:
+                tools.append(name)
+        tools_phrase = f" (tried: {', '.join(tools)})" if tools else ""
+        target = f'"{subgoal.goal}"' if plan.is_multi else "this request"
+        return (
+            f"I'm blocked on {target}: {human}{tools_phrase}. "
+            "Tell me how you'd like to proceed and I'll pick it back up."
+        )
 
     def run_tool(
         self,
@@ -1066,8 +1368,10 @@ Valid shapes:
 {"type":"tool_call","goal":"what the user wants","next_tool":"name","args":{},"expected_observation":"what should change","done_condition":"how to verify","user_message":"short progress phrase"}
 {"type":"final_answer","spoken_response":"short natural answer","reason":"why no tool is needed"}
 {"type":"approval_request","tool_name":"name","arguments":{},"spoken_response":"what needs approval","reason":"risk"}
+{"type":"plan","subgoals":[{"goal":"imperative step","done_condition":"how to verify this step"}]}
 
 Rules:
+- Planning: return the "plan" shape ONLY on the very first turn (when observations is empty) and ONLY for a genuinely multi-step goal that needs several distinct sub-goals to finish (e.g. research then compose then send; gather several things then combine them). Judge this from the meaning of the request, not its wording. Decompose into 2-6 ordered sub-goals, each a coherent objective with a done_condition. For a simple or single-action request, do NOT plan — act with tool_call or answer with final_answer. Never return "plan" once you have started acting (when observations is non-empty).
 - Voice style matters. Final answers should sound like Iris is in the room with the user: calm, warm, grounded, and lightly playful only when the user is casual.
 - Avoid canned assistant phrases such as "How can I help you today?", "I'm here to assist", "Sure thing!", or repeated generic check-ins. Vary wording naturally.
 - Do not over-compress every answer into one sentence. Use one sentence for simple confirmations, two or three for conversation, guidance, or a result that needs context.
@@ -1107,6 +1411,8 @@ Rules:
 - available_tools may include external tools named mcp__<server>__<tool> (with a [server] prefix in the description). These come from connected MCP services and are real, usable tools — prefer them when one matches the request.
 - If app_open reports an app is not installed, do not stop: open the web version with browser_open, look for an installer with file_find, or ask the owner — choose the most useful next step.
 - If a tool fails with a retryable observation, choose a fallback tool instead of giving up.
+- If observations include a "_stuck_signal" entry, your previous approach is not working: do NOT repeat the same tool with the same arguments. Pick a genuinely different tool or strategy. If no different approach can work, return final_answer that briefly says what you tried and asks the user one specific question.
+- session_context.state.plan_context (when present) holds the overall goal and the current sub-goal you are working on. Focus on completing current_subgoal; treat already-done sub-goals as finished.
 - Memory: when the user states a durable preference, fact about themselves, or a standing instruction ("always...", "from now on...", "I prefer...", "remember that...", "my X is..."), silently call remember with a concise content string and a category (preferences, facts, contacts, etc.) as one step of the turn. Do not ask permission and do not announce that you saved it unless asked.
 - Apply remembered context: known_memories in the input holds what you have learned about the user. Honor stored preferences (e.g. "use the Spotify app, not the browser") when choosing tools.
 - For "what do you know about me" or recall questions, use recall or memory_search (and knowledge_search for ingested notes); answer from known_memories, graph memory, and the user_profile, not from guesses.
@@ -1178,9 +1484,15 @@ def _planner_result_from_json(text: str) -> PlannerResult:
             reason="planner_parse_error",
         )
     result_type = str(
-        data.get("type") or ("tool_call" if data.get("next_tool") else "final_answer")
+        data.get("type")
+        or ("plan" if data.get("subgoals") else "")
+        or ("tool_call" if data.get("next_tool") else "final_answer")
     )
-    if result_type not in {"tool_call", "final_answer", "approval_request"}:
+    if result_type not in {"tool_call", "final_answer", "approval_request", "plan"}:
+        result_type = "final_answer"
+    subgoals = coerce_subgoals(data.get("subgoals"))
+    # A "plan" with no usable sub-goals is not actionable; fall back to answering.
+    if result_type == "plan" and not subgoals:
         result_type = "final_answer"
     arguments = data.get("arguments") or data.get("args") or {}
     if not isinstance(arguments, dict):
@@ -1195,6 +1507,7 @@ def _planner_result_from_json(text: str) -> PlannerResult:
         expected_observation=str(data.get("expected_observation") or ""),
         done_condition=str(data.get("done_condition") or ""),
         user_message=str(data.get("user_message") or ""),
+        subgoals=subgoals,
     )
 
 

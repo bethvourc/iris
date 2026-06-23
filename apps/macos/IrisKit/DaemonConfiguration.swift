@@ -74,10 +74,19 @@ public struct DaemonConfiguration: Sendable {
     public static func bundled(
         resourcesURL: URL,
         port: Int = AppPreferences.defaultGatewayPort,
-        logDirectory: URL
+        logDirectory: URL,
+        stateDatabaseURL: URL? = nil
     ) -> DaemonConfiguration {
         let python = resourcesURL
             .appending(path: "iris-runtime/python/bin/python3")
+        // A shipped app has no repo checkout, so without this the daemon's state
+        // DB + settings.json would fall back to the process cwd (undefined for a
+        // Finder-launched app). Pin them under Application Support so reset and
+        // uninstall have one known home (docs/desktop/runbook.md).
+        var environment: [String: String] = [:]
+        if let stateDatabaseURL {
+            environment["IRIS_STATE_DB"] = stateDatabaseURL.path
+        }
         return DaemonConfiguration(
             // Invoke the interpreter directly with `-m iris` rather than the
             // generated `iris` console script, whose shebang isn't relocatable.
@@ -88,6 +97,7 @@ public struct DaemonConfiguration: Sendable {
                 "--json-logs",
                 "--log-dir", logDirectory.path
             ],
+            extraEnvironment: environment,
             port: port
         )
     }
