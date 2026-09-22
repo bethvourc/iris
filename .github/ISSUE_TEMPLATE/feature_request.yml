@@ -1,0 +1,19 @@
+name: Feature request
+description: Suggest an idea or improvement.
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem would this solve?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+      description: What should Iris do? If the change touches safety or approvals, say how it stays safe.
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered

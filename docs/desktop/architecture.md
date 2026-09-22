@@ -1,6 +1,6 @@
 # Iris for macOS — System Architecture
 
-Status: authoritative for the desktop implementation (see `implementation/desktop-macos-plan.md`).
+Status: authoritative for the desktop app.
 Companion document: [`api-contract.md`](api-contract.md) — the frozen wire contract between the
 Swift app and the Python daemon. If this document and the code disagree, fix one of them in the
 same change.
@@ -137,7 +137,7 @@ a pair stored in app preferences).
 5. Hotkey again or Esc → `POST /voice/interrupt` (mid-speech) or `POST /voice/stop` (end session).
    Session end emits `session_ended`; overlay shows a brief summary and dismisses.
 
-### Wake word (Phase 6, opt-in, default off)
+### Wake word (opt-in, default off)
 1. Daemon runs an on-device openWakeWord loop (no network). On detection it emits
    `wake_detected` on `/voice/events` and auto-starts the realtime session.
 2. App (already subscribed) shows the overlay and joins the running session via the snapshot.

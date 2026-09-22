@@ -146,7 +146,7 @@ final class AppModel {
         if let scenario = Self.argumentValue(after: "--ui-test-home") {
             return HomeViewModel(
                 client: ScriptedActivityFetcher(scenario: scenario),
-                greetingName: "Bethvour"
+                greetingName: "Alex"
             )
         }
         return HomeViewModel(client: apiClient)

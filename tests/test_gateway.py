@@ -4,9 +4,9 @@ from types import SimpleNamespace
 
 from iris.gateway import AUTH_EXEMPT_PATHS, GatewayService
 
-# Every route the gateway dispatches (handle_get / handle_post / SSE). The
-# readiness review (docs/desktop/readiness-review.md) requires auth on every
-# non-exempt route; this list is the deny-by-default scan's source of truth.
+# Every route the gateway dispatches (handle_get / handle_post / SSE). Auth is
+# required on every non-exempt route (docs/desktop/architecture.md); this list
+# is the deny-by-default scan's source of truth.
 # Adding a route without adding it here — or widening AUTH_EXEMPT_PATHS — fails
 # the scan, forcing a conscious decision.
 _PROTECTED_ROUTES = (

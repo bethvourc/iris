@@ -175,6 +175,7 @@
 		5D0A88C56A8806CDBA9729B9 /* IrisAPIError.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IrisAPIError.swift; sourceTree = "<group>"; };
 		5D70DB5CBC94B0FA1EEDA34D /* TokenStoreTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TokenStoreTests.swift; sourceTree = "<group>"; };
 		5EFCB894FA1687C8B5500551 /* SettingsViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsViewModel.swift; sourceTree = "<group>"; };
+		653055BB5680C071899B987B /* Signing.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Signing.xcconfig; sourceTree = "<group>"; };
 		66AE68225F288235425EF50A /* AppModel+Launch.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "AppModel+Launch.swift"; sourceTree = "<group>"; };
 		6882310BBE5EEEB7EDE09E4F /* SiriNewIcon.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SiriNewIcon.swift; sourceTree = "<group>"; };
 		6B1FBBA4C38C01CDA146F874 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
@@ -274,6 +275,7 @@
 		1F94CDDECE10DBA2BC5859A9 = {
 			isa = PBXGroup;
 			children = (
+				CBF8ACA79B15A7F78BD703B5 /* Config */,
 				AD693C86B9C5C60C0F865BD7 /* Iris */,
 				18243BA1F17CCDBFE0ADA2AD /* IrisKit */,
 				AC6BC111CD761B97AB2DD0A4 /* IrisTests */,
@@ -420,6 +422,14 @@
 			path = Design;
 			sourceTree = "<group>";
 		};
+		CBF8ACA79B15A7F78BD703B5 /* Config */ = {
+			isa = PBXGroup;
+			children = (
+				653055BB5680C071899B987B /* Signing.xcconfig */,
+			);
+			path = Config;
+			sourceTree = "<group>";
+		};
 		D2070894243A80683C258643 /* Products */ = {
 			isa = PBXGroup;
 			children = (
@@ -549,19 +559,19 @@
 				LastUpgradeCheck = 1430;
 				TargetAttributes = {
 					2D904A5F66C66CEBD334E4E1 = {
-						DevelopmentTeam = 264K2T9HX2;
+						DevelopmentTeam = "";
 						ProvisioningStyle = Automatic;
 					};
 					85901BA009A898EC765CDF6A = {
-						DevelopmentTeam = 264K2T9HX2;
+						DevelopmentTeam = "";
 						ProvisioningStyle = Automatic;
 					};
 					DA6B0FE32874865F8A6DAF74 = {
-						DevelopmentTeam = 264K2T9HX2;
+						DevelopmentTeam = "";
 						ProvisioningStyle = Automatic;
 					};
 					F63AF79DEC25987DAB61D34C = {
-						DevelopmentTeam = 264K2T9HX2;
+						DevelopmentTeam = "";
 						ProvisioningStyle = Automatic;
 						TestTargetID = DA6B0FE32874865F8A6DAF74;
 					};
@@ -784,6 +794,7 @@
 		};
 		41B0BFF19F1D5176EE351013 /* Release */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReference = 653055BB5680C071899B987B /* Signing.xcconfig */;
 			buildSettings = {
 				ALWAYS_SEARCH_USER_PATHS = NO;
 				CLANG_ANALYZER_NONNULL = YES;
@@ -819,7 +830,6 @@
 				COPY_PHASE_STRIP = NO;
 				CURRENT_PROJECT_VERSION = 1;
 				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
-				DEVELOPMENT_TEAM = 264K2T9HX2;
 				ENABLE_HARDENED_RUNTIME = YES;
 				ENABLE_NS_ASSERTIONS = NO;
 				ENABLE_STRICT_OBJC_MSGSEND = YES;
@@ -958,6 +968,7 @@
 		};
 		FF9378E27F3D76AA64B7635A /* Debug */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReference = 653055BB5680C071899B987B /* Signing.xcconfig */;
 			buildSettings = {
 				ALWAYS_SEARCH_USER_PATHS = NO;
 				CLANG_ANALYZER_NONNULL = YES;
@@ -993,7 +1004,6 @@
 				COPY_PHASE_STRIP = NO;
 				CURRENT_PROJECT_VERSION = 1;
 				DEBUG_INFORMATION_FORMAT = dwarf;
-				DEVELOPMENT_TEAM = 264K2T9HX2;
 				ENABLE_HARDENED_RUNTIME = YES;
 				ENABLE_STRICT_OBJC_MSGSEND = YES;
 				ENABLE_TESTABILITY = YES;

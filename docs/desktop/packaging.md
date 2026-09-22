@@ -8,7 +8,7 @@ repo checkout via `uv`.
 
 This document covers the bundle layout, how the runtime is built, and how to
 update it. Code signing and notarization of the embedded binaries are covered
-separately in Step 7.2.
+separately in [`release.md`](release.md).
 
 ## Bundle layout
 

@@ -1,4 +1,4 @@
-# Resilience Audit (Step 7.3)
+# Resilience Audit
 
 A scripted fault-injection drill that converts the failure-mode table in
 [`architecture.md` §8](architecture.md) (F1–F10) into _verified_ behavior. Every

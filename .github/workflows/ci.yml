@@ -5,6 +5,15 @@ on:
     branches: [main]
   pull_request:
 
+# Read-only token: CI never needs to write to the repo, and PRs from forks run
+# this workflow with untrusted code.
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   python:
     name: Python daemon
@@ -48,7 +57,7 @@ jobs:
 
   release-scripts:
     name: Release scripts (ad-hoc dry run)
-    # Exercises the Step 7.2 pipeline logic — embed runtime, inside-out sign,
+    # Exercises the release pipeline logic — embed runtime, inside-out sign,
     # DMG — without any signing secrets, so regressions surface on every PR.
     # Single-arch build for speed; universality is covered by the runtime build.
     runs-on: macos-15
