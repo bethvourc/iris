@@ -1,0 +1,38 @@
+name: Question / help
+description: Ask how to set up Iris or how to use a feature.
+labels: [question]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Happy to help! Before you ask, check the [README](https://github.com/bethvourc/iris#readme)
+        and the [docs](https://github.com/bethvourc/iris/tree/main/docs/desktop). Running
+        `./iris doctor` often points straight at the problem.
+
+        Please **don't paste API keys, tokens, or personal data**.
+  - type: dropdown
+    id: topic
+    attributes:
+      label: What is this about?
+      options:
+        - Installation and setup
+        - macOS permissions
+        - Configuration (.env, providers, models)
+        - Using a feature (voice, screen, memory, connectors, …)
+        - macOS app
+        - Something else
+    validations:
+      required: true
+  - type: textarea
+    id: question
+    attributes:
+      label: Your question
+      description: What are you trying to do, and what have you tried so far?
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment (optional)
+      description: The output of `./iris doctor` and `./iris status` helps with setup questions. Redact anything sensitive.
+      render: text
