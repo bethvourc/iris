@@ -66,5 +66,12 @@ If the wire format between the app and the daemon changes, update
 4. Add or update tests for any behavior you changed.
 5. Update the README or `docs/` if you changed user-facing behavior.
 
+`main` is protected. A PR can merge only when every CI check passes and the
+maintainer has approved it. Pushing new commits after approval requires a fresh
+review. Only the maintainer merges.
+
+Questions about setup or usage are welcome as issues. Pick the
+**Question / help** template.
+
 By contributing, you agree that your contributions are licensed under the
 [MIT License](LICENSE).
