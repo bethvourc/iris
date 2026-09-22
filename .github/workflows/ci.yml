@@ -36,7 +36,21 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Install tools
-        run: brew install xcodegen swiftlint swiftformat
+        run: brew install xcodegen swiftlint
+      # Pinned: new SwiftFormat releases add default-on rules (0.63.0 added
+      # wrapIfStatementBodies), which would fail every PR on untouched code.
+      # Bump the version and the checksum together, then reformat in one PR.
+      - name: Install SwiftFormat (pinned)
+        env:
+          SWIFTFORMAT_VERSION: 0.61.1
+          SWIFTFORMAT_SHA256: b990400779aceb7d7020796eb9ba814d4480543f671d38fc0ff48cb72f04c584
+        run: |
+          set -euo pipefail
+          curl -fsSL -o "$RUNNER_TEMP/swiftformat.zip" \
+            "https://github.com/nicklockwood/SwiftFormat/releases/download/${SWIFTFORMAT_VERSION}/swiftformat.zip"
+          echo "${SWIFTFORMAT_SHA256}  $RUNNER_TEMP/swiftformat.zip" | shasum -a 256 -c -
+          unzip -q "$RUNNER_TEMP/swiftformat.zip" -d "$RUNNER_TEMP/swiftformat"
+          echo "$RUNNER_TEMP/swiftformat" >> "$GITHUB_PATH"
       - name: Generate project
         run: xcodegen generate
         working-directory: apps/macos
@@ -44,7 +58,7 @@ jobs:
         run: swiftlint --strict
         working-directory: apps/macos
       - name: SwiftFormat (lint only)
-        run: swiftformat --lint .
+        run: swiftformat --version && swiftformat --lint .
         working-directory: apps/macos
       - name: Build and test
         run: >
