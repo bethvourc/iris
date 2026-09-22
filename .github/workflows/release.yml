@@ -17,9 +17,9 @@ jobs:
       MACOS_DIR: apps/macos
       DERIVED: build
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: astral-sh/setup-uv@v5
+      - uses: astral-sh/setup-uv@v7
         with:
           python-version: "3.12"
 
@@ -112,7 +112,7 @@ jobs:
       # one — so publish only on a tag and hand dry runs the DMG as an artifact.
       - name: Upload DMG artifact (untagged dry runs)
         if: ${{ !startsWith(github.ref, 'refs/tags/') }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: Iris-${{ steps.dmg.outputs.DMG_VERSION }}-dmg
           path: |
@@ -122,7 +122,7 @@ jobs:
 
       - name: Create draft GitHub Release
         if: ${{ startsWith(github.ref, 'refs/tags/') }}
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           draft: true
           name: Iris ${{ steps.dmg.outputs.DMG_VERSION }}

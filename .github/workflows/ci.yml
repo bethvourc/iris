@@ -19,8 +19,8 @@ jobs:
     name: Python daemon
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v5
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v7
         with:
           python-version: "3.12"
       - name: Install dependencies
@@ -34,7 +34,7 @@ jobs:
     name: macOS app
     runs-on: macos-15
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Install tools
         run: brew install xcodegen swiftlint
       # Pinned: new SwiftFormat releases add default-on rules (0.63.0 added
@@ -76,8 +76,8 @@ jobs:
     # Single-arch build for speed; universality is covered by the runtime build.
     runs-on: macos-15
     steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v5
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v7
         with:
           python-version: "3.12"
       - name: Install tools
