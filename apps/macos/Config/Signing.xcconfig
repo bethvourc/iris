@@ -1,0 +1,15 @@
+// Code-signing settings shared by every target.
+//
+// DEVELOPMENT_TEAM is deliberately empty so the project opens and builds for
+// anyone who clones it. To sign locally with your own Apple Development
+// certificate (XCUITest needs the app and its test runner on one Team ID),
+// create Config/Signing.local.xcconfig next to this file (it is git-ignored):
+//
+//     DEVELOPMENT_TEAM = ABCDE12345
+//
+// CI builds pass CODE_SIGNING_ALLOWED=NO; release builds are re-signed with a
+// Developer ID by scripts/sign_and_notarize.sh, so neither depends on this file.
+
+DEVELOPMENT_TEAM =
+
+#include? "Signing.local.xcconfig"

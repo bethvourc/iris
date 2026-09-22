@@ -102,10 +102,26 @@ jobs:
         run: |
           set -euo pipefail
           DMG="${{ steps.dmg.outputs.DMG_PATH }}"
-          shasum -a 256 "$DMG" | tee "$DMG.sha256"
+          # Hash the bare filename, not the absolute runner path, so that a
+          # downloader can `shasum -c Iris-<version>.dmg.sha256` next to the DMG.
+          ( cd "$(dirname "$DMG")" \
+            && shasum -a 256 "$(basename "$DMG")" | tee "$(basename "$DMG").sha256" )
           echo "SHA256_FILE=$DMG.sha256" >> "$GITHUB_OUTPUT"
 
+      # Dry runs (workflow_dispatch) have no tag, and a GitHub Release requires
+      # one — so publish only on a tag and hand dry runs the DMG as an artifact.
+      - name: Upload DMG artifact (untagged dry runs)
+        if: ${{ !startsWith(github.ref, 'refs/tags/') }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: Iris-${{ steps.dmg.outputs.DMG_VERSION }}-dmg
+          path: |
+            ${{ steps.dmg.outputs.DMG_PATH }}
+            ${{ steps.sums.outputs.SHA256_FILE }}
+          if-no-files-found: error
+
       - name: Create draft GitHub Release
+        if: ${{ startsWith(github.ref, 'refs/tags/') }}
         uses: softprops/action-gh-release@v2
         with:
           draft: true

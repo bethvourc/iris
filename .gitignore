@@ -1,7 +1,27 @@
-.DS_Store
+# --- Secrets & local config -------------------------------------------------
+# Real config lives next to the committed *.example templates.
 .env
 .env.*
 !.env.example
+mcp.json
+*.pem
+*.p12
+*.p8
+*.cer
+*.mobileprovision
+*.provisionprofile
+*.keychain-db
+*service-account*.json
+apps/macos/Config/*.local.xcconfig
+
+# --- Local state -------------------------------------------------------------
+*.sqlite3
+*.sqlite3-*
+iris-debug/
+iris_tmp_exec_test
+*.log
+
+# --- Python ------------------------------------------------------------------
 .venv/
 __pycache__/
 *.py[cod]
@@ -13,12 +33,18 @@ htmlcov/
 dist/
 build/
 *.egg-info/
-iris-debug/
-iris_tmp_exec_test
-*.log
-implementation/
 
-# Xcode
+# --- Xcode / macOS -----------------------------------------------------------
 xcuserdata/
 DerivedData/
 *.xcresult
+*.dmg
+.DS_Store
+
+# --- Editors & tools ---------------------------------------------------------
+.idea/
+.vscode/
+.claude/settings.local.json
+
+# Private working notes
+implementation/

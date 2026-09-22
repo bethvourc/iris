@@ -5,11 +5,22 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "iris-agent"
 version = "0.1.0"
-description = "A local Mac vision and control agent."
+description = "A local-first voice and vision agent for macOS."
 readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "MIT" }
 authors = [{ name = "Clinton Imaro" }]
+keywords = ["macos", "agent", "voice-assistant", "computer-use", "accessibility", "mcp"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Environment :: MacOS X",
+  "Intended Audience :: End Users/Desktop",
+  "License :: OSI Approved :: MIT License",
+  "Operating System :: MacOS",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+]
 dependencies = [
   "google-cloud-vision>=3.11.0",
   "openai>=2.8.0",
@@ -20,6 +31,11 @@ dependencies = [
   "pyobjc-framework-Cocoa>=12.0; sys_platform == 'darwin'",
   "pyobjc-framework-Quartz>=12.0; sys_platform == 'darwin'",
 ]
+
+[project.urls]
+Homepage = "https://github.com/bethvourc/iris"
+Documentation = "https://github.com/bethvourc/iris/tree/main/docs/desktop"
+Issues = "https://github.com/bethvourc/iris/issues"
 
 [project.optional-dependencies]
 # On-device wake word ("Hey Iris"): openWakeWord runs ONNX models locally, so

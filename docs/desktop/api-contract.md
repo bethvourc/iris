@@ -2,7 +2,7 @@
 
 Status: **frozen contract** for the desktop implementation. Swift `Codable` models
 (`apps/macos/IrisKit/Models.swift`) and Python handlers are both written against this document.
-Changes are additive-only once Phase 2 starts; anything breaking requires bumping
+Changes are additive-only; anything breaking requires bumping
 `contract_version` and updating both sides in one change.
 
 Existing endpoints that the desktop app reuses (approvals, messages, runs) are documented in
@@ -144,7 +144,7 @@ Auth required (header-based; native clients can set headers on SSE).
 | `event:` | `data` payload | Notes |
 |---|---|---|
 | `state` | `{"state": "...", "session": {...}\|null, "meeting_active": bool}` | Snapshot; first frame on connect and on every state transition. |
-| `wake_detected` | `{"source": "wake_word"\|"in_session", "phrase": "hey iris"}` | Phase 6 local detector, or in-session wake while gated. |
+| `wake_detected` | `{"source": "wake_word"\|"in_session", "phrase": "hey iris"}` | On-device wake-word detector, or in-session wake while gated. |
 | `user_transcript` | `{"text": "…", "final": true}` | Completed user turn transcript (post wake-word stripping). |
 | `assistant_delta` | `{"text": "…"}` | Streamed assistant transcript delta. |
 | `assistant_done` | `{"text": "…"}` | Full deduplicated assistant turn text. |

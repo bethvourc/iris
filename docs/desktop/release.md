@@ -25,7 +25,9 @@ On a `v*` tag (or a manual `workflow_dispatch`), on a macOS runner:
    `notarytool submit --wait`, and `stapler staple` the app.
 5. `scripts/make_dmg.sh` — build the drag-to-Applications DMG, sign it, print its
    SHA-256.
-6. Publish a **draft** GitHub Release with the DMG and a `.sha256` file.
+6. On a tag, publish a **draft** GitHub Release with the DMG and a `.sha256`
+   file. An untagged `workflow_dispatch` run uploads the same two files as a
+   workflow **artifact** instead — a GitHub Release requires a tag.
 
 Signing is done by our scripts (not Xcode) because the embedded runtime is added
 *after* Xcode would sign — which invalidates the seal. Re-signing inside-out is
@@ -84,7 +86,8 @@ account password in CI and it doesn't break on 2FA.
    publish the draft.
 
 Use `workflow_dispatch` to dry-run the full build/sign/notarize path without
-tagging (it still produces a draft release).
+tagging. No release is created — download the DMG from the run's **Artifacts**.
+Note this still spends a real notarization submission.
 
 ## Verifying (clean Mac)
 

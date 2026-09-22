@@ -1,170 +1,171 @@
 # Iris
 
-Iris is a local-first Mac agent that runs from the terminal. It supports text,
-voice, live screen awareness, safe Mac/browser actions, local state, connectors,
-watchers, approvals, and audit logs.
+**A local-first voice and vision agent for macOS.**
 
-## Iris for macOS (desktop app)
+[![CI](https://github.com/bethvourc/iris/actions/workflows/ci.yml/badge.svg)](https://github.com/bethvourc/iris/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+![Platform: macOS](https://img.shields.io/badge/platform-macOS%2014%2B-lightgrey.svg)
+![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue.svg)
 
-Beyond the terminal CLI, Iris ships as a native macOS app — a menu-bar presence
-with a global hotkey, a Siri-style voice overlay, and a main window for activity
-and settings — backed by the same Python core running as a supervised local
-daemon (`iris serve`). The Swift/SwiftUI app lives in [`apps/macos/`](apps/macos).
+Iris sees your screen, listens when you ask, and operates your Mac and browser
+on your behalf: opening apps, reading pages, clicking through UIs, playing
+media, drafting messages. Every action passes through a safety gate first.
+It runs as a terminal CLI or as a native menu-bar app. State, memory, and audit
+logs stay on your machine.
 
-The app spawns and supervises the daemon (health polling, restart with backoff,
-crash-loop detection, adopt-if-already-running), binds `127.0.0.1` only, and
-holds the gateway token in the Keychain — injected into the daemon via
-environment, never written to disk. In a shipped build, state lives in
-`~/Library/Application Support/Iris/` and logs in `~/Library/Logs/Iris/`.
+---
 
-- **Architecture & trust boundaries** — [`docs/desktop/architecture.md`](docs/desktop/architecture.md)
-- **API contract** (voice / activity / settings / health, SSE catalog) — [`docs/desktop/api-contract.md`](docs/desktop/api-contract.md)
-- **Packaging & release** (signing, notarization, DMG) — [`docs/desktop/packaging.md`](docs/desktop/packaging.md), [`docs/desktop/release.md`](docs/desktop/release.md)
-- **Operations runbook** (logs, health checks, reset, uninstall, failure signatures) — [`docs/desktop/runbook.md`](docs/desktop/runbook.md)
-- **Resilience audit** (fault-injection drills) — [`docs/desktop/resilience-audit.md`](docs/desktop/resilience-audit.md)
+## Contents
 
-## Requirements
+- [Features](#features)
+- [How it works](#how-it-works)
+- [Quick start](#quick-start)
+- [Configuration](#configuration)
+- [Usage](#usage)
+- [Safety model](#safety-model)
+- [macOS app](#macos-app)
+- [Extending Iris](#extending-iris)
+- [Development](#development)
+- [Documentation](#documentation)
+- [Contributing](#contributing) · [Security](#security) · [License](#license)
 
-- macOS
-- Python 3.11+
-- `uv`
-- OpenAI API key
+## Features
 
-Optional:
+- **Voice and text.** Live speech-to-speech over the OpenAI Realtime API, with
+  wake words (`iris`, `hey iris`), barge-in, and echo suppression. There's also
+  a plain text REPL for quiet environments.
+- **Screen awareness.** Periodic screen capture and description, plus optional
+  Google Cloud Vision OCR.
+- **Mac and browser control.** Native UI automation through the macOS
+  Accessibility API, Chrome via the DevTools Protocol, and a computer-use model
+  as a fallback.
+- **Safety first.** Every action is classified as *low-risk*, *sensitive*, or
+  *blocked* before it runs. A global kill-switch hotkey pauses all automation,
+  and an audit trail records what happened.
+- **Local memory.** A SQLite-backed memory graph with offline embeddings by
+  default, and a knowledge base you can ingest folders of notes into.
+- **Extensible.** Connectors are JSON manifests, not code. Iris also speaks
+  [MCP](https://modelcontextprotocol.io), and ships recipes, watchers,
+  workflows, and evals.
+- **Native desktop app.** A SwiftUI menu-bar app with a global hotkey, a
+  Siri-style voice overlay, an activity feed, and approvals. It's backed by the
+  same Python core.
 
-- Google Vision credentials for OCR/extra screen reading
-- Pushover credentials for phone notifications
+## How it works
 
-## Setup
+```
+┌──────────────────────────────┐        ┌──────────────────────────────────┐
+│  Iris.app (Swift / SwiftUI)  │  HTTP  │  Python core (`iris serve`)      │
+│  menu bar · hotkey · overlay │ ◄────► │  agent loop · tools · safety     │
+│  activity · approvals        │  SSE   │  memory · connectors · audit     │
+└──────────────────────────────┘        └───────────────┬──────────────────┘
+        127.0.0.1 only · bearer token in Keychain       │
+                                                        ▼
+                               OpenAI · Groq · Accessibility · Chrome CDP
+```
+
+The Python core does all the reasoning and holds all the state. You can drive
+it directly from the terminal (`./iris start`), or let the macOS app supervise
+it as a local daemon. The gateway binds to `127.0.0.1` only, and every route
+except `/health` and the static UI shells requires a bearer token.
+
+For the full design, including trust boundaries and failure modes, see
+[`docs/desktop/architecture.md`](docs/desktop/architecture.md).
+
+## Quick start
+
+**Requirements:** macOS, Python 3.11+, [`uv`](https://docs.astral.sh/uv/), and
+an OpenAI API key.
 
 ```bash
-cd /Users/<username>/Documents/Projects/iris
+git clone https://github.com/bethvourc/iris.git
+cd iris
 uv sync --dev --no-editable
-cp .env.example .env
+cp .env.example .env          # then set OPENAI_API_KEY in .env
+./iris init                   # create local state
+./iris setup                  # personalize: your name, pronouns, preferences
+./iris permissions            # check which macOS permissions are missing
 ```
 
-Edit `.env` and add at least:
-
-```bash
-OPENAI_API_KEY=...
-```
-
-Optional phone alerts:
-
-```bash
-IRIS_NOTIFY_PROVIDER=pushover
-PUSHOVER_TOKEN=...
-PUSHOVER_USER=...
-```
-
-Initialize local state:
-
-```bash
-./iris init
-./iris status
-```
-
-Personalize Iris:
-
-```bash
-./iris setup
-```
-
-For non-interactive setup:
-
-```bash
-./iris setup --name Bethvour --pronouns he/him
-```
-
-If you use the local HTTP gateway, set a private token first:
-
-```bash
-IRIS_GATEWAY_TOKEN=$(python -c 'import secrets; print(secrets.token_urlsafe(32))')
-```
-
-## macOS Permissions
-
-Run:
-
-```bash
-./iris permissions
-```
-
-Then grant the terminal app running Iris these permissions in macOS System
-Settings:
+Grant the terminal app that runs Iris these permissions in **System Settings →
+Privacy & Security**, then restart Iris:
 
 - Microphone
 - Screen Recording
 - Accessibility
 - Automation
 
-Restart Iris after changing permissions.
-
-## Start Iris
-
-Text mode:
+Start a session:
 
 ```bash
-./iris start
+./iris start          # text mode
+./iris start --live   # live voice mode
 ```
 
-Live voice mode:
+Inside a session you can use `/listen [seconds]`, `/reset`, `kill`, `resume`,
+and `quit`.
+
+Run `./iris doctor` whenever something doesn't work. It checks permissions,
+providers, connectors, and control backends.
+
+## Configuration
+
+All configuration comes from environment variables, loaded from `.env`.
+[`.env.example`](.env.example) documents every option. Only `OPENAI_API_KEY`
+is required.
+
+| Variable | Purpose |
+|----------|---------|
+| `OPENAI_API_KEY` | **Required.** Realtime voice, reasoning, vision, computer-use. |
+| `IRIS_GATEWAY_TOKEN` | Bearer token for the local HTTP gateway (`./iris serve`). |
+| `GROQ_API_KEY` | Optional. Low-latency STT and intent routing; falls back to OpenAI. |
+| `GOOGLE_APPLICATION_CREDENTIALS` | Optional. Service-account JSON path for Google Vision OCR. |
+| `PUSHOVER_TOKEN`, `PUSHOVER_USER` | Optional. Phone push notifications (or use `ntfy`). |
+| `RESEND_API_KEY` | Optional. Outbound email for meeting recaps and `send_email`. |
+| `IRIS_*_MODEL` | Model routing overrides. Run `./iris providers` to see the active routes. |
+
+To use the gateway, generate a token:
 
 ```bash
-./iris start --live
+python3 -c 'import secrets; print(secrets.token_urlsafe(32))'
 ```
 
-Wake words default to:
+Local state is stored in SQLite at `build/iris.sqlite3` by default. You can
+change this with `IRIS_STATE_DB`.
 
-```text
-iris, hey iris
-```
+## Usage
 
-Inside `./iris start`, useful commands:
-
-```text
-/listen
-/listen 1.5
-/reset
-kill
-resume
-quit
-```
-
-## Common Commands
+<details>
+<summary><b>Status and diagnostics</b></summary>
 
 ```bash
 ./iris status
 ./iris providers
-./iris profile show
-./iris profile set --name Bethvour --pronouns he/him
-./iris setup
+./iris doctor
 ./iris test-screen
 ./iris test-vision
 ./iris test-voice --listen
+./iris notify test
+./iris diagnostics last-run
+```
+</details>
+
+<details>
+<summary><b>Mac and browser control</b></summary>
+
+```bash
 ./iris control health
-./iris doctor
-./iris browser start-cdp
-./iris browser tabs
-./iris browser current
 ./iris controls apps
 ./iris controls inspect
 ./iris controls find "search"
-./iris recipes list
-./iris recipes show spotify_play_song
-./iris notify test
-./iris approvals
-./iris audit
+./iris browser start-cdp
+./iris browser tabs
+./iris browser current
 ```
+</details>
 
-Watchers:
-
-```bash
-./iris watch add --kind web --name "Example" --target https://example.com --expected Example
-./iris watch list
-```
-
-Memory and knowledge:
+<details>
+<summary><b>Memory and knowledge</b></summary>
 
 ```bash
 ./iris memory add --category project --content "Iris is local-first."
@@ -175,23 +176,12 @@ Memory and knowledge:
 ./iris knowledge search "agent runtime"
 ```
 
-Connectors:
+With the gateway running, the visual memory browser is available at
+<http://127.0.0.1:8765/memory-browser>.
+</details>
 
-```bash
-./iris connectors list
-./iris connectors health
-./iris connectors show stripe
-./iris connectors enable google-ads
-```
-
-Agent evals:
-
-```bash
-./iris evals list
-./iris evals run
-```
-
-Background runtime:
+<details>
+<summary><b>Background runtime, tasks, and approvals</b></summary>
 
 ```bash
 ./iris serve
@@ -201,30 +191,89 @@ Background runtime:
 ./iris tasks run-next
 ./iris tasks cancel <task_id>
 ./iris tasks resume <task_id>
+./iris approvals
+./iris approve <id>
+./iris deny <id>
+./iris audit
+```
+</details>
+
+<details>
+<summary><b>Connectors, recipes, watchers, and evals</b></summary>
+
+```bash
+./iris connectors list
+./iris connectors health
+./iris connectors enable google-ads
+./iris recipes list
+./iris recipes show spotify_play_song
+./iris watch add --kind web --name "Example" --target https://example.com --expected Example
+./iris watch list
+./iris evals list
+./iris evals run
+```
+</details>
+
+Run `./iris --help` or `./iris <command> --help` to see every command.
+
+## Safety model
+
+Before an action runs, Iris classifies it into one of three tiers:
+
+| Tier | Behavior | Examples |
+|------|----------|----------|
+| **Low-risk** | Runs automatically | Reading the screen, opening an app, browsing |
+| **Sensitive** | Waits for your explicit approval | Sending messages or email, running shell commands, editing or moving files, installing software, creating calendar events |
+| **Blocked** | Refused | Payments, entering credentials, changing security or privacy settings, deleting files, destructive shell commands (`rm -rf`, `sudo`, `git reset --hard`, …) |
+
+The kill-switch hotkey (`IRIS_KILL_HOTKEY`, default <kbd>⌃</kbd><kbd>⌥</kbd><kbd>K</kbd>)
+pauses all automation immediately. Actions are recorded in a local audit trail
+(`./iris audit`). Meeting mode requires your consent by default
+(`IRIS_MEETING_CONSENT_REQUIRED`).
+
+## macOS app
+
+The native app lives in [`apps/macos/`](apps/macos). It spawns and supervises
+the Python daemon, with health polling, restart with backoff, and crash-loop
+detection. It keeps the gateway token in the Keychain and passes it to the
+daemon through the environment, so the token is never written to disk. Shipped
+builds store state in `~/Library/Application Support/Iris/` and logs in
+`~/Library/Logs/Iris/`.
+
+**Build from source** (requires Xcode 16+ and macOS 14+):
+
+```bash
+brew install xcodegen           # the project is generated from project.yml
+cd apps/macos
+xcodegen generate
+open Iris.xcodeproj
 ```
 
-Open the visual memory browser after starting the gateway:
+To run the tests without signing:
 
-```text
-http://127.0.0.1:8765/memory-browser
+```bash
+xcodebuild test -project Iris.xcodeproj -scheme Iris \
+  -destination 'platform=macOS' CODE_SIGNING_ALLOWED=NO
 ```
 
-Gateway API routes other than `/health` and the static `/memory-browser` shell require:
+To sign locally (UI tests need this), create
+`apps/macos/Config/Signing.local.xcconfig`. The file is git-ignored.
 
-```text
-Authorization: Bearer <IRIS_GATEWAY_TOKEN>
+```
+DEVELOPMENT_TEAM = <your Apple Team ID>
 ```
 
-## Connector Manifests
+If you fork the project, you'll also need to change the `com.bethvour.*` bundle
+identifiers in `project.yml` to your own.
 
-Connectors are JSON manifests, not router code. Add connector files under:
+Signed, notarized DMG releases are produced by
+[`release.yml`](.github/workflows/release.yml). See
+[`docs/desktop/release.md`](docs/desktop/release.md) for how that works.
 
-```text
-connectors/
-~/.iris/connectors/
-```
+## Extending Iris
 
-Example:
+**Connectors** are JSON manifests. Iris loads them from `connectors/` and
+`~/.iris/connectors/`:
 
 ```json
 {
@@ -240,9 +289,57 @@ Example:
 }
 ```
 
-## Notes
+**MCP servers:** copy [`mcp.json.example`](mcp.json.example) to `mcp.json`,
+which is git-ignored, and enable the servers you want. Keep tokens in `.env`
+and reference them as `${VAR}`. Don't paste tokens inline.
 
-- Low-risk actions can run automatically.
-- Sensitive actions require approval.
-- Destructive, credential, payment, and security actions are blocked or gated.
-- Local state is stored in SQLite under `build/` by default.
+**Recipes** (`recipes/builtin.json`) are reusable, multi-step action plans.
+**Evals** (`evals/agent_tasks.json`) check that requests get routed to the
+right tools.
+
+## Development
+
+```bash
+uv sync --dev --no-editable
+uv run ruff check src tests     # lint
+uv run pytest -q                # tests
+```
+
+CI runs on every pull request. It runs Python lint and tests, SwiftLint and
+SwiftFormat, the Xcode unit tests, and an ad-hoc-signed dry run of the release
+pipeline.
+
+```
+src/iris/          Python core: agent loop, tools, safety, memory, gateway, CLI
+tests/             pytest suite
+apps/macos/        SwiftUI app (Iris), shared framework (IrisKit), tests, release scripts
+connectors/        built-in connector manifests
+recipes/           built-in action recipes
+evals/             agent capability eval cases
+docs/desktop/      architecture, API contract, packaging, release, runbook
+```
+
+## Documentation
+
+| Document | What's in it |
+|----------|--------------|
+| [Architecture](docs/desktop/architecture.md) | Components, trust boundaries, failure modes |
+| [API contract](docs/desktop/api-contract.md) | Gateway routes and the SSE event catalog |
+| [Packaging](docs/desktop/packaging.md) | The embedded, relocatable Python runtime |
+| [Release](docs/desktop/release.md) | Signing, notarization, DMG, and rollback |
+| [Runbook](docs/desktop/runbook.md) | Logs, health checks, reset, uninstall, and failure signatures |
+| [Resilience audit](docs/desktop/resilience-audit.md) | Fault-injection drills and their results |
+
+## Contributing
+
+Contributions are welcome. Read [CONTRIBUTING.md](CONTRIBUTING.md) before you
+open a pull request.
+
+## Security
+
+Please don't open public issues for vulnerabilities. See
+[SECURITY.md](SECURITY.md) for how to report one privately.
+
+## License
+
+[MIT](LICENSE)

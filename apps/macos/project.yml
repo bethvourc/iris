@@ -8,16 +8,18 @@ options:
     macOS: "14.0"
   createIntermediateGroups: true
 
+# DEVELOPMENT_TEAM lives in Config/Signing.xcconfig, which optionally includes a
+# git-ignored Config/Signing.local.xcconfig — see that file for local signing.
+configFiles:
+  Debug: Config/Signing.xcconfig
+  Release: Config/Signing.xcconfig
+
 settings:
   base:
     MACOSX_DEPLOYMENT_TARGET: "14.0"
     SWIFT_VERSION: "6.0"
     ENABLE_HARDENED_RUNTIME: YES
     CODE_SIGN_STYLE: Automatic
-    # Local Apple Development signing so app + UI test runner share a Team
-    # ID (XCUITest requires it). CI overrides with CODE_SIGNING_ALLOWED=NO
-    # for unit tests; Developer ID release signing arrives in Step 7.2.
-    DEVELOPMENT_TEAM: 264K2T9HX2
     CURRENT_PROJECT_VERSION: 1
     MARKETING_VERSION: 0.1.0
 
@@ -44,8 +46,8 @@ targets:
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
     # Embed the relocatable Python runtime into Contents/Resources. The script
     # no-ops for Debug (dev mode runs the daemon from the repo via uv), so this
-    # only adds time to Release builds. Runs after signing of the app's own code
-    # but the runtime is re-signed in Step 7.2.
+    # only adds time to Release builds. Runs after signing of the app's own code;
+    # scripts/sign_and_notarize.sh re-signs the runtime for release.
     postBuildScripts:
       - name: Embed Python runtime
         script: '"${SRCROOT}/scripts/package_python.sh"'

@@ -1,0 +1,49 @@
+name: Bug report
+description: Something isn't working as expected.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the report! Please **don't include API keys, tokens, or
+        personal data**. Redact logs before pasting. Security issues go through
+        [private reporting](https://github.com/bethvourc/iris/security/advisories/new) instead.
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: What did you do, what did you expect, and what happened instead?
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. ./iris start --live
+        2. Say "…"
+        3. …
+    validations:
+      required: true
+  - type: dropdown
+    id: surface
+    attributes:
+      label: Where does it happen?
+      options:
+        - Terminal CLI (./iris)
+        - macOS app
+        - Gateway / API
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: Paste the output of `./iris doctor` and `./iris status` (redact anything sensitive).
+      render: text
+  - type: input
+    id: version
+    attributes:
+      label: Version or commit
+      placeholder: v0.1.0 or a commit SHA

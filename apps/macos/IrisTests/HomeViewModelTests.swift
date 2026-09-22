@@ -45,8 +45,8 @@ final class HomeViewModelTests: XCTestCase {
     // MARK: - Greeting
 
     func testGreetingUsesProvidedName() {
-        let model = HomeViewModel(client: FakeActivityFetcher([]), greetingName: "Bethvour")
-        XCTAssertEqual(model.greeting, "Welcome back, Bethvour")
+        let model = HomeViewModel(client: FakeActivityFetcher([]), greetingName: "Alex")
+        XCTAssertEqual(model.greeting, "Welcome back, Alex")
     }
 
     func testGreetingFallsBackWhenNameMissing() {
