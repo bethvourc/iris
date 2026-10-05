@@ -23,7 +23,7 @@ classifiers = [
 ]
 dependencies = [
   "google-cloud-vision>=3.15.0",
-  "openai>=3.16.2",
+  "openai>=3.19.2",
   "pynput>=1.8.1",
   "python-dotenv>=1.2.3",
   "sounddevice>=0.5.6",
@@ -50,7 +50,7 @@ wakeword = [
 iris = "iris.cli:main"
 
 [dependency-groups]
-dev = ["anyio>=4.15.1", "pytest>=9.1.1", "ruff>=0.16.8"]
+dev = ["anyio>=4.15.1", "pytest>=9.1.1", "ruff>=0.16.9"]
 
 [tool.setuptools.packages.find]
 where = ["src"]
